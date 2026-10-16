@@ -167,6 +167,13 @@ static int createCompositionTexture(void) {
 #ifdef MIYOOPORTS_BUILD
   useCompositionTarget();
   return 1;
+#elif defined(RGNANO_BUILD)
+  // The renderer already draws into our surface: no composition texture.
+  compositionTexture = NULL;
+  compositionW = logicalW;
+  compositionH = logicalH;
+  useCompositionTarget();
+  return renderer != NULL;
 #else
   // RG Nano reads this target back every frame: ARGB8888 makes that a memcpy.
   compositionTexture = SDL_CreateTexture(renderer, nativeTexturePixelFormat(),
@@ -187,12 +194,30 @@ static void destroyCompositionTexture(void) {
   compositionW = compositionH = 0;
 }
 
+#ifdef RGNANO_BUILD
+// The frame lives in an SDL_Surface we own, drawn by SDL's software renderer
+// directly (no render-target texture, no SDL_RenderReadPixels copy): the
+// presenter reads surface->pixels in place. RGB888 = 32-bit, alpha ignored.
+static SDL_Surface* rgnanoSurface = NULL;
+static int createSoftwareRenderer(void) {
+  if (renderer) SDL_DestroyRenderer(renderer);
+  renderer = NULL;
+  if (rgnanoSurface) SDL_FreeSurface(rgnanoSurface);
+  const int w = logicalW > 0 ? logicalW : screenW, h = logicalH > 0 ? logicalH : screenH;
+  rgnanoSurface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGB888);
+  if (!rgnanoSurface) return 0;
+  renderer = SDL_CreateSoftwareRenderer(rgnanoSurface);
+  rendererUsesGpu = 0;
+  return renderer != NULL;
+}
+#else
 static int createSoftwareRenderer(void) {
   if (renderer) SDL_DestroyRenderer(renderer);
   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
   rendererUsesGpu = 0;
   return renderer != NULL && SDL_RenderTargetSupported(renderer);
 }
+#endif
 
 #ifdef ANDROID_BUILD
 static void getAndroidSurfaceSize(int* width, int* height) {
@@ -883,27 +908,13 @@ void gfxRect(int x, int y, int w, int h) {
 }
 
 #ifdef RGNANO_BUILD
-// Reads the finished composition target back and hands it to the presenter,
-// which area-downscales it to 240x240 RGB565 and blits /dev/fb0.
+// Hands the finished surface to the presenter, which downscales it to 240x240
+// RGB565 and blits only the changed rows to /dev/fb0.
 static void rgnanoPresentFrame(void) {
-  static uint32_t* pixels = NULL;
-  static int pixelsW = 0, pixelsH = 0;
-  if (!compositionTexture) return;
-  if (!pixels || pixelsW != logicalW || pixelsH != logicalH) {
-    free(pixels);
-    pixels = (uint32_t*)malloc((size_t)logicalW * logicalH * sizeof(uint32_t));
-    pixelsW = logicalW;
-    pixelsH = logicalH;
-    if (!pixels) return;
-  }
-  SDL_SetRenderTarget(renderer, compositionTexture);
-  const Uint64 started = SDL_GetPerformanceCounter();
-  if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, logicalW * 4) != 0) {
-    fprintf(stderr, "SDL_RenderReadPixels failed: %s\n", SDL_GetError());
-    return;
-  }
-  const unsigned readUs = (unsigned)((SDL_GetPerformanceCounter() - started) * 1000000 / SDL_GetPerformanceFrequency());
-  rgnanoPresent(pixels, logicalW, logicalH, readUs);
+  if (!rgnanoSurface || rgnanoSurface->w != logicalW || rgnanoSurface->h != logicalH ||
+      rgnanoSurface->pitch != logicalW * 4) return;
+  SDL_RenderFlush(renderer);  // the software renderer queues draw commands until flushed
+  rgnanoPresent((const uint32_t*)rgnanoSurface->pixels, logicalW, logicalH, 0);
 }
 #endif
 

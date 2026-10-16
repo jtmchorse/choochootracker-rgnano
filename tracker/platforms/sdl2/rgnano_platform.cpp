@@ -1,6 +1,7 @@
 #ifdef RGNANO_BUILD
 
 #include "rgnano_platform.h"
+#include "rgnano_scale.h"
 #include "version.h"
 #include "corelib_file.h"
 #include <SDL2/SDL.h>
@@ -656,34 +657,10 @@ void rgnanoCanvasSize(int* width, int* height) {
 }
 
 namespace {
-struct Axis {
-  int source = 0;
-  std::vector<int> first;     // first source index per destination index
-  std::vector<int> count;
-  std::vector<int> offset;    // into weights
-  std::vector<uint16_t> weights;
-  void build(int src, int dst) {
-    source = src;
-    first.assign(dst, 0);
-    count.assign(dst, 0);
-    offset.assign(dst, 0);
-    weights.clear();
-    for (int i = 0; i < dst; i++) {
-      long long lo = (long long)i * src, hi = (long long)(i + 1) * src;
-      int j0 = (int)(lo / dst), j1 = (int)((hi - 1) / dst);
-      first[i] = j0;
-      count[i] = j1 - j0 + 1;
-      offset[i] = (int)weights.size();
-      for (int j = j0; j <= j1; j++) {
-        long long a = (long long)j * dst, b = a + dst;
-        weights.push_back((uint16_t)((hi < b ? hi : b) - (lo > a ? lo : a)));
-      }
-    }
-  }
-};
-
-Axis axisX, axisY;
-int tableW = 0, tableH = 0;
+rgnanoscale::GenericScaler genericScaler;
+std::vector<uint32_t> prevSrc;   // last presented source, to find changed rows
+int prevW = 0, prevH = 0;
+bool prevValid = false;
 uint16_t frame565[RGNANO_PHYSICAL_W * RGNANO_PHYSICAL_H];
 bool haveFrame = false;
 uint8_t* fbMemory = NULL;
@@ -695,7 +672,8 @@ const char* ppmPath = NULL;
 int ppmSeconds = 5;
 bool envRead = false;
 long long lastDumpUs = 0, lastPpmUs = 0;
-unsigned long frameCount = 0;
+unsigned long frameCount = 0, skippedFrames = 0;
+unsigned long long sumRows = 0;
 unsigned long long sumScaleUs = 0, sumBlitUs = 0, sumReadUs = 0;
 unsigned maxScaleUs = 0, maxBlitUs = 0, maxReadUs = 0;
 }
@@ -780,73 +758,70 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
     rgnanoLog("present: canvas %dx%d -> %dx%d, fb dump=%s ppm=%s", w, h, RGNANO_PHYSICAL_W, RGNANO_PHYSICAL_H,
               dumpPath ? dumpPath : "(off)", ppmPath ? ppmPath : "(off)");
   }
-  if (w != tableW || h != tableH) {
-    axisX.build(w, RGNANO_PHYSICAL_W);
-    axisY.build(h, RGNANO_PHYSICAL_H);
-    tableW = w;
-    tableH = h;
-  }
   long long t0 = nowUs();
-
-  // Separable box (area) filter. Every destination pixel covers an exact
-  // fractional source area: weights per axis sum to the source length.
-  static std::vector<uint32_t> hrow, acc;
-  hrow.resize((size_t)RGNANO_PHYSICAL_W * 3);
-  acc.resize((size_t)RGNANO_PHYSICAL_W * 3);
-  const uint64_t divisor = (uint64_t)w * (uint64_t)h;
-  const uint64_t reciprocal = (1ULL << 32) / divisor;
-  int cachedRow = -1;
-  for (int dy = 0; dy < RGNANO_PHYSICAL_H; dy++) {
-    std::fill(acc.begin(), acc.end(), 0u);
-    for (int k = 0; k < axisY.count[dy]; k++) {
-      const int sy = axisY.first[dy] + k;
-      const uint32_t wy = axisY.weights[axisY.offset[dy] + k];
-      if (sy != cachedRow) {
-        const uint32_t* line = argb + (size_t)sy * w;
-        for (int dx = 0; dx < RGNANO_PHYSICAL_W; dx++) {
-          uint32_t r = 0, g = 0, b = 0;
-          const uint16_t* wx = &axisX.weights[axisX.offset[dx]];
-          const uint32_t* px = line + axisX.first[dx];
-          for (int j = axisX.count[dx]; j > 0; j--, px++, wx++) {
-            const uint32_t p = *px, wt = *wx;
-            r += ((p >> 16) & 0xff) * wt;
-            g += ((p >> 8) & 0xff) * wt;
-            b += (p & 0xff) * wt;
-          }
-          hrow[dx * 3] = r; hrow[dx * 3 + 1] = g; hrow[dx * 3 + 2] = b;
-        }
-        cachedRow = sy;
-      }
-      for (int i = 0; i < RGNANO_PHYSICAL_W * 3; i++) acc[i] += hrow[i] * wy;
-    }
-    uint16_t* out = frame565 + dy * RGNANO_PHYSICAL_W;
-    for (int dx = 0; dx < RGNANO_PHYSICAL_W; dx++) {
-      uint32_t r = (uint32_t)(((uint64_t)acc[dx * 3] * reciprocal + (1ULL << 31)) >> 32);
-      uint32_t g = (uint32_t)(((uint64_t)acc[dx * 3 + 1] * reciprocal + (1ULL << 31)) >> 32);
-      uint32_t b = (uint32_t)(((uint64_t)acc[dx * 3 + 2] * reciprocal + (1ULL << 31)) >> 32);
-      if (r > 255) r = 255;
-      if (g > 255) g = 255;
-      if (b > 255) b = 255;
-      out[dx] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-    }
+  const size_t words = (size_t)w * h;
+  if (prevW != w || prevH != h) {
+    prevSrc.assign(words, 0);
+    prevW = w; prevH = h;
+    prevValid = false;
   }
-  haveFrame = true;
+  const bool fast = (w == 320 && h == 240 && RGNANO_PHYSICAL_W == 240 && RGNANO_PHYSICAL_H == 240);
+  // Changed destination rows [rowLo, rowHi). Fast path: vertical is 1:1, so source
+  // row y maps to destination row y and only changed rows are converted. Generic
+  // path: any change reconverts the whole frame.
+  static bool rowChanged[RGNANO_PHYSICAL_H];
+  int changedRows = 0;
+  if (fast) {
+    for (int y = 0; y < 240; y++) {
+      const uint32_t* s = argb + (size_t)y * 320;
+      uint32_t* p = prevSrc.data() + (size_t)y * 320;
+      bool ch = !prevValid || rgnanoscale::rowsDiffer(s, p, 320);
+      rowChanged[y] = ch;
+      if (ch) {
+        memcpy(p, s, 320 * 4);
+        rgnanoscale::squashRow320to240(s, frame565 + y * RGNANO_PHYSICAL_W);
+        changedRows++;
+      }
+    }
+  } else {
+    bool ch = !prevValid || rgnanoscale::rowsDiffer(argb, prevSrc.data(), (int)words);
+    if (ch) {
+      memcpy(prevSrc.data(), argb, words * 4);
+      genericScaler.scale(argb, w, h, RGNANO_PHYSICAL_W, RGNANO_PHYSICAL_H, frame565);
+      changedRows = RGNANO_PHYSICAL_H;
+    }
+    for (int y = 0; y < RGNANO_PHYSICAL_H; y++) rowChanged[y] = ch;
+  }
+  prevValid = true;
+  const bool skipped = changedRows == 0;
+  if (!skipped) haveFrame = true;
   long long t1 = nowUs();
 
-  if (dumpPath || ppmPath) {
+  if (skipped) {
+    if (haveFrame && (dumpPath || ppmPath)) flushDumps(false);  // keep debug dumps fresh on static screens
+  } else if (dumpPath || ppmPath) {
     flushDumps(false);
   } else {
     if (!fbTried) openFramebuffer();
     if (fbMemory) {
-      if (fbStride == RGNANO_PHYSICAL_W * 2) {
-        memcpy(fbMemory, frame565, sizeof(frame565));
-      } else {
-        for (int y = 0; y < RGNANO_PHYSICAL_H; y++)
-          memcpy(fbMemory + (size_t)y * fbStride, frame565 + y * RGNANO_PHYSICAL_W, RGNANO_PHYSICAL_W * 2);
+      // Copy only runs of changed rows: the panel is SPI-backed.
+      for (int y = 0; y < RGNANO_PHYSICAL_H;) {
+        if (!rowChanged[y]) { y++; continue; }
+        int y1 = y;
+        while (y1 < RGNANO_PHYSICAL_H && rowChanged[y1]) y1++;
+        if (fbStride == RGNANO_PHYSICAL_W * 2) {
+          memcpy(fbMemory + (size_t)y * fbStride, frame565 + y * RGNANO_PHYSICAL_W, (size_t)(y1 - y) * RGNANO_PHYSICAL_W * 2);
+        } else {
+          for (int r = y; r < y1; r++)
+            memcpy(fbMemory + (size_t)r * fbStride, frame565 + r * RGNANO_PHYSICAL_W, RGNANO_PHYSICAL_W * 2);
+        }
+        y = y1;
       }
     }
   }
   long long t2 = nowUs();
+  sumRows += changedRows;
+  if (skipped) skippedFrames++;
 
   unsigned scaleUs = (unsigned)(t1 - t0), blitUs = (unsigned)(t2 - t1);
   sumScaleUs += scaleUs; sumBlitUs += blitUs; sumReadUs += readbackUs;
@@ -854,9 +829,11 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
   if (blitUs > maxBlitUs) maxBlitUs = blitUs;
   if (readbackUs > maxReadUs) maxReadUs = readbackUs;
   if (++frameCount % 300 == 0) {
-    rgnanoLog("present: %lu frames, avg us read=%llu scale=%llu blit=%llu, max read=%u scale=%u blit=%u",
-              frameCount, sumReadUs / 300, sumScaleUs / 300, sumBlitUs / 300, maxReadUs, maxScaleUs, maxBlitUs);
+    rgnanoLog("present: %lu frames, avg us read=%llu scale=%llu blit=%llu, max read=%u scale=%u blit=%u, skipped=%lu rows_blitted avg=%llu",
+              frameCount, sumReadUs / 300, sumScaleUs / 300, sumBlitUs / 300, maxReadUs, maxScaleUs, maxBlitUs,
+              skippedFrames, sumRows / 300);
     sumScaleUs = sumBlitUs = sumReadUs = 0;
+    skippedFrames = 0; sumRows = 0;
     maxScaleUs = maxBlitUs = maxReadUs = 0;
   }
   if (frameCount == 1 || frameCount == 10)
