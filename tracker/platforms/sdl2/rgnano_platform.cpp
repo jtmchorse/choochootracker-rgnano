@@ -401,7 +401,7 @@ void rgnanoPlatformEarlyInit(void) {
 // ---------------------------------------------------------------------------
 
 void rgnanoCanvasSize(int* width, int* height) {
-  int w = 480, h = 320;
+  int w = 320, h = 240;  // 40x20 grid of the 8x12 font, squashed 0.75x horizontally to 240x240
   const char* env = getenv("RGNANO_CANVAS");
   int ew, eh;
   if (env && sscanf(env, "%dx%d", &ew, &eh) == 2 && ew >= 64 && eh >= 64 && ew <= 1280 && eh <= 960) {
