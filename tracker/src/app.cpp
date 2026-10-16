@@ -373,6 +373,13 @@ int appIsPlaying(void) {
   return status && status->isPlaying;
 }
 
+int appTakeLimiterStats(float* minGain, float* meanReduction, unsigned* engagedFrames, unsigned* totalFrames) {
+  uint32_t engaged = 0, total = 0;
+  if (!chipnomadTakeLimiterStats(chipnomadState, minGain, meanReduction, &engaged, &total)) return 0;
+  *engagedFrames = engaged; *totalFrames = total;
+  return 1;
+}
+
 void appSetup(void) {
   // Registered before anything else touches MIDI: chipnomad_lib's engine
   // path (applyVoiceEvents/chipnomadMidiPanic) now goes through the router,
@@ -455,6 +462,7 @@ void appSetup(void) {
 
   // Set mix volume from settings
   chipnomadState->mixVolume = appSettings.mixVolume;
+  chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter);
   chipnomadState->aySampleDithering = appSettings.aySampleDithering;
 
   // Initialize audio system

@@ -134,15 +134,18 @@ static void mixerStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles
 static void mixerCursor(int, int row) { gfxCursor(23, 2 + row, 4); }
 static void mixerField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
-  gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, row == 0 ? "Mix volume" : "Tilt pivot");
+  gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, row == 0 ? "Mix volume" : row == 1 ? "Tilt pivot" : "Master limiter");
   gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-  if (row == 0) gfxPrintf(23, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f)); else gfxPrintf(23, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
+  if (row == 0) gfxPrintf(23, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f));
+  else if (row == 1) gfxPrintf(23, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
+  else gfxPrint(23, 4, appSettings.masterLimiter ? "ON " : "OFF");
 }
 static int mixerEdit(int, int row, CellEditAction action) {
   if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; } return handled; }
+  if (row == 2) { int handled = edit8noLast(action, (uint8_t*)&appSettings.masterLimiter, 1, 0, 1); if (handled && chipnomadState) chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter); return handled; }
   int handled = edit16withMinMax(action, &chipnomadState->project.tiltPivotHz, 250, 250, 4000); if (handled) projectModified = 1; return handled;
 }
-static ScreenData mixerData = {2, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};
+static ScreenData mixerData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};
 
 static void graphicsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "GRAPHICS"); }
 static void graphicsCursor(int, int row) { gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 ? 6 : 8); }

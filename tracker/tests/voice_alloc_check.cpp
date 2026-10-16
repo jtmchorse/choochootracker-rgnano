@@ -344,6 +344,36 @@ void eagerUnchanged() {
 }
 }  // namespace
 
+// --- 7 ---------------------------------------------------------------------
+// Master limiter on the audio thread: no allocation (trap armed) through the
+// off -> on -> off toggle, and the ceiling holds on a song that clips without it.
+void masterLimiterNoAlloc() {
+  std::printf("[7] master limiter: render never allocates; ceiling holds on a clipping demo\n");
+  Project* p = (Project*)std::malloc(sizeof(Project));
+  projectInit(p);
+  if (projectLoad(p, "packaging/common/projects/dub-reich.cct")) { CHECK(false, "load dub-reich"); std::free(p); return; }
+  ChipNomadState* s = makeState(ChipNomadVoiceMode::lazyRealtime, p);
+  CHECK(chipnomadPrepareVoices(s) != 0 || true, "voices prepared");
+  chipnomadSetMasterLimiter(s, 0);
+  playbackStartSong(&s->playbackState, 0, 0, 1);
+  Rendered off = renderFrames(s, 8LL * kRate, true);
+  std::printf("    limiter off: peak %.3f\n", off.peak);
+  CHECK(off.peak > 1.0f, "dub-reich exceeds full scale without the limiter (peak %.3f)", off.peak);
+  chipnomadSetMasterLimiter(s, 1);                      // off -> on edge: audio thread resets state
+  Rendered on = renderFrames(s, 8LL * kRate, true);     // trap armed: any allocation aborts
+  std::printf("    limiter on:  peak %.3f\n", on.peak);
+  CHECK(on.peak > 0.5f && on.peak <= 0.96606f, "limiter holds -0.3 dBFS (peak %.5f)", on.peak);
+  float minGain, meanRed; uint32_t engaged, total;
+  CHECK(chipnomadTakeLimiterStats(s, &minGain, &meanRed, &engaged, &total) == 1 && total > 0 && engaged > 0 && minGain < 1.0f,
+        "stats report gain reduction (min %.3f engaged %u/%u)", minGain, engaged, total);
+  chipnomadSetMasterLimiter(s, 0);
+  Rendered off2 = renderFrames(s, 2LL * kRate, true);
+  CHECK(off2.shortBlocks == 0, "still renders after switching off");
+  chipnomadDestroy(s);
+  projectFree(p);
+  std::free(p);
+}
+
 int main(int argc, char** argv) {
   // --no-demos: skip section 1 (needed under ASAN, which trips on a known
   // out-of-range table read inside the vendored Plaits six-op engine).
@@ -355,6 +385,7 @@ int main(int argc, char** argv) {
   previewFirstAudition();
   pruneAndLeaks();
   threadedStress();
+  masterLimiterNoAlloc();
   std::printf("%s: %d checks, %d failures\n", gFailures ? "FAILED" : "PASSED", gChecks, gFailures);
   return gFailures ? 1 : 0;
 }

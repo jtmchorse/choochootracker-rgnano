@@ -124,7 +124,7 @@ ALL_SOURCES = $(TEST_SOURCES) $(COMMON_SOURCES) $(MOCK_SOURCES)
 MEASURE_SOURCES = tests/render_engine_measurements.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES)
 BENCHMARK_SOURCES = tests/benchmark_song.cpp $(COMMON_SOURCES) $(MOCK_SOURCES)
 ALL_COMPILE_SOURCES = $(sort $(ALL_SOURCES) $(MEASURE_SOURCES) $(BENCHMARK_SOURCES))
-ALL_COMPILE_SOURCES += tests/beads_lifetime.cpp tests/heap_probe.cpp tests/voice_alloc_check.cpp
+ALL_COMPILE_SOURCES += tests/beads_lifetime.cpp tests/heap_probe.cpp tests/voice_alloc_check.cpp tests/master_measure.cpp
 
 # Compile each translation unit separately so -j can use every core and
 # unchanged files stay cached between test runs.
@@ -264,3 +264,14 @@ $(VOICE_ALLOC_EXECUTABLE): $(VOICE_ALLOC_OBJECTS)
 voice-alloc-check: $(VOICE_ALLOC_EXECUTABLE)
 	@$(VOICE_ALLOC_EXECUTABLE)
 -include $(HEAP_PROBE_OBJECTS:.o=.d) $(VOICE_ALLOC_OBJECTS:.o=.d)
+
+# Offline master-bus measurement / bounce (RG Nano clipping work):
+#   make -f Makefile.test master-measure [RGNANO=1]
+#   $(BUILD_DIR)/master_measure "packaging/common/projects/psy.cct" 32000 60 1 out.wav
+MEASURE_MASTER_EXECUTABLE = $(BUILD_DIR)/master_measure
+MEASURE_MASTER_OBJECTS = $(foreach source,tests/master_measure.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(MEASURE_MASTER_EXECUTABLE): $(MEASURE_MASTER_OBJECTS)
+	@$(CXX) $(MEASURE_MASTER_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: master-measure
+master-measure: $(MEASURE_MASTER_EXECUTABLE)
+-include $(MEASURE_MASTER_OBJECTS:.o=.d)

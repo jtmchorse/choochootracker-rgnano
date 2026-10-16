@@ -63,6 +63,15 @@ logged to `rgnano-log.txt`. 32000 Hz S16 stereo, 512 frames, flush-to-zero set
 on the audio thread. `RGNANO_AUDIO_DEVICE=<SDL device name>` forces a device;
 `RGNANO_AUDIO_TEST_HANG=1` emulates the round-3 hang for the watchdog test.
 
+The master bus ends in a peak limiter (`chipnomad_lib/synth/master_limiter.h`):
+stereo-linked, -0.3 dBFS ceiling, 1.5 ms look-ahead, 80 ms release, about 0.4% of
+the A7 at 32 kHz (estimated). Settings > Mixer > "Master limiter" (settings.txt
+`masterLimiter`, default ON here, OFF on every other platform). Mix volume
+defaults to 50% (-6 dB) so a summed 8-track mix leaves the limiter near idle;
+raise it on the same screen. The `astat` log lines carry `limiter GRmax=.. GRavg=..
+engaged=..%`. The Mixer CLIP! flag means the bus was over full scale BEFORE the
+limiter, i.e. it would have clipped.
+
 ## Controls (SDL keys from the `ample` evdev device)
 
 Up/Down/Left/Right = U/D/L/R, A = edit, B = option, Start = play,

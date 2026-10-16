@@ -26,6 +26,8 @@ extern void (*inputRawCallback)(InputCode input, int isDown);
 int appInputWantsKey(InputCode input);
 // Nonzero while the sequencer is playing (UI frame cap, RG Nano audio stats).
 int appIsPlaying(void);
+// Master limiter gain-reduction counters since the last call (RG Nano audio stats).
+int appTakeLimiterStats(float* minGain, float* meanReduction, unsigned* engagedFrames, unsigned* totalFrames);
 
 
 #ifdef __cplusplus

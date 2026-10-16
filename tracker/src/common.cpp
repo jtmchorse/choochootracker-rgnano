@@ -70,7 +70,16 @@ void initDefaultAppSettings(void) {
 #else
   appSettings.keyRepeatSpeed = 2;
 #endif
+#ifdef RGNANO_BUILD
+  // RG Nano: 50% (-6 dB) of headroom ahead of the master limiter. Summed
+  // 8-track material (a sliced break plus synths) peaks 6 to 8 dB over full
+  // scale; at -6 dB the limiter is nearly transparent instead of pumping.
+  // The Mixer screen raises it back up to 100%.
+  appSettings.mixVolume = 0.5f;
+#else
   appSettings.mixVolume = 1.0f;
+#endif
+  appSettings.masterLimiter = chipnomadDefaultMasterLimiter();  // on for RG Nano, off elsewhere
   appSettings.quality = (int)ChipNomadQuality::medium;
   appSettings.braidsBits = 6;
   appSettings.braidsDrift = 0;
@@ -219,6 +228,7 @@ int settingsSave(void) {
   fprintf(file, "keyRepeatDelay: %d\n", appSettings.keyRepeatDelay);
   fprintf(file, "keyRepeatSpeed: %d\n", appSettings.keyRepeatSpeed);
   fprintf(file, "mixVolume: %f\n", appSettings.mixVolume);
+  fprintf(file, "masterLimiter: %d\n", appSettings.masterLimiter);
   fprintf(file, "quality: %d\n", appSettings.quality);
   fprintf(file, "braidsBits: %d\n", appSettings.braidsBits);
   fprintf(file, "braidsDrift: %d\n", appSettings.braidsDrift);
@@ -317,6 +327,7 @@ int settingsLoad(void) {
 
   FILE* file = fopen(settingsPath, "r");
   if (file == NULL) return 1;
+  bool sawMasterLimiter = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
     char* line = lineBuffer;
@@ -360,6 +371,10 @@ int settingsLoad(void) {
       sscanf(line + 16, "%d", &appSettings.keyRepeatSpeed);
     } else if (strncmp(line, "mixVolume: ", 11) == 0) {
       sscanf(line + 11, "%f", &appSettings.mixVolume);
+    } else if (strncmp(line, "masterLimiter: ", 15) == 0) {
+      int v = 0;
+      sawMasterLimiter = true;
+      if (sscanf(line + 15, "%d", &v) == 1) appSettings.masterLimiter = v ? 1 : 0;
     } else if (strncmp(line, "quality: ", 9) == 0) {
       sscanf(line + 9, "%d", &appSettings.quality);
     } else if (strncmp(line, "braidsBits: ", 12) == 0) {
@@ -509,6 +524,15 @@ int settingsLoad(void) {
   }
 
   fclose(file);
+#ifdef RGNANO_BUILD
+  // One-time migration for a settings.txt written before the master limiter
+  // existed (it has no masterLimiter line): the old 100% default becomes the
+  // new 50% default. A volume the user lowered on purpose is left alone, and
+  // the next save writes masterLimiter so this never runs twice.
+  if (!sawMasterLimiter && appSettings.mixVolume >= 0.99f) appSettings.mixVolume = 0.5f;
+#else
+  (void)sawMasterLimiter;
+#endif
   appSettings.audioSampleRate = kAudioSampleRate;
   // 4,906 was the legacy platform default; other values are rounded to the
   // nearest choice exposed by the audio settings screen.

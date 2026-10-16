@@ -542,6 +542,21 @@ static void addTo(Snap& t, const Snap& w) {
   if (w.maxGapUs > t.maxGapUs) t.maxGapUs = w.maxGapUs;
   if (w.peak > t.peak) t.peak = w.peak;
 }
+// Master limiter gain reduction, fed from the main thread by rgnanoStatsAddLimiter
+// (the engine's counters are read-and-cleared there). minGain 1.0 = no reduction.
+struct LimAcc { float minGain = 1.0f; double reductionSum = 0.0; uint64_t engaged = 0, total = 0; };
+static LimAcc limWin, limTotal;
+static void limAdd(LimAcc& a, const LimAcc& b) {
+  if (b.minGain < a.minGain) a.minGain = b.minGain;
+  a.reductionSum += b.reductionSum; a.engaged += b.engaged; a.total += b.total;
+}
+static void limText(const LimAcc& a, char* out, size_t n) {
+  if (a.total == 0) { snprintf(out, n, "off"); return; }
+  const double db = a.minGain < 1.0f ? -20.0 * log10((double)a.minGain) : 0.0;
+  const double meanRed = a.reductionSum / (double)a.total;   // mean of (1 - gain)
+  const double avgDb = meanRed > 0.0 && meanRed < 1.0 ? -20.0 * log10(1.0 - meanRed) : 0.0;
+  snprintf(out, n, "GRmax=%.1fdB GRavg=%.2fdB engaged=%.1f%%", db, avgDb, 100.0 * (double)a.engaged / (double)a.total);
+}
 static double dbfs(uint32_t peakValue) {
   return peakValue ? 20.0 * log10((double)peakValue / 32768.0) : -999.0;
 }
@@ -553,6 +568,12 @@ static long long processCpuUs(void) {
 }  // namespace astat
 
 long long rgnanoThreadCpuUs(void) { return astat::threadCpuNs() / 1000; }
+
+void rgnanoStatsAddLimiter(float minGain, float meanReduction, unsigned engagedFrames, unsigned totalFrames) {
+  astat::LimAcc b; b.minGain = minGain; b.reductionSum = (double)meanReduction * (double)totalFrames;
+  b.engaged = engagedFrames; b.total = totalFrames;
+  astat::limAdd(astat::limWin, b);
+}
 
 // Called every UI frame from the main loop (main thread). Logs a window every
 // 10 s while the sequencer plays and a summary when it stops.
@@ -580,6 +601,7 @@ void rgnanoStatsTick(int playing) {
   if (playing && !wasPlaying) {
     wasPlaying = true;
     takeWindow();
+    limWin = LimAcc(); limTotal = LimAcc();
     total = Snap();
     windows = 0;
     startWall = lastWall = now;
@@ -597,28 +619,33 @@ void rgnanoStatsTick(int playing) {
 
   const Snap w = takeWindow();
   addTo(total, w);
+  const LimAcc limW = limWin;
+  limWin = LimAcc();
+  limAdd(limTotal, limW);
   const long long proc = processCpuUs(), mainCpu = threadCpuNs() / 1000, audCpu = (long long)audioCpuNs.load() / 1000;
   const double wall = (double)(now - lastWall);
   const double totalWall = (double)(now - startWall);
   const int budget = budgetUs.load();
-  auto line = [&](const char* tag, const Snap& a, double span, long long pCpu, long long mCpu, long long aCpu) {
+  auto line = [&](const char* tag, const Snap& a, const LimAcc& lim, double span, long long pCpu, long long mCpu, long long aCpu) {
+    char limBuf[64];
+    limText(lim, limBuf, sizeof(limBuf));
     if (span < 1.0) span = 1.0;
     if (aCpu < 0) aCpu = 0;  // audio thread was replaced by a buffer-size reopen
     rgnanoLog("astat %s: cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
-              "clip=%u peak=%.1fdBFS | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
+              "clip=%u peak=%.1fdBFS | limiter %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
               tag, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
-              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak),
+              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf,
               100.0 * pCpu / span, 100.0 * aCpu / span, 100.0 * mCpu / span);
   };
   char tag[32];
   if (!stopping) {
     snprintf(tag, sizeof(tag), "%ds", ++windows * 10);
-    line(tag, w, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    line(tag, w, limW, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
     lastWall = now; lastProc = proc; lastMain = mainCpu; lastAudio = audCpu;
   } else {
     wasPlaying = false;
-    line("window(final)", w, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
-    line("SUMMARY", total, totalWall, proc - startProc, mainCpu - startMain, audCpu - startAudio);
+    line("window(final)", w, limW, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    line("SUMMARY", total, limTotal, totalWall, proc - startProc, mainCpu - startMain, audCpu - startAudio);
   }
 }
 

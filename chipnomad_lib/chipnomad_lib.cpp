@@ -26,6 +26,7 @@
 #include "synth/opl_voice.h"
 #include "synth/four_op_voice.h"
 #include "synth/master_effects.h"
+#include "synth/master_limiter.h"
 #include "midi/midi_router.h"
 #include <math.h>
 #include <algorithm>
@@ -1098,6 +1099,8 @@ ChipNomadState* chipnomadCreateEx(ChipNomadVoiceMode voiceMode) {
 
   state->audioMonitor = new AudioMonitor();
   state->masterEffects = new MasterEffects();
+  state->masterLimiter = new MasterLimiter();
+  state->masterLimiterEnabled = 0;  // the app applies appSettings.masterLimiter; exports and tests stay bit-exact
   // Lazy modes build every voice, preview and the master delay line at the
   // real rate in chipnomadInitChips instead of at a throwaway 96 kHz here.
   if (voiceMode != ChipNomadVoiceMode::eager) return state;
@@ -1183,6 +1186,7 @@ void chipnomadDestroy(ChipNomadState* state) {
   free(state->reverbBuffer);
   free(state->delayBuffer);
   delete state->masterEffects;
+  delete state->masterLimiter;
   delete state->audioCommands;
   midiRouterDestroy(state->midiRouter);
   delete state->audioMonitor;
@@ -1209,6 +1213,8 @@ void chipnomadInitChips(ChipNomadState* state, int sampleRate, ChipFactory facto
   memset(state->chips, 0, sizeof(state->chips));
   state->sampleRate = sampleRate;
   state->masterEffects->init((float)sampleRate);
+  state->masterLimiter->init((float)sampleRate);
+  state->masterLimiterActive = 0;
   state->masterEffects->reserve((size_t)state->mixBufferSize / 2);
   delete state->masterInsertChain;
   state->masterInsertChain = nullptr;
@@ -1624,8 +1630,43 @@ static void processMasterMix(ChipNomadState* state, float* output, int frames) {
   }
   for (int i = 0; i < frames * 2; ++i) {
     output[i] *= state->mixVolume;
+    // audioOverload: "this bus WOULD have clipped" - measured before the
+    // limiter, so it means the same with the limiter on or off.
     if (output[i] > 1.0f || output[i] < -1.0f) state->audioOverload = AUDIO_OVERLOAD_COOLDOWN_FRAMES;
   }
+  // Master limiter: last stage on the bus, in place, no allocation. The
+  // off->on edge is handled here (audio thread) so the UI thread never touches
+  // limiter state.
+  const int limiterOn = __atomic_load_n(&state->masterLimiterEnabled, __ATOMIC_RELAXED);
+  if (limiterOn) {
+    if (!state->masterLimiterActive) state->masterLimiter->reset();
+    state->masterLimiterActive = 1;
+    state->masterLimiter->process(output, frames);
+  } else {
+    state->masterLimiterActive = 0;
+  }
+}
+
+int chipnomadDefaultMasterLimiter(void) {
+#ifdef RGNANO_BUILD
+  return 1;
+#else
+  return 0;
+#endif
+}
+
+void chipnomadSetMasterLimiter(ChipNomadState* state, int enabled) {
+  if (state) __atomic_store_n(&state->masterLimiterEnabled, enabled ? 1 : 0, __ATOMIC_RELAXED);
+}
+
+int chipnomadTakeLimiterStats(ChipNomadState* state, float* minGain, float* meanReduction, uint32_t* engagedFrames, uint32_t* totalFrames) {
+  if (!state || !state->masterLimiter) return 0;
+  MasterLimiter::Stats s = state->masterLimiter->takeStats();
+  if (minGain) *minGain = s.minGain;
+  if (meanReduction) *meanReduction = s.meanReduction;
+  if (engagedFrames) *engagedFrames = s.engagedFrames;
+  if (totalFrames) *totalFrames = s.totalFrames;
+  return 1;
 }
 
 static int chipnomadRenderImpl(ChipNomadState* state, float* buffer, int samples);

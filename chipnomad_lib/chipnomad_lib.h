@@ -52,6 +52,7 @@ struct PlaybackStatus {
   uint8_t isPlaying;
 };
 class MasterEffects;
+class MasterLimiter;
 
 #define AUDIO_OVERLOAD_COOLDOWN_FRAMES 5
 #define PITCH_CONFLICT_COOLDOWN_FRAMES 5
@@ -161,6 +162,12 @@ struct ChipNomadState {
   MidiRouterState* midiRouter;
   VoiceMonitor voiceMonitors[PROJECT_MAX_TRACKS];
   MasterEffects* masterEffects;
+  // Master bus limiter (synth/master_limiter.h). masterLimiterEnabled is
+  // written by the UI thread, read once per chunk by the audio thread, which
+  // resets the limiter on the off->on edge itself (masterLimiterActive).
+  MasterLimiter* masterLimiter;
+  int masterLimiterEnabled;
+  int masterLimiterActive;
   AudioCommandQueue* audioCommands;
   AudioMonitor* audioMonitor;
   int benchmarkBypassPan;
@@ -257,6 +264,23 @@ int chipnomadRender(ChipNomadState* state, float* buffer, int samples);
 * @param quality Quality level
 */
 void chipnomadSetQuality(ChipNomadState* state, ChipNomadQuality quality);
+
+/**
+* Master limiter on the final stereo bus (after mixVolume and the master
+* effects, before the host converts to integer). Off keeps the render
+* bit-identical to a build without it. A fresh state has it off (offline
+* export and tests are unaffected); the app applies appSettings.masterLimiter,
+* whose default is chipnomadDefaultMasterLimiter(): on for RGNANO_BUILD, off
+* elsewhere.
+*
+* state->audioOverload keeps its meaning with the limiter on or off: the bus
+* exceeded full scale before limiting, i.e. it WOULD have clipped.
+*/
+int chipnomadDefaultMasterLimiter(void);
+void chipnomadSetMasterLimiter(ChipNomadState* state, int enabled);
+/** Reads and clears the gain-reduction counters. Returns 0 if unavailable. */
+/** meanReduction = average of (1 - gain) over all frames. */
+int chipnomadTakeLimiterStats(ChipNomadState* state, float* minGain, float* meanReduction, uint32_t* engagedFrames, uint32_t* totalFrames);
 void chipnomadSetBraidsSettings(ChipNomadState* state, uint8_t bits,
                                uint8_t drift, uint8_t signature,
                                uint32_t signatureSeed);

@@ -39,6 +39,9 @@ long long rgnanoThreadCpuUs(void);
 // Per-UI-frame hook (main thread): audio callback / clipping / CPU window log
 // every 10 s while `playing`, and a summary when playback stops.
 void rgnanoStatsTick(int playing);
+// Master limiter gain reduction since the last call (min gain 1.0 = none, mean of
+// (1 - gain), frames processed / engaged >0.1 dB). Main thread; folded into the next astat line.
+void rgnanoStatsAddLimiter(float minGain, float meanReduction, unsigned engagedFrames, unsigned totalFrames);
 
 // Audio (called from corelib_audio.cpp).
 int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize);

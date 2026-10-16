@@ -649,6 +649,10 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
     {
       const int playing = appIsPlaying();
       targetFps = playing ? 20 : FPS;
+      {
+        float lim = 1.0f, mean = 0.0f; unsigned eng = 0, tot = 0;
+        if (appTakeLimiterStats(&lim, &mean, &eng, &tot)) rgnanoStatsAddLimiter(lim, mean, eng, tot);
+      }
       rgnanoStatsTick(playing);
     }
 #endif

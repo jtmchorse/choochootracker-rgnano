@@ -63,6 +63,7 @@ struct AppSettings {
   int keyRepeatDelay;
   int keyRepeatSpeed;
   float mixVolume;
+  int masterLimiter;  // settings.txt "masterLimiter": 1 = peak limiter on the master bus
   int quality;
   int braidsBits;
   int braidsDrift;
