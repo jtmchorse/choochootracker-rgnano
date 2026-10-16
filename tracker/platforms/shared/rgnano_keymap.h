@@ -5,7 +5,8 @@
 // include it. The buttons are a uinput keyboard ("ample") fed by fkgpiod;
 // SDL's evdev backend turns KEY_<letter> into the lower-case ASCII keysym, and
 // SDLK_<letter> is that same ASCII value, so plain char literals are exact.
-// Select is the MENU button (fkgpiod.conf: MAP MENU TO KEY KEY_Q).
+// Select is the button fkgpiod calls FN (KEY_K); the MENU button (KEY_Q) is
+// left unmapped because the launcher's key map uses it for system combos.
 #define RGNANO_KEY_UP      'u'
 #define RGNANO_KEY_DOWN    'd'
 #define RGNANO_KEY_LEFT    'l'
@@ -18,12 +19,25 @@
 #define RGNANO_KEY_R1      'n'
 #define RGNANO_KEY_L2      'v'   // Fn+L
 #define RGNANO_KEY_R2      'o'   // Fn+R
-#define RGNANO_KEY_SELECT  'q'
+#define RGNANO_KEY_SELECT  'k'
 #define RGNANO_KEY_START   's'
-#define RGNANO_KEY_MENU    'k'   // Fn: swallowed, never mapped
+#define RGNANO_KEY_MENU    'q'   // MENU: unmapped by default (system combos)
 
 // Bump when the saved RG Nano key mapping must be rebuilt from the defaults.
-#define RGNANO_SETTINGS_VERSION 2
+#define RGNANO_SETTINGS_VERSION 3
+
+// Fallback when the launcher's key map could not be loaded: fkgpiod's stock
+// FN combos arrive as j (Fn+Left), i (Fn+Right), h (Fn+Down). Returns the
+// direction key they stand for (Shift+direction), or 0. Fn+Up is a daemon
+// command (snapshot) and never reaches the app.
+static inline int rgnanoFnChordDirection(int sym) {
+  switch (sym) {
+    case 'j': return RGNANO_KEY_LEFT;
+    case 'i': return RGNANO_KEY_RIGHT;
+    case 'h': return RGNANO_KEY_DOWN;
+  }
+  return 0;
+}
 
 #ifdef __cplusplus
 #include "common.h"
@@ -43,7 +57,7 @@ static inline void rgnanoSetSlot0(KeyMapping* m) {
   m->keyEdit[0] = (InputCode){kb, RGNANO_KEY_A};
 }
 
-// True for the 13 keys the fkgpiod keyboard can produce (u d l r a b x y m n s q k).
+// True for the keys the fkgpiod keyboard can produce (u d l r a b x y m n s q k, plus the stock FN chords).
 static inline int rgnanoIsHardwareKey(int32_t code) {
   switch (code) {
     case RGNANO_KEY_UP: case RGNANO_KEY_DOWN: case RGNANO_KEY_LEFT: case RGNANO_KEY_RIGHT:
@@ -66,7 +80,8 @@ static inline int rgnanoIsHardwareKey(int32_t code) {
 // A missing keymap (keyUp[0] unset) is left alone: appSetup builds the
 // defaults (and applies keymap-preset.txt). Returns 1 if slot 0 was rebuilt.
 static inline int rgnanoMigrateKeymap(AppSettings* settings) {
-  if (settings->keymapVersion >= RGNANO_SETTINGS_VERSION) return 0;
+  const int from = settings->keymapVersion;
+  if (from >= RGNANO_SETTINGS_VERSION) return 0;
   settings->keymapVersion = RGNANO_SETTINGS_VERSION;
   KeyMapping* m = &settings->keyMapping;
   if (m->keyUp[0].deviceType == InputDeviceType::none) return 0;
@@ -77,9 +92,17 @@ static inline int rgnanoMigrateKeymap(AppSettings* settings) {
   int stale = 0;
   for (const InputCode* slot : slots)
     if (slot->deviceType != InputDeviceType::keyboard || !rgnanoIsHardwareKey(slot->code)) stale = 1;
-  if (!stale) return 0;
-  rgnanoSetSlot0(m);
-  return 1;
+  if (stale) {
+    rgnanoSetSlot0(m);
+    return 1;
+  }
+  // v3: Select moved from Q (the old default) to K. Only the old default is
+  // moved; any other Shift binding is a deliberate remap and stays.
+  if (from < 3 && m->keyShift[0].deviceType == InputDeviceType::keyboard && m->keyShift[0].code == 'q') {
+    m->keyShift[0] = (InputCode){InputDeviceType::keyboard, RGNANO_KEY_SELECT};
+    return 1;
+  }
+  return 0;
 }
 #endif
 

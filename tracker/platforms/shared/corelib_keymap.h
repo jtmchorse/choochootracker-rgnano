@@ -52,7 +52,9 @@
 #elif defined(RGNANO_BUILD)
 // RG Nano (FunKey-OS). The buttons are a uinput keyboard ("ample") whose keys
 // SDL's evdev backend turns into these letters (proven on the device).
-// LSDJ style: A = edit, B = option, Start = play, Select (Q) = shift.
+// LSDJ style: A = edit, B = option, Start = play, Select (K) = shift.
+// The Select button is wired to fkgpiod's FN line (KEY_K); MENU (Q) is the
+// separate button the launcher's key map reserves for system combos.
 #define BTN_UP          (SDLK_u)
 #define BTN_DOWN        (SDLK_d)
 #define BTN_LEFT        (SDLK_l)
@@ -67,9 +69,9 @@
 // Fn chords. They feed the motion record/erase slots.
 #define BTN_L2          (SDLK_v)
 #define BTN_R2          (SDLK_o)
-#define BTN_SELECT      (SDLK_q)
+#define BTN_SELECT      (SDLK_k)
 #define BTN_START       (SDLK_s)
-// Fn alone (K) is the quit-chord modifier: it is swallowed, never mapped.
+// Select (K) held + X is the quit chord; K is also delivered as Shift.
 #define BTN_MENU        (SDLK_k)
 
 #else

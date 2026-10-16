@@ -18,7 +18,7 @@ const Pad kPad[] = {
   {'u', keyUp, "Up"}, {'d', keyDown, "Down"}, {'l', keyLeft, "Left"}, {'r', keyRight, "Right"},
   {'a', keyEdit, "A"}, {'b', keyOpt, "B"}, {'x', kNone, "X"}, {'y', kNone, "Y"},
   {'m', kNone, "L (motion live, consumed by the app)"}, {'n', kNone, "R (free)"}, {'s', keyPlay, "Start"},
-  {'q', keyShift, "Select"}, {'k', kNone, "Fn (swallowed)"},
+  {'k', keyShift, "Select (fkgpiod FN line)"}, {'q', kNone, "Menu (unmapped, system combos)"},
 };
 
 void sdlKey(int sym, bool down) {
@@ -82,11 +82,11 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: Select+Left and Select+Right navig
   boot();
   for (char dir : {'l', 'r'}) {
     screenSetup(&screenProject, 0);
-    sdlKey('q', true);
+    sdlKey('k', true);
     sdlKey(dir, true);
     CHECK(currentScreen == (dir == 'l' ? &screenMixer : &screenChain));
     sdlKey(dir, false);
-    sdlKey('q', false);
+    sdlKey('k', false);
   }
 }
 
@@ -108,29 +108,60 @@ void bindLikeKeyMappingScreen(InputCode* slot, int sym) {
 bool sameCode(InputCode a, InputCode b) { return a.deviceType == b.deviceType && a.code == b.code; }
 }
 
-TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a fresh install gets Select on q") {
+TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a fresh install gets Select on k") {
   settingsLoad();                       // no settings.txt
   CHECK(rgnanoMigrateKeymap(&appSettings) == 0);  // missing keymap: left for appSetup
   CHECK(appSettings.keymapVersion == RGNANO_SETTINGS_VERSION);
   rgnanoSetSlot0(&appSettings.keyMapping);        // what inputInitDefaultKeyMapping does
-  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {InputDeviceType::keyboard, 'q'}));
+  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {InputDeviceType::keyboard, 'k'}));
 }
 
-TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a 4.x settings.txt with the 4.x keymap keeps Select on q") {
+TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a 4.x settings.txt with the old Select on q is moved to k") {
   KeyMapping v4 = {};
   rgnanoSetSlot0(&v4);
+  v4.keyShift[0] = {InputDeviceType::keyboard, 'q'};  // the old default
   appSettings.keyMapping = v4;
   REQUIRE(settingsSave() == 0);         // keymapVersion 0, as a build without the field wrote it
   appSettings.keyMapping = {};
   REQUIRE(settingsLoad() == 0);
   appSettings.keymapVersion = 0;
+  CHECK(rgnanoMigrateKeymap(&appSettings) == 1);
+  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {InputDeviceType::keyboard, 'k'}));
   CHECK(rgnanoMigrateKeymap(&appSettings) == 0);
-  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {InputDeviceType::keyboard, 'q'}));
   boot();
   mockLastInputKeys = kNone;
-  sdlKey('q', true);
+  sdlKey('k', true);
   CHECK(mockLastInputKeys == keyShift);
-  sdlKey('q', false);
+  sdlKey('k', false);
+  CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'q'}));  // MENU is not mapped
+}
+
+TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: v2 -> v3 migration only moves the old default Select") {
+  const InputDeviceType kb = InputDeviceType::keyboard;
+  KeyMapping v2 = {};
+  rgnanoSetSlot0(&v2);
+  v2.keyShift[0] = {kb, 'q'};
+  appSettings.keyMapping = v2;
+  appSettings.keymapVersion = 2;
+  CHECK(rgnanoMigrateKeymap(&appSettings) == 1);
+  CHECK(appSettings.keymapVersion == 3);
+  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'k'}));
+  CHECK(sameCode(appSettings.keyMapping.keyUp[0], {kb, 'u'}));
+  // A v2 map where Shift was deliberately moved elsewhere is left alone.
+  appSettings.keyMapping = v2;
+  appSettings.keyMapping.keyShift[0] = {kb, 'y'};
+  appSettings.keymapVersion = 2;
+  CHECK(rgnanoMigrateKeymap(&appSettings) == 0);
+  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'y'}));
+  CHECK(appSettings.keymapVersion == 3);
+}
+
+TEST_CASE("RG Nano: stock Fn chords map to Shift+direction in the fallback") {
+  CHECK(rgnanoFnChordDirection('j') == 'l');
+  CHECK(rgnanoFnChordDirection('i') == 'r');
+  CHECK(rgnanoFnChordDirection('h') == 'd');
+  CHECK(rgnanoFnChordDirection('u') == 0);
+  CHECK(rgnanoFnChordDirection('k') == 0);
 }
 
 TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a settings.txt with a foreign (desktop) keymap is rebuilt once") {
@@ -147,7 +178,7 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a settings.txt with a foreign (des
   REQUIRE(settingsLoad() == 0);
   appSettings.keymapVersion = 0;
   CHECK(rgnanoMigrateKeymap(&appSettings) == 1);
-  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'q'}));
+  CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'k'}));
   CHECK(sameCode(appSettings.keyMapping.keyUp[0], {kb, 'u'}));
   CHECK(appSettings.keymapVersion == RGNANO_SETTINGS_VERSION);
   CHECK(rgnanoMigrateKeymap(&appSettings) == 0);  // one time only
@@ -158,7 +189,7 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: a deliberate remap survives the mi
   KeyMapping custom = {};
   rgnanoSetSlot0(&custom);
   custom.keyShift[0] = {kb, 'n'};       // the shift-r1 preset
-  custom.keyMotionLive[0] = {kb, 'q'};  // Select swapped onto stick-live
+  custom.keyMotionLive[0] = {kb, 'q'};  // MENU bound to stick-live
   custom.keyEdit[1] = {kb, 'y'};        // extra slots are kept too
   appSettings.keyMapping = custom;
   appSettings.keymapVersion = 0;        // saved by an older build
@@ -204,10 +235,10 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: every one of the 13 keys can be bo
     CHECK(mockLastInputKeys == keyShift);
     sdlKey(sym, false);
   }
-  // Fn (K) stays swallowed while unmapped, but is delivered once mapped.
+  // Select (K) is mapped by default; MENU (Q) is not, until the user binds it.
   KeyMapping fresh = {};
   rgnanoSetSlot0(&fresh);
   appSettings.keyMapping = fresh;
-  CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'k'}));
-  CHECK(appInputWantsKey({InputDeviceType::keyboard, 'q'}));
+  CHECK(appInputWantsKey({InputDeviceType::keyboard, 'k'}));
+  CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'q'}));
 }

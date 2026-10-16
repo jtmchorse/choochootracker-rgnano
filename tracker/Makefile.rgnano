@@ -72,7 +72,7 @@ RGNano-deploy: RGNano
 	cp -L $(RGNANO_SDL2_ROOT)/lib/libSDL2-2.0.so.0 $(PACKAGE_ROOT)/libs/libSDL2-2.0.so.0
 	$(STRIP) $(PACKAGE_ROOT)/libs/libSDL2-2.0.so.0
 	cp -r packaging/common/. $(PACKAGE_ROOT)/
-	cp packaging/rgnano/choochootracker.sh packaging/rgnano/choochootracker.funkey-s.desktop \
+	cp packaging/rgnano/choochootracker.sh packaging/rgnano/choochootracker.key packaging/rgnano/choochootracker.funkey-s.desktop \
 	   packaging/rgnano/choochootracker.png $(PACKAGE_ROOT)/
 	chmod 755 $(PACKAGE_ROOT)/choochootracker $(PACKAGE_ROOT)/choochootracker.sh
 	rm -f $(OPK)

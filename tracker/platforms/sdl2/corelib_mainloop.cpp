@@ -9,6 +9,7 @@
 #ifdef RGNANO_BUILD
 #include "app.h"
 #include "rgnano_platform.h"
+#include "rgnano_keymap.h"
 #endif
 
 #if defined(MIYOOPORTS_BUILD) || defined(RGNANO_BUILD)
@@ -352,15 +353,31 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
           continue;
         }
 #endif
+#ifdef RGNANO_BUILD
+        int swallowKey = 0;  // Select (K) is also Shift; only the fallback chords are swallowed
+        if (event.key.keysym.sym == BTN_MENU) menu = event.type == SDL_KEYDOWN;
+#else
         int swallowKey = event.key.keysym.sym == BTN_MENU;
         if (swallowKey) menu = event.type == SDL_KEYDOWN;
+#endif
 #ifdef RGNANO_BUILD
         {
-          // Fn (K) is the quit-chord modifier and is swallowed, unless the key
-          // mapping screen is capturing or the user mapped it: then it is a
-          // normal key, so all 13 buttons can be remapped.
           InputCode code = (InputCode){InputDeviceType::keyboard, event.key.keysym.sym};
-          if (swallowKey && appInputWantsKey(code)) swallowKey = 0;
+          // Select (K) is a normal key now: it is Shift, and Select+X still quits.
+          // Fallback for a failed launcher key map load: the stock Fn chords
+          // j/i/h arrive instead of Select+direction; turn them back into
+          // Shift+direction unless the user mapped those keys.
+          int chordDir = rgnanoFnChordDirection(event.key.keysym.sym);
+          if (chordDir && !appInputWantsKey(code)) {
+            int down = event.type == SDL_KEYDOWN;
+            InputCode shift = appSettings.keyMapping.keyShift[0];
+            InputCode dir = (InputCode){InputDeviceType::keyboard, chordDir};
+            eventData.type = down ? MainLoopEvent::keyDown : MainLoopEvent::keyUp;
+            if (down) { eventData.data.input = shift; onEvent(eventData); }
+            eventData.data.input = dir; onEvent(eventData);
+            if (!down) { eventData.data.input = shift; onEvent(eventData); }
+            swallowKey = 1;
+          }
           // The first 400 key events are logged (sym, scancode, mapped or not):
           // enough for a device log to show exactly what each button delivered.
           static int keyLogCount = 0;
@@ -368,7 +385,7 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
             keyLogCount++;
             rgnanoLog("key %s sym=%d scancode=%d mod=0x%x -> %s", event.type == SDL_KEYDOWN ? "down" : "up  ",
               (int)event.key.keysym.sym, (int)event.key.keysym.scancode, (unsigned)event.key.keysym.mod,
-              swallowKey ? "swallowed (Fn)" : (appInputWantsKey(code) ? "mapped" : "unmapped"));
+              swallowKey ? "fallback Fn chord -> Shift+dir" : (appInputWantsKey(code) ? "mapped" : "unmapped"));
           }
         }
 #endif
