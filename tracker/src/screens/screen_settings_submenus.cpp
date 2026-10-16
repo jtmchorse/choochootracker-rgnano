@@ -15,7 +15,11 @@ static void noHeader(int, CellState) {}
 static void setup(int) {}
 static void draw(void) {}
 
+#ifdef RGNANO_BUILD
+static const int audioBufferSizes[] = {32, 64, 128, 256, 512, 1024, 2048};
+#else
 static const int audioBufferSizes[] = {32, 64, 128, 256, 512, 1024};
+#endif
 static int displayedCpuLoad = -1;
 
 static void drawAudioCpuLoad(void) {
@@ -29,7 +33,7 @@ static void drawAudioCpuLoad(void) {
 }
 
 static void audioStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "AUDIO"); }
-static void audioCursor(int, int) { gfxCursor(23, 2, appSettings.audioBufferSize == 1024 ? 4 : 3); }
+static void audioCursor(int, int) { gfxCursor(23, 2, appSettings.audioBufferSize >= 1024 ? 4 : 3); }
 static void audioField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   if (row == 0) {

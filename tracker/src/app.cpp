@@ -1,5 +1,6 @@
 #include "soundbank_library.h"
 #include <string.h>
+#include <stdlib.h>
 #include "corelib_gfx.h"
 #include "corelib_font.h"
 #include "corelib_file.h"
@@ -367,6 +368,11 @@ void appResetInputState(void) {
 /**
 * @brief Initialize the application: setup audio system, load auto-saved project, show the first screen
 */
+int appIsPlaying(void) {
+  const PlaybackStatus* status = chipnomadState ? chipnomadGetPlaybackStatus(chipnomadState) : NULL;
+  return status && status->isPlaying;
+}
+
 void appSetup(void) {
   // Registered before anything else touches MIDI: chipnomad_lib's engine
   // path (applyVoiceEvents/chipnomadMidiPanic) now goes through the router,
@@ -386,11 +392,13 @@ void appSetup(void) {
   }
   if (appSettings.keyMapping.keyMotionLive[0].deviceType == InputDeviceType::none) {
     appSettings.keyMapping.keyMotionLive[0] = (InputCode){InputDeviceType::keyboard, BTN_L1};
+#ifndef RGNANO_BUILD  // RG Nano: motion record/erase stay unbound (no L2/R2)
     if (appSettings.keyMapping.keyMotionRecord[0].deviceType == InputDeviceType::none ||
         (appSettings.keyMapping.keyMotionRecord[0].code == BTN_R2 && appSettings.keyMapping.keyMotionErase[0].code == BTN_L2)) {
       appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::keyboard, BTN_L2};
       appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::keyboard, BTN_R2};
     }
+#endif
   }
 
   // Keyboard input reset
@@ -457,6 +465,11 @@ void appSetup(void) {
     appSettings.braidsSignatureSeed);
   audioManager.start(appSettings.audioSampleRate, appSettings.audioBufferSize);
   audioManager.resume();
+#ifdef RGNANO_BUILD
+  // Debug only: start the loaded song right away so a headless qemu boot
+  // exercises the audio callback and the instrumentation without input.
+  if (getenv("RGNANO_AUTOPLAY")) chipnomadQueuePlaybackStartSong(chipnomadState, 0, 0, 1);
+#endif
 
   int savedInputPort = findMidiPortByName(1, appSettings.midiInputDeviceName);
   if (savedInputPort >= 0 && midiRouterOpenInput(savedInputPort) == 0) appSettings.midiInputDevice = savedInputPort;

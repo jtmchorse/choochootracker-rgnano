@@ -119,8 +119,14 @@ void inputInitDefaultKeyMapping(void) {
   appSettings.keyMapping.keyPlay[0] = (InputCode){InputDeviceType::keyboard, BTN_START};
   appSettings.keyMapping.keyShift[0] = (InputCode){InputDeviceType::keyboard, BTN_SELECT};
   appSettings.keyMapping.keyMotionLive[0] = (InputCode){InputDeviceType::keyboard, BTN_L1};
+#ifdef RGNANO_BUILD
+  // No sticks and no L2/R2 on the RG Nano: motion record/erase stay unbound.
+  appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::none, 0};
+  appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::none, 0};
+#else
   appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::keyboard, BTN_L2};
   appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::keyboard, BTN_R2};
+#endif
   appSettings.keyMapping.keyEdit[0] = (InputCode){InputDeviceType::keyboard, BTN_A};
 
 #if defined(DESKTOP_BUILD) || defined(ANDROID_BUILD) || defined(WEB_BUILD) || defined(MIYOOPORTS_BUILD)

@@ -144,7 +144,7 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: v2 -> v3 migration only moves the 
   appSettings.keyMapping = v2;
   appSettings.keymapVersion = 2;
   CHECK(rgnanoMigrateKeymap(&appSettings) == 1);
-  CHECK(appSettings.keymapVersion == 3);
+  CHECK(appSettings.keymapVersion == RGNANO_SETTINGS_VERSION);
   CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'k'}));
   CHECK(sameCode(appSettings.keyMapping.keyUp[0], {kb, 'u'}));
   // A v2 map where Shift was deliberately moved elsewhere is left alone.
@@ -153,7 +153,7 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: v2 -> v3 migration only moves the 
   appSettings.keymapVersion = 2;
   CHECK(rgnanoMigrateKeymap(&appSettings) == 0);
   CHECK(sameCode(appSettings.keyMapping.keyShift[0], {kb, 'y'}));
-  CHECK(appSettings.keymapVersion == 3);
+  CHECK(appSettings.keymapVersion == RGNANO_SETTINGS_VERSION);
 }
 
 TEST_CASE("RG Nano: stock Fn chords map to Shift+direction in the fallback") {
@@ -241,4 +241,42 @@ TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: every one of the 13 keys can be bo
   appSettings.keyMapping = fresh;
   CHECK(appInputWantsKey({InputDeviceType::keyboard, 'k'}));
   CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'q'}));
+}
+
+TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: no motion record/erase bindings and no v/o keys by default") {
+  KeyMapping fresh = {};
+  rgnanoSetSlot0(&fresh);
+  for (int i = 0; i < 3; i++) {
+    CHECK(fresh.keyMotionRecord[i].deviceType == InputDeviceType::none);
+    CHECK(fresh.keyMotionErase[i].deviceType == InputDeviceType::none);
+  }
+  CHECK_FALSE(rgnanoIsHardwareKey('v'));
+  CHECK_FALSE(rgnanoIsHardwareKey('o'));
+  appSettings.keyMapping = fresh;
+  boot();
+  // Nothing in a freshly booted map answers to the old Fn+L / Fn+R chords.
+  CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'v'}));
+  CHECK_FALSE(appInputWantsKey({InputDeviceType::keyboard, 'o'}));
+}
+
+TEST_CASE_FIXTURE(RgnanoKeyFixture, "RG Nano: v3 -> v4 migration clears motion record/erase and raises the 512 buffer once") {
+  const InputDeviceType kb = InputDeviceType::keyboard;
+  KeyMapping v3 = {};
+  rgnanoSetSlot0(&v3);
+  v3.keyMotionRecord[0] = {kb, 'v'};
+  v3.keyMotionErase[0] = {kb, 'o'};
+  appSettings.keyMapping = v3;
+  appSettings.keymapVersion = 3;
+  appSettings.audioBufferSize = 512;
+  CHECK(rgnanoMigrateKeymap(&appSettings) == 1);
+  for (int i = 0; i < 3; i++) {
+    CHECK(appSettings.keyMapping.keyMotionRecord[i].deviceType == InputDeviceType::none);
+    CHECK(appSettings.keyMapping.keyMotionErase[i].deviceType == InputDeviceType::none);
+  }
+  CHECK(appSettings.audioBufferSize == RGNANO_AUDIO_BUFFER_DEFAULT);
+  CHECK(sameCode(appSettings.keyMapping.keyUp[0], {kb, 'u'}));
+  // Once only: a later deliberate 512 is left alone.
+  appSettings.audioBufferSize = 512;
+  CHECK(rgnanoMigrateKeymap(&appSettings) == 0);
+  CHECK(appSettings.audioBufferSize == 512);
 }

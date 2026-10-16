@@ -24,6 +24,8 @@ InputCode appCurrentInput(void);
 extern void (*inputRawCallback)(InputCode input, int isDown);
 // True if the app wants this keyboard key: the key mapping screen is capturing, or the key is mapped.
 int appInputWantsKey(InputCode input);
+// Nonzero while the sequencer is playing (UI frame cap, RG Nano audio stats).
+int appIsPlaying(void);
 
 
 #ifdef __cplusplus

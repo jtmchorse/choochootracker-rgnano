@@ -30,6 +30,10 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <alsa/asoundlib.h>
+#include <math.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/resource.h>
 
 // ---------------------------------------------------------------------------
 // Data directory and log
@@ -429,6 +433,196 @@ struct OpenAttempt {
   std::string error;
 };
 
+
+// ---------------------------------------------------------------------------
+// Audio / CPU instrumentation (device log diagnosis of crackle)
+//
+// The audio callback only touches relaxed atomics and two clock reads; every
+// file write happens in rgnanoStatsTick() on the main thread (a SCHED_FIFO
+// thread must never block on flash I/O). Lines are prefixed "astat" so they
+// are not fsynced like the "audio" open lines.
+// ---------------------------------------------------------------------------
+namespace astat {
+struct Snap {
+  uint32_t calls, over50, over80, over100, late, clipped, maxRenderUs, maxGapUs, peak;
+  uint64_t sumRenderUs;
+};
+static std::atomic<uint32_t> calls{0}, over50{0}, over80{0}, over100{0}, late{0}, clipped{0};
+static std::atomic<uint32_t> maxRenderUs{0}, maxGapUs{0}, peak{0};
+static std::atomic<uint64_t> sumRenderUs{0};
+static std::atomic<uint64_t> audioCpuNs{0};      // audio thread CPU time, stored each callback
+static std::atomic<int> budgetUs{0}, cbFrames{0}, cbRate{0};
+static std::atomic<int> rtState{0};              // 0 untried, 1 SCHED_FIFO ok, 2 failed
+static std::atomic<int> rtError{0}, rtPolicy{-1};
+static std::atomic<bool> resetGap{true};
+static long long lastBeginUs = 0;                // audio thread only
+static const int kFifoPriority = 70;
+
+static void atomicMax(std::atomic<uint32_t>& a, uint32_t v) {
+  uint32_t old = a.load(std::memory_order_relaxed);
+  while (old < v && !a.compare_exchange_weak(old, v, std::memory_order_relaxed)) {}
+}
+static long long threadCpuNs(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+  return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
+// SCHED_FIFO for the calling (audio) thread. The callback is bounded work
+// (one buffer of render, a few ms of a 32 ms budget). If the engine ever
+// spun forever the kernel's RT throttle (sched_rt_runtime_us, default
+// 950000 of every 1000000 us) still leaves 5% of the core to the UI and the
+// rest of the system; the poller logs that value so a "-1 (no throttle)"
+// device is visible. The main/UI thread stays SCHED_OTHER.
+static void trySetFifo(void) {
+  struct sched_param sp;
+  memset(&sp, 0, sizeof(sp));
+  sp.sched_priority = kFifoPriority;
+  int rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+  rtError.store(rc, std::memory_order_relaxed);
+  rtPolicy.store(sched_getscheduler(0), std::memory_order_relaxed);
+  rtState.store(rc == 0 ? 1 : 2, std::memory_order_release);
+}
+
+static long long begin(int frames, int rate) {
+  static thread_local bool rtTried = false;
+  if (!rtTried) { rtTried = true; trySetFifo(); }
+  const long long t = nowUs();
+  const long long budget = rate > 0 ? (long long)frames * 1000000LL / rate : 0;
+  budgetUs.store((int)budget, std::memory_order_relaxed);
+  cbFrames.store(frames, std::memory_order_relaxed);
+  cbRate.store(rate, std::memory_order_relaxed);
+  if (resetGap.exchange(false)) lastBeginUs = 0;
+  if (lastBeginUs && budget > 0) {
+    const long long gap = t - lastBeginUs;
+    atomicMax(maxGapUs, gap > 0xFFFFFFFFLL ? 0xFFFFFFFFu : (uint32_t)gap);
+    if (gap * 2 > budget * 3) late.fetch_add(1, std::memory_order_relaxed);
+  }
+  lastBeginUs = t;
+  return t;
+}
+
+static void end(const int16_t* out, int frames, long long t0) {
+  const long long dt = nowUs() - t0;
+  const long long budget = budgetUs.load(std::memory_order_relaxed);
+  calls.fetch_add(1, std::memory_order_relaxed);
+  sumRenderUs.fetch_add((uint64_t)(dt > 0 ? dt : 0), std::memory_order_relaxed);
+  atomicMax(maxRenderUs, dt > 0 ? (uint32_t)dt : 0);
+  if (budget > 0) {
+    if (dt * 2 > budget) over50.fetch_add(1, std::memory_order_relaxed);
+    if (dt * 10 > budget * 8) over80.fetch_add(1, std::memory_order_relaxed);
+    if (dt > budget) over100.fetch_add(1, std::memory_order_relaxed);
+  }
+  // Output level, after the engine's S16 conversion (which saturates): a
+  // sample at full scale means the float master was at or beyond 1.0.
+  uint32_t pk = 0, clip = 0;
+  for (int i = 0; i < frames * 2; i++) {
+    int v = out[i];
+    uint32_t a = (uint32_t)(v < 0 ? -v : v);
+    if (a > pk) pk = a;
+    if (v >= 32767 || v <= -32768) clip++;
+  }
+  if (clip) clipped.fetch_add(clip, std::memory_order_relaxed);
+  atomicMax(peak, pk);
+  audioCpuNs.store((uint64_t)threadCpuNs(), std::memory_order_relaxed);
+}
+
+static Snap takeWindow(void) {
+  Snap s;
+  s.calls = calls.exchange(0); s.over50 = over50.exchange(0); s.over80 = over80.exchange(0);
+  s.over100 = over100.exchange(0); s.late = late.exchange(0); s.clipped = clipped.exchange(0);
+  s.maxRenderUs = maxRenderUs.exchange(0); s.maxGapUs = maxGapUs.exchange(0); s.peak = peak.exchange(0);
+  s.sumRenderUs = sumRenderUs.exchange(0);
+  return s;
+}
+static void addTo(Snap& t, const Snap& w) {
+  t.calls += w.calls; t.over50 += w.over50; t.over80 += w.over80; t.over100 += w.over100;
+  t.late += w.late; t.clipped += w.clipped; t.sumRenderUs += w.sumRenderUs;
+  if (w.maxRenderUs > t.maxRenderUs) t.maxRenderUs = w.maxRenderUs;
+  if (w.maxGapUs > t.maxGapUs) t.maxGapUs = w.maxGapUs;
+  if (w.peak > t.peak) t.peak = w.peak;
+}
+static double dbfs(uint32_t peakValue) {
+  return peakValue ? 20.0 * log10((double)peakValue / 32768.0) : -999.0;
+}
+static long long processCpuUs(void) {
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return ((long long)ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000LL + ru.ru_utime.tv_usec + ru.ru_stime.tv_usec;
+}
+}  // namespace astat
+
+long long rgnanoThreadCpuUs(void) { return astat::threadCpuNs() / 1000; }
+
+// Called every UI frame from the main loop (main thread). Logs a window every
+// 10 s while the sequencer plays and a summary when it stops.
+void rgnanoStatsTick(int playing) {
+  using namespace astat;
+  static bool wasPlaying = false, rtLogged = false;
+  static long long startWall, lastWall, startProc, lastProc, startMain, lastMain, startAudio, lastAudio;
+  static Snap total;
+  static int windows = 0;
+  const long long now = nowUs();
+
+  if (!rtLogged && rtState.load(std::memory_order_acquire) != 0) {
+    rtLogged = true;
+    FILE* f = fopen("/proc/sys/kernel/sched_rt_runtime_us", "r");
+    long long rtRuntime = -2;
+    if (f) { if (fscanf(f, "%lld", &rtRuntime) != 1) rtRuntime = -2; fclose(f); }
+    if (rtState.load() == 1)
+      rgnanoLog("astat: audio thread SCHED_FIFO prio %d OK (policy=%d, kernel sched_rt_runtime_us=%lld, -1 means no RT throttle)",
+                kFifoPriority, rtPolicy.load(), rtRuntime);
+    else
+      rgnanoLog("astat: audio thread SCHED_FIFO prio %d FAILED: %s (staying SCHED_OTHER, policy=%d)", kFifoPriority,
+                strerror(rtError.load()), rtPolicy.load());
+  }
+
+  if (playing && !wasPlaying) {
+    wasPlaying = true;
+    takeWindow();
+    total = Snap();
+    windows = 0;
+    startWall = lastWall = now;
+    startProc = lastProc = processCpuUs();
+    startMain = lastMain = threadCpuNs() / 1000;
+    startAudio = lastAudio = (long long)audioCpuNs.load() / 1000;
+    const int rate = cbRate.load(), frames = cbFrames.load();
+    rgnanoLog("astat: playback started; callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s",
+              frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)");
+    return;
+  }
+  if (!wasPlaying) return;
+  const bool stopping = !playing;
+  if (!stopping && now - lastWall < 10LL * 1000000LL) return;
+
+  const Snap w = takeWindow();
+  addTo(total, w);
+  const long long proc = processCpuUs(), mainCpu = threadCpuNs() / 1000, audCpu = (long long)audioCpuNs.load() / 1000;
+  const double wall = (double)(now - lastWall);
+  const double totalWall = (double)(now - startWall);
+  const int budget = budgetUs.load();
+  auto line = [&](const char* tag, const Snap& a, double span, long long pCpu, long long mCpu, long long aCpu) {
+    if (span < 1.0) span = 1.0;
+    if (aCpu < 0) aCpu = 0;  // audio thread was replaced by a buffer-size reopen
+    rgnanoLog("astat %s: cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
+              "clip=%u peak=%.1fdBFS | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
+              tag, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
+              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak),
+              100.0 * pCpu / span, 100.0 * aCpu / span, 100.0 * mCpu / span);
+  };
+  char tag[32];
+  if (!stopping) {
+    snprintf(tag, sizeof(tag), "%ds", ++windows * 10);
+    line(tag, w, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    lastWall = now; lastProc = proc; lastMain = mainCpu; lastAudio = audCpu;
+  } else {
+    wasPlaying = false;
+    line("window(final)", w, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    line("SUMMARY", total, totalWall, proc - startProc, mainCpu - startMain, audCpu - startAudio);
+  }
+}
+
+static int audioDevRate = 32000;  // rate the device was opened at
 static SDL_AudioStream* bridgeStream = NULL;  // engine rate -> device rate when they differ
 static int bridgeEngineRate = 0;
 static int bridgeFrames = 0;
@@ -437,14 +631,20 @@ static void SDLCALL audioTrampoline(void*, Uint8* stream, int length) {
   enableFlushToZero();
   AudioCallback* callback = audioCallbackPtr.load(std::memory_order_acquire);
   if (!callback) { memset(stream, 0, length); return; }
-  if (!bridgeStream) { callback((int16_t*)stream, length / 4); return; }
-  static std::vector<int16_t> scratch;
-  if (scratch.size() < (size_t)bridgeFrames * 2) scratch.resize((size_t)bridgeFrames * 2);
-  while (SDL_AudioStreamAvailable(bridgeStream) < length) {
-    callback(scratch.data(), bridgeFrames);
-    SDL_AudioStreamPut(bridgeStream, scratch.data(), bridgeFrames * 4);
+  const int frames = length / 4;
+  const long long t0 = astat::begin(frames, audioDevRate);
+  if (!bridgeStream) {
+    callback((int16_t*)stream, frames);
+  } else {
+    static std::vector<int16_t> scratch;
+    if (scratch.size() < (size_t)bridgeFrames * 2) scratch.resize((size_t)bridgeFrames * 2);
+    while (SDL_AudioStreamAvailable(bridgeStream) < length) {
+      callback(scratch.data(), bridgeFrames);
+      SDL_AudioStreamPut(bridgeStream, scratch.data(), bridgeFrames * 4);
+    }
+    SDL_AudioStreamGet(bridgeStream, stream, length);
   }
-  SDL_AudioStreamGet(bridgeStream, stream, length);
+  astat::end((const int16_t*)stream, frames, t0);
 }
 
 static void openWorker(std::shared_ptr<OpenAttempt> attempt, int rate, int samples) {
@@ -541,10 +741,13 @@ static bool openAudio(int rate, int samples) {
   }
   audioFailed = false;
   audioDevice = device;
+  audioDevRate = devRate;
+  astat::resetGap = true;
   audioRate = rate;
   audioSamples = samples;
   audioDeviceName = name;
-  rgnanoLog("audio: CHOSEN device '%s', device rate %d Hz, engine rate %d Hz", name.empty() ? "default" : name.c_str(), devRate, rate);
+  rgnanoLog("audio: CHOSEN device '%s', device rate %d Hz, engine rate %d Hz, effective buffer %d frames = %d ms",
+            name.empty() ? "default" : name.c_str(), devRate, rate, samples, samples * 1000 / (devRate ? devRate : 1));
   return true;
 }
 
@@ -568,7 +771,11 @@ static void startSink(int rate, int samples) {
       if (!audioPaused.load()) {
         enableFlushToZero();
         AudioCallback* callback = audioCallbackPtr.load(std::memory_order_acquire);
-        if (callback) callback(scratch.data(), samples);
+        if (callback) {
+          const long long t0 = astat::begin(samples, rate);
+          callback(scratch.data(), samples);
+          astat::end(scratch.data(), samples, t0);
+        }
       }
       std::this_thread::sleep_until(next);
     }
@@ -603,6 +810,7 @@ int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize) {
 
 void rgnanoAudioPause(int isPaused) {
   audioPaused = isPaused;
+  astat::resetGap = true;
   if (audioDevice) SDL_PauseAudioDevice(audioDevice, isPaused);
 }
 
@@ -634,8 +842,8 @@ void rgnanoPlatformEarlyInit(void) {
   }
   // Audio before anything else touches the tty or the evdev nodes: that is the
   // order round 2 used when the open worked.
-  rgnanoLog("early init: opening audio first (32000 Hz, 512 frames)");
-  openAudio(32000, 512);
+  rgnanoLog("early init: opening audio first (32000 Hz, 1024 frames)");
+  openAudio(32000, 1024);
   seedAssets();
   logSync = false;
 }
@@ -758,7 +966,7 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
     rgnanoLog("present: canvas %dx%d -> %dx%d, fb dump=%s ppm=%s", w, h, RGNANO_PHYSICAL_W, RGNANO_PHYSICAL_H,
               dumpPath ? dumpPath : "(off)", ppmPath ? ppmPath : "(off)");
   }
-  long long t0 = nowUs();
+  long long t0 = rgnanoThreadCpuUs();  // CPU time of the main thread, not wall: the audio thread preempts us
   const size_t words = (size_t)w * h;
   if (prevW != w || prevH != h) {
     prevSrc.assign(words, 0);
@@ -795,7 +1003,7 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
   prevValid = true;
   const bool skipped = changedRows == 0;
   if (!skipped) haveFrame = true;
-  long long t1 = nowUs();
+  long long t1 = rgnanoThreadCpuUs();
 
   if (skipped) {
     if (haveFrame && (dumpPath || ppmPath)) flushDumps(false);  // keep debug dumps fresh on static screens
@@ -819,7 +1027,7 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
       }
     }
   }
-  long long t2 = nowUs();
+  long long t2 = rgnanoThreadCpuUs();
   sumRows += changedRows;
   if (skipped) skippedFrames++;
 
@@ -829,7 +1037,7 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
   if (blitUs > maxBlitUs) maxBlitUs = blitUs;
   if (readbackUs > maxReadUs) maxReadUs = readbackUs;
   if (++frameCount % 300 == 0) {
-    rgnanoLog("present: %lu frames, avg us read=%llu scale=%llu blit=%llu, max read=%u scale=%u blit=%u, skipped=%lu rows_blitted avg=%llu",
+    rgnanoLog("present (thread CPU us): %lu frames, avg us read=%llu scale=%llu blit=%llu, max read=%u scale=%u blit=%u, skipped=%lu rows_blitted avg=%llu",
               frameCount, sumReadUs / 300, sumScaleUs / 300, sumBlitUs / 300, maxReadUs, maxScaleUs, maxBlitUs,
               skippedFrames, sumRows / 300);
     sumScaleUs = sumBlitUs = sumReadUs = 0;
@@ -841,6 +1049,7 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
 }
 
 void rgnanoPlatformShutdown(void) {
+  rgnanoStatsTick(0);  // summary if the app quit while playing
   rgnanoAudioClose();
   if (haveFrame) flushDumps(true);
   rgnanoLog("shutdown");

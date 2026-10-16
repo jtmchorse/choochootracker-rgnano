@@ -252,7 +252,8 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
       // silently quit the app instead of doing nothing (or saving, in key
       // jazz mode) - keep the combo off there and use the in-app Quit menu.
       if (event.type == SDL_QUIT ||
-#ifndef DESKTOP_BUILD
+#if !defined(DESKTOP_BUILD) && !defined(RGNANO_BUILD)
+          // RG Nano: no quit chord at all (Settings > Quit ChooChooTracker only).
           (event.type == SDL_KEYDOWN && (menu && event.key.keysym.sym == BTN_X))
 #else
           0
@@ -355,7 +356,6 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
 #endif
 #ifdef RGNANO_BUILD
         int swallowKey = 0;  // Select (K) is also Shift; only the fallback chords are swallowed
-        if (event.key.keysym.sym == BTN_MENU) menu = event.type == SDL_KEYDOWN;
 #else
         int swallowKey = event.key.keysym.sym == BTN_MENU;
         if (swallowKey) menu = event.type == SDL_KEYDOWN;
@@ -363,7 +363,7 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
 #ifdef RGNANO_BUILD
         {
           InputCode code = (InputCode){InputDeviceType::keyboard, event.key.keysym.sym};
-          // Select (K) is a normal key now: it is Shift, and Select+X still quits.
+          // Select (K) is a normal key: it is Shift. There is no quit chord.
           // Fallback for a failed launcher key map load: the stock Fn chords
           // j/i/h arrive instead of Select+direction; turn them back into
           // Shift+direction unless the user mapped those keys.
@@ -641,6 +641,16 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
     int targetFps = SDL_GetTicks() < interactionUntil ? 60 : requestedFps;
 #else
     int targetFps = FPS;
+#endif
+#ifdef RGNANO_BUILD
+    // One Cortex-A7 shared with the audio thread: while the sequencer plays,
+    // present at ~20 fps (50 ms) and leave the rest of the core to the
+    // engine; 30 fps when stopped.
+    {
+      const int playing = appIsPlaying();
+      targetFps = playing ? 20 : FPS;
+      rgnanoStatsTick(playing);
+    }
 #endif
     uint32_t delay = 1000 / (uint32_t)targetFps;
     if (delay > busytime) {

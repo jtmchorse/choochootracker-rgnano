@@ -21,7 +21,8 @@ int main(int argv, char** args) {
   settingsLoad();
 #ifdef RGNANO_BUILD
   if (rgnanoMigrateKeymap(&appSettings))
-    rgnanoLog("keymap: saved key map held keys this hardware cannot send; slot 0 reset to the RG Nano defaults (keymapVersion %d)", appSettings.keymapVersion);
+    rgnanoLog("keymap: saved key map migrated to the RG Nano layout (keymapVersion %d)", appSettings.keymapVersion);
+  rgnanoLog("audio: buffer setting %d frames", appSettings.audioBufferSize);
 #endif
 
   // Load custom font before gfxSetup so it uses the correct font

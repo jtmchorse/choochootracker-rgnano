@@ -24,6 +24,8 @@ static const int kAudioSampleRate = 48000;
 static int defaultAudioBufferSize(void) {
 #ifdef WEB_BUILD
   return 1024;
+#elif defined(RGNANO_BUILD)
+  return 1024;  // 32 ms at 32 kHz: 512 (16 ms) crackled on the single Cortex-A7 core
 #elif defined(PORTMASTER_BUILD)
   return 512;
 #elif defined(ANDROID_BUILD) || defined(DESKTOP_BUILD)
@@ -34,7 +36,11 @@ static int defaultAudioBufferSize(void) {
 }
 
 static int normalizeAudioBufferSize(int size) {
+#ifdef RGNANO_BUILD
+  static const int sizes[] = {32, 64, 128, 256, 512, 1024, 2048};
+#else
   static const int sizes[] = {32, 64, 128, 256, 512, 1024};
+#endif
   int closest = sizes[0];
   long long closestDistance = llabs((long long)closest - size);
   for (int candidate : sizes) {

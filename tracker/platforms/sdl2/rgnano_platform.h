@@ -33,6 +33,13 @@ void rgnanoCanvasSize(int* width, int* height);
 // the RGNANO_FB_DUMP file. readbackUs is the caller's SDL_RenderReadPixels cost.
 void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs);
 
+// CPU time (us) of the calling thread; the presenter and stats use it so a
+// preempting audio thread does not inflate the numbers.
+long long rgnanoThreadCpuUs(void);
+// Per-UI-frame hook (main thread): audio callback / clipping / CPU window log
+// every 10 s while `playing`, and a summary when playback stops.
+void rgnanoStatsTick(int playing);
+
 // Audio (called from corelib_audio.cpp).
 int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize);
 void rgnanoAudioPause(int isPaused);
