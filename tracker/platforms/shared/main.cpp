@@ -7,8 +7,16 @@
 #include "corelib_mainloop.h"
 #include "app.h"
 #include "common.h"
+#ifdef RGNANO_BUILD
+#include "rgnano_platform.h"
+#endif
 
 int main(int argv, char** args) {
+#ifdef RGNANO_BUILD
+  // Data dir, log, first-run asset seeding and the audio open all happen
+  // before settings, video or evdev are touched.
+  rgnanoPlatformEarlyInit();
+#endif
   settingsLoad();
 
   // Load custom font before gfxSetup so it uses the correct font
@@ -30,6 +38,9 @@ int main(int argv, char** args) {
   appCleanup();
   gfxCleanup();
   mainLoopQuit();
+#ifdef RGNANO_BUILD
+  rgnanoPlatformShutdown();
+#endif
 #endif
 
   return 0;

@@ -136,6 +136,30 @@ int fileGetDefaultDirectory(char* buffer, int bufferSize) {
 #ifdef ANDROID_BUILD
   extern int androidGetWorkspacePath(char*, int);
   return androidGetWorkspacePath(buffer, bufferSize);
+#elif defined(RGNANO_BUILD)
+  // The OPK is a read-only squashfs mount; settings, autosave, projects and
+  // exports all live on the SD card. RGNANO_DATA_DIR overrides it for tests.
+  // If the SD card is missing or read-only, fall back to /tmp so the app
+  // still boots (nothing saved there survives a reboot).
+  static char workspace[4096];
+  if (!workspace[0]) {
+    const char* env = getenv("RGNANO_DATA_DIR");
+    snprintf(workspace, sizeof(workspace), "%s", env && env[0] ? env : "/mnt/ChooChooTracker");
+    createDirectoryRecursive(workspace);
+    char probe[4096 + 32];
+    snprintf(probe, sizeof(probe), "%s/.write-probe", workspace);
+    FILE* f = fopen(probe, "w");
+    if (f) {
+      fclose(f);
+      unlink(probe);
+    } else {
+      fprintf(stderr, "rgnano: %s is not writable, falling back to /tmp/ChooChooTracker\n", workspace);
+      snprintf(workspace, sizeof(workspace), "/tmp/ChooChooTracker");
+      createDirectoryRecursive(workspace);
+    }
+  }
+  snprintf(buffer, bufferSize, "%s", workspace);
+  return 0;
 #elif defined(MACOS_BUILD)
   const char* home = getenv("HOME");
   if (home) {

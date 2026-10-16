@@ -37,6 +37,10 @@ enum GamepadInputCode {
 
 // Initialize default key mappings based on platform/keyboard layout
 void inputInitDefaultKeyMapping(void);
+#ifdef RGNANO_BUILD
+// "lsdj" (Select = Shift) or "shift-r1". Returns 0 on success.
+int inputApplyKeymapPreset(const char* name);
+#endif
 
 // Convert input code to human-readable name
 const char* inputGetKeyName(InputCode input);

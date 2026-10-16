@@ -14,6 +14,14 @@
 #include "button_icons.h"
 #endif
 
+#ifdef RGNANO_BUILD
+#include "rgnano_platform.h"
+#endif
+// Miyoo and RG Nano blit 32-bit ARGB (packed 0xAARRGGBB) textures.
+#if defined(MIYOOPORTS_BUILD) || defined(RGNANO_BUILD)
+#define GFX_ARGB_TEXTURES 1
+#endif
+
 #define PRINT_BUFFER_SIZE (256)
 #define TEXT_COLS (40)
 #define TEXT_ROWS (20)
@@ -114,7 +122,7 @@ static SDL_Texture* titleTexture = NULL;
 static void drawTrackerLabel(const char* text, int centerX, int y, int color);
 
 static Uint32 nativeTexturePixelFormat(void) {
-#ifdef MIYOOPORTS_BUILD
+#ifdef GFX_ARGB_TEXTURES
   // MMIYOO documents ARGB8888 as its only confirmed correct 32-bit format.
   return SDL_PIXELFORMAT_ARGB8888;
 #else
@@ -160,7 +168,8 @@ static int createCompositionTexture(void) {
   useCompositionTarget();
   return 1;
 #else
-  compositionTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+  // RG Nano reads this target back every frame: ARGB8888 makes that a memcpy.
+  compositionTexture = SDL_CreateTexture(renderer, nativeTexturePixelFormat(),
     SDL_TEXTUREACCESS_TARGET, logicalW, logicalH);
   if (!compositionTexture) return 0;
   compositionW = logicalW;
@@ -277,7 +286,7 @@ GfxImage* gfxImageLoadBMP(const char* path) {
   const int width = surface->w;
   const int height = surface->h;
   SDL_Surface* rgba = SDL_ConvertSurfaceFormat(surface,
-#ifdef MIYOOPORTS_BUILD
+#ifdef GFX_ARGB_TEXTURES
     SDL_PIXELFORMAT_ARGB8888,
 #else
     SDL_PIXELFORMAT_RGBA32,
@@ -537,6 +546,10 @@ static void createFontTexture(void) {
 // TrimUI Brick's NextUI build), so SDL_INIT_EVERYTHING would fail.
 #if defined(PORTMASTER_BUILD)
 #define SDL_INIT_FLAGS (SDL_INIT_EVERYTHING & ~SDL_INIT_HAPTIC & ~SDL_INIT_SENSOR)
+#elif defined(RGNANO_BUILD)
+// Dummy video + evdev keyboard. No joystick/controller/haptic/sensor: the
+// bundled SDL is built without them and the buttons arrive as key events.
+#define SDL_INIT_FLAGS (SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_TIMER)
 #elif defined(WEB_BUILD)
 #define SDL_INIT_FLAGS (SDL_INIT_EVERYTHING & ~SDL_INIT_HAPTIC)
 #else
@@ -560,6 +573,13 @@ int gfxSetup(int *screenWidth, int *screenHeight) {
 #ifdef DESKTOP_BUILD
   screenW = 640;
   screenH = 480;
+  if (screenWidth != NULL) *screenWidth = screenW;
+  if (screenHeight != NULL) *screenHeight = screenH;
+#elif defined(RGNANO_BUILD)
+  // The UI renders into a logical canvas of any size (rgnanoCanvasSize); the
+  // physical panel is always 240x240 and is fed by the area-downscaling
+  // presenter, never by SDL. Ignore a stale screenWidth/Height from settings.txt.
+  rgnanoCanvasSize(&screenW, &screenH);
   if (screenWidth != NULL) *screenWidth = screenW;
   if (screenHeight != NULL) *screenHeight = screenH;
 #else
@@ -590,9 +610,16 @@ int gfxSetup(int *screenWidth, int *screenHeight) {
   }
 #endif
 
+#ifdef RGNANO_BUILD
+  // The (dummy video) window is the physical panel size; nothing is presented
+  // through it. The renderer draws only into the composition texture.
+  const int windowW = RGNANO_PHYSICAL_W, windowH = RGNANO_PHYSICAL_H;
+#else
+  const int windowW = screenW, windowH = screenH;
+#endif
   window = SDL_CreateWindow(printBuffer,
     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-    screenW, screenH,
+    windowW, windowH,
     SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI
 #ifdef ANDROID_BUILD
     | SDL_WINDOW_RESIZABLE
@@ -613,8 +640,13 @@ int gfxSetup(int *screenWidth, int *screenHeight) {
 
   // Prefer a VSync'd GPU renderer. The composition target below removes any
   // dependency on the platform retaining window-backbuffer contents.
-#ifdef WEB_BUILD
+#if defined(WEB_BUILD)
   renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+#elif defined(RGNANO_BUILD)
+  // No GPU: the software renderer is the only option, and its render targets
+  // can be read back for the downscale/blit.
+  renderer = NULL;
+  if (!createSoftwareRenderer()) renderer = NULL;
 #else
   renderer = SDL_CreateRenderer(window, -1,
     SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -631,7 +663,7 @@ int gfxSetup(int *screenWidth, int *screenHeight) {
   // Desktop and web keep the requested logical window size. SDL's drawable
   // size may be the physical monitor size with the software renderer.
   int drawableW, drawableH;
-#if defined(DESKTOP_BUILD) || defined(WEB_BUILD)
+#if defined(DESKTOP_BUILD) || defined(WEB_BUILD) || defined(RGNANO_BUILD)
   drawableW = screenW;
   drawableH = screenH;
 #else
@@ -850,6 +882,31 @@ void gfxRect(int x, int y, int w, int h) {
   isDirty = 1;
 }
 
+#ifdef RGNANO_BUILD
+// Reads the finished composition target back and hands it to the presenter,
+// which area-downscales it to 240x240 RGB565 and blits /dev/fb0.
+static void rgnanoPresentFrame(void) {
+  static uint32_t* pixels = NULL;
+  static int pixelsW = 0, pixelsH = 0;
+  if (!compositionTexture) return;
+  if (!pixels || pixelsW != logicalW || pixelsH != logicalH) {
+    free(pixels);
+    pixels = (uint32_t*)malloc((size_t)logicalW * logicalH * sizeof(uint32_t));
+    pixelsW = logicalW;
+    pixelsH = logicalH;
+    if (!pixels) return;
+  }
+  SDL_SetRenderTarget(renderer, compositionTexture);
+  const Uint64 started = SDL_GetPerformanceCounter();
+  if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, logicalW * 4) != 0) {
+    fprintf(stderr, "SDL_RenderReadPixels failed: %s\n", SDL_GetError());
+    return;
+  }
+  const unsigned readUs = (unsigned)((SDL_GetPerformanceCounter() - started) * 1000000 / SDL_GetPerformanceFrequency());
+  rgnanoPresent(pixels, logicalW, logicalH, readUs);
+}
+#endif
+
 void gfxUpdateScreen(void) {
 #ifdef ANDROID_BUILD
   // Android can rotate the native surface without delivering a window event.
@@ -870,7 +927,9 @@ void gfxUpdateScreen(void) {
 #endif
   if (isDirty) {
 #ifndef WEB_BUILD
-#ifdef MIYOOPORTS_BUILD
+#if defined(RGNANO_BUILD)
+    rgnanoPresentFrame();
+#elif defined(MIYOOPORTS_BUILD)
     // Rendering already happened on the MMIYOO window framebuffer; copying
     // through a texture here corrupts alpha bitmap previews on this backend.
     SDL_RenderPresent(renderer);
@@ -995,7 +1054,7 @@ void gfxDrawBitmap(Bitmap* bitmap, int col, int row) {
     for (int y = 0; y < bitmap->heightPixels; y++) {
       for (int x = 0; x < bitmap->widthPixels; x++) {
         uint8_t alpha = bitmap->data[y * bitmap->widthPixels + x];
-#ifdef MIYOOPORTS_BUILD
+#ifdef GFX_ARGB_TEXTURES
         pixelData[y * (pitch / 4) + x] = ((uint32_t)alpha << 24) |
           ((uint32_t)fgR << 16) | ((uint32_t)fgG << 8) | fgB;
 #else

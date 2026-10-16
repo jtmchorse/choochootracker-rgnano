@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ChooChooTracker
+Comment=Chip music tracker
+Exec=choochootracker.sh
+Icon=choochootracker
+Categories=applications
+

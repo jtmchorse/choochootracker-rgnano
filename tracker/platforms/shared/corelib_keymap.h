@@ -5,6 +5,8 @@
 // RG35xx: no SDL header needed, uses hardcoded j2k.so keycodes
 #elif defined(MIYOOPORTS_BUILD)
 #include <SDL/SDL.h>
+#elif defined(RGNANO_BUILD)
+#include <SDL2/SDL.h>
 #else
 #include <SDL2/SDL.h>
 #endif
@@ -46,6 +48,29 @@
 #define BTN_SELECT      SDLK_RCTRL
 #define BTN_START       SDLK_RETURN
 #define BTN_MENU        0
+
+#elif defined(RGNANO_BUILD)
+// RG Nano (FunKey-OS). The buttons are a uinput keyboard ("ample") whose keys
+// SDL's evdev backend turns into these letters (proven on the device).
+// LSDJ style: A = edit, B = option, Start = play, Select (Q) = shift.
+#define BTN_UP          (SDLK_u)
+#define BTN_DOWN        (SDLK_d)
+#define BTN_LEFT        (SDLK_l)
+#define BTN_RIGHT       (SDLK_r)
+#define BTN_A           (SDLK_a)
+#define BTN_B           (SDLK_b)
+#define BTN_X           (SDLK_x)
+#define BTN_Y           (SDLK_y)
+#define BTN_L1          (SDLK_m)
+#define BTN_R1          (SDLK_n)
+// No L2/R2 on the hardware: Fn+L arrives as V and Fn+R as O, the only free
+// Fn chords. They feed the motion record/erase slots.
+#define BTN_L2          (SDLK_v)
+#define BTN_R2          (SDLK_o)
+#define BTN_SELECT      (SDLK_q)
+#define BTN_START       (SDLK_s)
+// Fn alone (K) is the quit-chord modifier: it is swallowed, never mapped.
+#define BTN_MENU        (SDLK_k)
 
 #else
 // Other platforms (Desktop, PortMaster, Android)

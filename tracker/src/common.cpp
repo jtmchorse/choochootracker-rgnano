@@ -13,7 +13,13 @@
 static char settingsPath[PATH_LENGTH + 32];
 static char autosavePath[PATH_LENGTH + 32];
 static char lineBuffer[1024];
+#ifdef RGNANO_BUILD
+// RG Nano: one Cortex-A7. 32 kHz is what the speaker/USB DAC path was proven
+// at, and every engine renders correctly at it.
+static const int kAudioSampleRate = 32000;
+#else
 static const int kAudioSampleRate = 48000;
+#endif
 
 static int defaultAudioBufferSize(void) {
 #ifdef WEB_BUILD
@@ -109,7 +115,9 @@ void initDefaultAppSettings(void) {
   strncpy(appSettings.ayWavetablePath, "/AY_wavetables", PATH_LENGTH);
   strncpy(appSettings.scwfPath, "/waveforms", PATH_LENGTH);
   strncpy(appSettings.srWavetablePath, "/SR_wavetables", PATH_LENGTH);
-#elif defined(ANDROID_BUILD)
+#elif defined(ANDROID_BUILD) || defined(RGNANO_BUILD)
+  // RG Nano: the OPK mount is read-only, so every user-writable directory
+  // lives in the seeded /mnt/ChooChooTracker workspace (see rgnano_platform.cpp).
   char workspace[PATH_LENGTH];
   if (fileGetDefaultDirectory(workspace, sizeof(workspace)) != 0) strncpy(workspace, ".", sizeof(workspace));
   snprintf(appSettings.projectPath, sizeof(appSettings.projectPath), "%s/projects", workspace);
@@ -147,7 +155,7 @@ void initDefaultAppSettings(void) {
   appSettings.ayWavetablePath[PATH_LENGTH] = '\0';
   appSettings.scwfPath[PATH_LENGTH] = '\0';
   appSettings.srWavetablePath[PATH_LENGTH] = '\0';
-#ifdef ANDROID_BUILD
+#if defined(ANDROID_BUILD) || defined(RGNANO_BUILD)
   snprintf(appSettings.pitchTablePath, sizeof(appSettings.pitchTablePath), "%s/pitch-tables", workspace);
   snprintf(appSettings.instrumentPath, sizeof(appSettings.instrumentPath), "%s/instruments", workspace);
   snprintf(appSettings.themePath, sizeof(appSettings.themePath), "%s/themes", workspace);

@@ -46,7 +46,7 @@ void SampleVoice::init(float outputSampleRate) {
   endFrame_ = 0;
   active_ = false;
   useStretch_ = false;
-#if defined(PORTMASTER_BUILD) || defined(ANDROID_BUILD) || defined(WEB_BUILD)
+#if defined(PORTMASTER_BUILD) || defined(ANDROID_BUILD) || defined(WEB_BUILD) || defined(RGNANO_BUILD)
   stretch_.init(outputSampleRate_, true);
 #else
   stretch_.init(outputSampleRate_, false);

@@ -7,8 +7,8 @@
 #include "corelib_input.h"
 #include "../../src/corelib/corelib_assets.h"
 
-#ifdef MIYOOPORTS_BUILD
-// MMIYOO is a software framebuffer backend. The tracker state and audio run
+#if defined(MIYOOPORTS_BUILD) || defined(RGNANO_BUILD)
+// MMIYOO (and the RG Nano) is a software framebuffer backend. The tracker state and audio run
 // independently, while 30 UI frames per second keeps the tiny display
 // responsive without spending most of the console CPU on redraws.
 #define FPS 30

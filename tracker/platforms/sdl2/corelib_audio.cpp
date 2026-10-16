@@ -1,6 +1,18 @@
 #include "corelib_audio.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#ifdef RGNANO_BUILD
+// RG Nano: the device is opened (with a watchdog, speaker fallback and an FTZ
+// callback) by rgnano_platform.cpp before video/evdev start; these only bind
+// the engine callback to it.
+#include "rgnano_platform.h"
+
+int audioSetup(AudioCallback* audioCallback, int sampleRate, int bufferSize) {
+  return rgnanoAudioAttach(audioCallback, sampleRate, bufferSize);
+}
+void audioPause(int isPaused) { rgnanoAudioPause(isPaused); }
+void audioCleanup(void) { rgnanoAudioClose(); }
+#else
 #ifdef WEB_BUILD
 #include <emscripten.h>
 static AudioCallback* webAudioCallback = nullptr;
@@ -154,3 +166,5 @@ extern "C" EMSCRIPTEN_KEEPALIVE int webRestartAudio() {
   return result;
 }
 #endif
+
+#endif // RGNANO_BUILD
