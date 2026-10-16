@@ -15,7 +15,12 @@ class Exporter {
 
   public:
     Exporter(Project* project, int startRow) {
-      this->chipnomadState = chipnomadCreate();
+      // Offline render on this thread. Where the engine defaults to lazy
+      // voices (RGNANO_BUILD) the exporter builds them on demand on its own
+      // thread instead of allocating the eager 110 MB set next to the app's.
+      this->chipnomadState = chipnomadCreateEx(
+        chipnomadDefaultVoiceMode() == ChipNomadVoiceMode::eager ? ChipNomadVoiceMode::eager
+                                                                 : ChipNomadVoiceMode::lazyOffline);
       this->chipnomadState->project = *project;
       this->chipnomadState->ownsProjectResources = 0;
       this->renderedSeconds = 0;

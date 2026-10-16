@@ -74,7 +74,12 @@ struct PreparedPreset {
 };
 class SampleCache {
  public:
+#ifdef RGNANO_BUILD
+  // RG Nano has ~47 MB usable RAM shared with the OS: 8 MB of decoded PCM.
+  explicit SampleCache(size_t limit = 8 * 1024 * 1024) : limit_(limit) {}
+#else
   explicit SampleCache(size_t limit = 64 * 1024 * 1024) : limit_(limit) {}
+#endif
   std::shared_ptr<const PreparedPreset> prepare(const Bank&, const std::string& presetId);
   size_t bytes() const;
   size_t limit() const { return limit_; }

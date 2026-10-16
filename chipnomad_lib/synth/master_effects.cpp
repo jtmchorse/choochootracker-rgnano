@@ -15,8 +15,29 @@ static float mixerGain(uint8_t value) {
 void MasterEffects::init(float sampleRate) {
   sampleRate_ = sampleRate > 0.0f ? sampleRate : 48000.0f;
   reverbFrames_.clear();
-  delayLine_.assign((size_t)(sampleRate_ * 8.0f) * 2, 0.0f);
+#ifdef RGNANO_BUILD
+  // RG Nano: 2 s of stereo delay line (0.5 MB at 32 kHz) instead of 8 s. The
+  // read offset is already clamped to the capacity, so longer delay settings
+  // simply top out at 2 s.
+  static const float kDelayMaxSeconds = 2.0f;
+#else
+  static const float kDelayMaxSeconds = 8.0f;
+#endif
+  const size_t delayFrames = (size_t)(sampleRate_ * kDelayMaxSeconds);
+  if (delayLine_.size() != delayFrames * 2) {
+    // assign() never gives capacity back, so a rate change (or the old 96 kHz
+    // placeholder init) would otherwise keep the larger block alive.
+    std::vector<float>().swap(delayLine_);
+    delayLine_.assign(delayFrames * 2, 0.0f);
+  } else {
+    std::fill(delayLine_.begin(), delayLine_.end(), 0.0f);
+  }
   reset();
+}
+
+void MasterEffects::reserve(size_t frames) {
+  reverbFrames_.reserve(frames);
+  beadsReverbFrames_.reserve(frames);
 }
 
 void MasterEffects::reset() {

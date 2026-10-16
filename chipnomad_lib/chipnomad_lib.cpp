@@ -60,6 +60,15 @@ static int instrumentFXCutoff(uint8_t value);
 static int slewEngineFX(PlaybackTrackState*, FX, int);
 static void updateInsertValues(ChipNomadState*);
 
+// --- lazy voice support (see ChipNomadVoiceMode in chipnomad_lib.h) --------
+template <typename T> static inline void killIf(T* p) { if (p) p->kill(); }
+// Slot 0 of a (track, family) voice set is the publication gate: the UI thread
+// fills slots 1..3, then stores slot 0 (seq_cst). Audio code only touches a set
+// after seeing slot 0 non-NULL.
+template <typename T> static inline T* gateLoad(T* const* slot) {
+  return __atomic_load_n(const_cast<T**>(slot), __ATOMIC_SEQ_CST);
+}
+
 class AudioCommandQueue {
  public:
   bool hasSoundbank(uint32_t handle) const {
@@ -192,44 +201,44 @@ class AudioCommandQueue {
         case kQueueLiveChain: playbackQueueLiveChain(playback, command.a, command.b, command.c); break;
         case kPreviewNote: playbackPreviewNote(playback, command.a, (uint8_t)command.b, (uint8_t)command.c); break;
         case 16:
-          if(command.b&&!playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill();state->oplPreview->kill();state->simpleChipPreview->kill();
+          if(command.b&&!playbackIsPlaying(playback)&&state->sidPreview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview);killIf(state->oplPreview);killIf(state->simpleChipPreview);
             state->opllPreviewTrack=command.a;state->chipPreviewType=InstrumentType::SID;
             state->sidPreview->configure(&command.sid,6000,.7f);state->sidPreview->noteOn();
-          }else if(!command.b){state->sidPreview->kill();state->opllPreviewTrack=-1;}
+          }else if(!command.b){killIf(state->sidPreview);state->opllPreviewTrack=-1;}
           break;
         case 15:
-          if(command.b&&!playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill();state->oplPreview->kill();state->simpleChipPreview->kill();
+          if(command.b&&!playbackIsPlaying(playback)&&state->fourOpPreview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview);killIf(state->oplPreview);killIf(state->simpleChipPreview);
             state->opllPreviewTrack=command.a;state->chipPreviewType=(InstrumentType)command.c;
             state->fourOpPreview->configure((InstrumentType)command.c,&command.fourOp,6000,.7f);state->fourOpPreview->noteOn();
-          }else if(!command.b){state->sidPreview->kill();state->fourOpPreview->kill();state->opllPreviewTrack=-1;}
+          }else if(!command.b){killIf(state->sidPreview);killIf(state->fourOpPreview);state->opllPreviewTrack=-1;}
           break;
         case 14:
-          if(command.b&&!playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill();state->oplPreview->kill();state->simpleChipPreview->kill();
+          if(command.b&&!playbackIsPlaying(playback)&&state->dx7Preview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview);killIf(state->oplPreview);killIf(state->simpleChipPreview);
             state->opllPreviewTrack=command.a;state->chipPreviewType=InstrumentType::DX7;
             state->dx7Preview->voices[0].configure(&command.dx7,6000,.7f);state->dx7Preview->voices[0].noteOn();
-          }else if(!command.b){state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreviewTrack=-1;}
+          }else if(!command.b){killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);state->opllPreviewTrack=-1;}
           break;
         case kSimplePreview:
-          if(command.b && !playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill();state->oplPreview->kill();state->simpleChipPreview->kill();
+          if(command.b && !playbackIsPlaying(playback)&&state->simpleChipPreview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview);killIf(state->oplPreview);killIf(state->simpleChipPreview);
             state->opllPreviewTrack=command.a;state->chipPreviewType=(InstrumentType)command.c;
             state->simpleChipPreview->configure((InstrumentType)command.c,&command.simple,6000,.7f);state->simpleChipPreview->noteOn();
-          }else if(!command.b){state->simpleChipPreview->kill();state->opllPreviewTrack=-1;}
+          }else if(!command.b){killIf(state->simpleChipPreview);state->opllPreviewTrack=-1;}
           break;
         case kOPLPreview:
-          if (command.b && !playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill(); state->oplPreview->kill();state->simpleChipPreview->kill();state->opllPreviewTrack=command.a;state->chipPreviewType=(InstrumentType)command.c;
+          if (command.b && !playbackIsPlaying(playback)&&state->oplPreview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview); killIf(state->oplPreview);killIf(state->simpleChipPreview);state->opllPreviewTrack=command.a;state->chipPreviewType=(InstrumentType)command.c;
             state->oplPreview->configure((InstrumentType)command.c,&command.opl,6000,.7f);state->oplPreview->noteOn();
-          } else if (!command.b) {state->oplPreview->kill();state->opllPreviewTrack=-1;}
+          } else if (!command.b) {killIf(state->oplPreview);state->opllPreviewTrack=-1;}
           break;
         case kChipPreview:
-          if (command.b && !playbackIsPlaying(playback)) {
-            state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill(); state->oplPreview->kill();state->simpleChipPreview->kill(); state->chipPreviewType = InstrumentType::OPLL; state->opllPreviewTrack = command.a;
+          if (command.b && !playbackIsPlaying(playback)&&state->opllPreview) {
+            killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview); killIf(state->oplPreview);killIf(state->simpleChipPreview); state->chipPreviewType = InstrumentType::OPLL; state->opllPreviewTrack = command.a;
             state->opllPreview->configure(&command.patch, 6000, .7f); state->opllPreview->noteOn();
-          } else if (!command.b) { state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill(); state->oplPreview->kill();state->simpleChipPreview->kill(); state->opllPreviewTrack = -1; }
+          } else if (!command.b) { killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview); killIf(state->oplPreview);killIf(state->simpleChipPreview); state->opllPreviewTrack = -1; }
           break;
         case kStopPreview: playbackStopPreview(playback, command.a); break;
         case kClearTrackFX: memset(playback->tracks[command.a].note.fx, 0, sizeof(playback->tracks[command.a].note.fx)); break;
@@ -754,16 +763,314 @@ static inline void mixTrackFrame(ChipNomadState* state, int trackIdx,
                   right, sampleIndex + 1, reverbSend, delaySend);
 }
 
+
+// ---------------------------------------------------------------------------
+// Lazy voice allocation
+//
+// Threading model
+//   UI thread   : the only thread that creates or destroys voice objects
+//                 (chipnomadCreateEx/InitChips/PrepareVoices/Queue*). It fills
+//                 slots 1..3 of a set, then publishes with a seq_cst store to
+//                 slot 0. A set is retired by a seq_cst store of NULL to slot 0;
+//                 the objects are deleted only after the audio thread has left
+//                 any chipnomadRender() call that began before the store
+//                 (renderSeq is odd while a render call runs).
+//   audio thread: never allocates or frees. It reads slot 0 with a seq_cst
+//                 load; NULL means "not built": it renders silence for that
+//                 track/family and ORs the family into state->voiceMissing,
+//                 which chipnomadGetPlaybackStatus (UI thread) turns into a
+//                 rebuild. In lazyOffline mode the "audio" thread is the
+//                 caller's own thread, so the render call builds the set.
+// ---------------------------------------------------------------------------
+enum VoiceFamily {
+  vfBraids, vfSoundbank, vfSample, vfSCWF, vfPlaits, vfPlaitsAlt, vfAChChid, vfDrumSynth,
+  vfMME, vfSintered, vfOPLL, vfOPL, vfFourOp, vfSimpleChip, vfDX7, vfSID, vfCount
+};
+
+static int voiceFamilyForType(InstrumentType type) {
+  switch (type) {
+    case InstrumentType::Braids: return vfBraids;
+    case InstrumentType::SoundFont: return vfSoundbank;
+    case InstrumentType::Sample: return vfSample;
+    case InstrumentType::SCWF: case InstrumentType::BYOWTBL: return vfSCWF;
+    case InstrumentType::Plaits: return vfPlaits;
+    case InstrumentType::PlaitsAlt: return vfPlaitsAlt;
+    case InstrumentType::AChChid: return vfAChChid;
+    case InstrumentType::DrumSynth: return vfDrumSynth;
+    case InstrumentType::MME: return vfMME;
+    case InstrumentType::Sintered: return vfSintered;
+    case InstrumentType::OPLL: case InstrumentType::VRC7: return vfOPLL;
+    case InstrumentType::OPL2: case InstrumentType::OPL3: return vfOPL;
+    case InstrumentType::GenesisFM: case InstrumentType::ArcadeFM: return vfFourOp;
+    case InstrumentType::SegaPSG: case InstrumentType::GBPulse: case InstrumentType::GBNoise: return vfSimpleChip;
+    case InstrumentType::DX7: return vfDX7;
+    case InstrumentType::SID: return vfSID;
+    default: return -1;
+  }
+}
+
+// X(family, VoiceType, array) for every family that is a plain pointer array.
+#define CN_VOICE_FAMILIES(X) \
+  X(vfBraids, BraidsVoice, braidsVoices) X(vfSoundbank, SoundbankVoice, soundbankVoices) \
+  X(vfSample, SampleVoice, sampleVoices) X(vfSCWF, SCWFVoice, scwfVoices) \
+  X(vfPlaits, PlaitsVoice, plaitsVoices) X(vfPlaitsAlt, PlaitsAltVoice, plaitsAltVoices) \
+  X(vfAChChid, AChChidVoice, achchidVoices) X(vfDrumSynth, DrumSynthVoice, drumSynthVoices) \
+  X(vfMME, MMEVoice, mmeVoices) X(vfSintered, SinteredVoice, sinteredVoices) \
+  X(vfOPLL, OPLLVoice, opllVoices) X(vfOPL, OPLVoice, oplVoices) \
+  X(vfFourOp, FourOpVoice, fourOpVoices) X(vfSimpleChip, SimpleChipVoice, simpleChipVoices) \
+  X(vfSID, SIDVoice, sidVoices)
+
+static inline bool voiceFamilyReady(const ChipNomadState* s, int t, int fam) {
+  switch (fam) {
+#define X(F, T, A) case F: return gateLoad(&s->A[t][0]) != nullptr;
+    CN_VOICE_FAMILIES(X)
+#undef X
+    case vfDX7: return gateLoad(&s->dx7Parts[t]) != nullptr;
+  }
+  return true;
+}
+
+// Audio thread: record that a track met a missing family.
+static inline void voiceFlagMissing(ChipNomadState* s, int t, int fam) {
+  __atomic_or_fetch(&s->voiceMissing[t], 1u << fam, __ATOMIC_RELAXED);
+}
+
+static inline uint32_t voiceSeq(const ChipNomadState* s) {
+  return __atomic_load_n(&s->renderSeq, __ATOMIC_SEQ_CST);
+}
+
+template <typename T> static void voiceDestroyOne(void* p) { delete static_cast<T*>(p); }
+
+static void voiceRetire(ChipNomadState* s, void* object, void (*destroy)(void*)) {
+  if (!object) return;
+  if (s->voiceRetiredCount >= (int)(sizeof(s->voiceRetired) / sizeof(s->voiceRetired[0]))) {
+    // Table full: nothing can safely be dropped, so leak until InitChips/Destroy
+    // flushes. Only reachable if the audio thread is stuck inside one render.
+    return;
+  }
+  s->voiceRetired[s->voiceRetiredCount++] = {object, destroy, voiceSeq(s)};
+}
+
+// UI thread. force=1 is for Destroy/InitChips, when audio is stopped.
+static void voiceReclaim(ChipNomadState* s, bool force) {
+  const uint32_t now = voiceSeq(s);
+  int kept = 0;
+  for (int i = 0; i < s->voiceRetiredCount; ++i) {
+    auto e = s->voiceRetired[i];
+    bool safe = force || (e.seq & 1u) == 0 || now != e.seq;
+    if (safe) e.destroy(e.object);
+    else s->voiceRetired[kept++] = e;
+  }
+  s->voiceRetiredCount = kept;
+}
+
+// UI thread. Builds one (track, family) set at the engine's real sample rate.
+static bool voiceCreateFamily(ChipNomadState* s, int t, int fam) {
+  const float rate = (float)s->sampleRate;
+  if (rate <= 0.0f || voiceFamilyReady(s, t, fam)) return rate > 0.0f;
+  try {
+    switch (fam) {
+#define X(F, T, A) \
+      case F: { \
+        T* made[CHORD_MAX_VOICES] = {}; \
+        bool ok = true; \
+        for (int v = 0; v < CHORD_MAX_VOICES && ok; ++v) { \
+          made[v] = new (std::nothrow) T(); \
+          if (made[v]) made[v]->init(rate); else ok = false; \
+        } \
+        if (!ok) { for (auto* m : made) delete m; s->voiceAllocFailures++; return false; } \
+        for (int v = 1; v < CHORD_MAX_VOICES; ++v) s->A[t][v] = made[v]; \
+        __atomic_store_n(&s->A[t][0], made[0], __ATOMIC_SEQ_CST); \
+        break; }
+      CN_VOICE_FAMILIES(X)
+#undef X
+      case vfDX7: {
+        DX7Part* part = new (std::nothrow) DX7Part();
+        if (!part) { s->voiceAllocFailures++; return false; }
+        part->init(rate);
+        for (int v = 0; v < CHORD_MAX_VOICES; ++v) s->dx7Voices[t][v] = &part->voices[v];
+        __atomic_store_n(&s->dx7Parts[t], part, __ATOMIC_SEQ_CST);
+        break;
+      }
+      default: return false;
+    }
+  } catch (...) {  // a voice's own init() ran out of memory
+    s->voiceAllocFailures++;
+    return false;
+  }
+  if (fam == vfBraids && s->braidsSettingsValid)
+    for (int v = 0; v < CHORD_MAX_VOICES; ++v)
+      s->braidsVoices[t][v]->setGlobalSettings(s->braidsBits, s->braidsDrift, s->braidsSignature, s->braidsSeed);
+  s->voiceMask[t] |= 1u << fam;
+  return true;
+}
+
+static bool voiceFamilyIdle(const ChipNomadState* s, int t, int fam) {
+  switch (fam) {
+#define X(F, T, A) \
+    case F: for (int v = 0; v < CHORD_MAX_VOICES; ++v) if (s->A[t][v] && s->A[t][v]->active()) return false; return true;
+    CN_VOICE_FAMILIES(X)
+#undef X
+    case vfDX7: return !s->dx7Parts[t] || !s->dx7Parts[t]->active();
+  }
+  return true;
+}
+
+// UI thread. Unpublishes the set and queues the objects for deferred deletion.
+// Slots 1..3 keep their (retired but still valid) pointers so a render call
+// already past the gate never dereferences a freed or NULL slot.
+static void voiceRetireFamily(ChipNomadState* s, int t, int fam) {
+  switch (fam) {
+#define X(F, T, A) \
+    case F: { \
+      T* old[CHORD_MAX_VOICES]; \
+      for (int v = 0; v < CHORD_MAX_VOICES; ++v) old[v] = s->A[t][v]; \
+      __atomic_store_n(&s->A[t][0], (T*)nullptr, __ATOMIC_SEQ_CST); \
+      for (auto* o : old) voiceRetire(s, o, voiceDestroyOne<T>); \
+      break; }
+    CN_VOICE_FAMILIES(X)
+#undef X
+    case vfDX7: {
+      DX7Part* old = s->dx7Parts[t];
+      __atomic_store_n(&s->dx7Parts[t], (DX7Part*)nullptr, __ATOMIC_SEQ_CST);
+      voiceRetire(s, old, voiceDestroyOne<DX7Part>);
+      break;
+    }
+  }
+  s->voiceMask[t] &= ~(1u << fam);
+}
+
+// Families each track can reach from its song: song cell -> chain -> phrase ->
+// instrument. Phrase rows are the only place an instrument is chosen.
+static void voiceNeedsFromProject(const Project* p, uint32_t needs[PROJECT_MAX_TRACKS]) {
+  static const uint32_t unknown = 0xffffffffu;
+  uint32_t phraseMask[PROJECT_MAX_PHRASES], chainMask[PROJECT_MAX_CHAINS];
+  for (auto& m : phraseMask) m = unknown;
+  for (auto& m : chainMask) m = unknown;
+  for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) needs[t] = 0;
+  const int tracks = std::min(p->tracksCount, (int)PROJECT_MAX_TRACKS);
+  for (int row = 0; row < PROJECT_MAX_LENGTH; ++row) {
+    for (int t = 0; t < tracks; ++t) {
+      uint16_t chain = p->song[row][t];
+      if (chain >= PROJECT_MAX_CHAINS) continue;
+      if (chainMask[chain] == unknown) {
+        uint32_t cm = 0;
+        for (const auto& cr : p->chains[chain].rows) {
+          if (cr.phrase >= PROJECT_MAX_PHRASES) continue;
+          if (phraseMask[cr.phrase] == unknown) {
+            uint32_t pm = 0;
+            for (const auto& pr : p->phrases[cr.phrase].rows) {
+              if (pr.instrument >= PROJECT_MAX_INSTRUMENTS) continue;
+              int f = voiceFamilyForType(p->instruments[pr.instrument].type);
+              if (f >= 0) pm |= 1u << f;
+            }
+            phraseMask[cr.phrase] = pm;
+          }
+          cm |= phraseMask[cr.phrase];
+        }
+        chainMask[chain] = cm;
+      }
+      needs[t] |= chainMask[chain];
+    }
+  }
+}
+
+// UI thread. Build what the project can reach; optionally drop idle leftovers.
+static int voiceEnsure(ChipNomadState* s, const Project* p, bool prune) {
+  if (s->voiceMode == ChipNomadVoiceMode::eager || s->sampleRate <= 0) return 0;
+  uint32_t needs[PROJECT_MAX_TRACKS];
+  voiceNeedsFromProject(p, needs);
+  int failures = 0;
+  for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) {
+    const uint32_t want = needs[t] | s->voiceExtra[t];
+    for (int f = 0; f < vfCount; ++f) {
+      const bool wanted = (want >> f) & 1u, built = (s->voiceMask[t] >> f) & 1u;
+      if (wanted && !built) { if (!voiceCreateFamily(s, t, f)) ++failures; }
+      else if (prune && !wanted && built && voiceFamilyIdle(s, t, f)) voiceRetireFamily(s, t, f);
+    }
+  }
+  voiceReclaim(s, false);
+  return failures;
+}
+
+// UI thread. A direct command (preview, start phrase row) names an instrument
+// that may not be reachable from the song: pin its family on that track.
+static void voiceEnsureInstrument(ChipNomadState* s, int track, int instrument) {
+  if (s->voiceMode == ChipNomadVoiceMode::eager || track < 0 || track >= PROJECT_MAX_TRACKS ||
+      instrument < 0 || instrument >= PROJECT_MAX_INSTRUMENTS || s->sampleRate <= 0) return;
+  int f = voiceFamilyForType(s->project.instruments[instrument].type);
+  if (f < 0) return;
+  s->voiceExtra[track] |= 1u << f;
+  voiceCreateFamily(s, track, f);
+}
+
+// UI thread. The audio thread reported voices it needed but did not find
+// (a project edit it saw before the UI refresh): build exactly those.
+static void voiceServiceMissing(ChipNomadState* s) {
+  if (s->voiceMode == ChipNomadVoiceMode::eager) return;
+  for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) {
+    uint32_t bits = __atomic_exchange_n(&s->voiceMissing[t], 0u, __ATOMIC_ACQ_REL);
+    for (int f = 0; bits && f < vfCount; ++f)
+      if ((bits >> f) & 1u) { s->voiceExtra[t] |= 1u << f; voiceCreateFamily(s, t, f); }
+  }
+  voiceReclaim(s, false);
+}
+
+// UI thread. Native chip previews are single objects built on first audition.
+template <typename T> static T* previewEnsure(ChipNomadState* s, T*& slot) {
+  if (!slot && s->sampleRate > 0) {
+    T* made = new (std::nothrow) T();
+    if (made) {
+      try { made->init((float)s->sampleRate); } catch (...) { delete made; made = nullptr; }
+    }
+    if (made) __atomic_store_n(&slot, made, __ATOMIC_SEQ_CST);
+    else s->voiceAllocFailures++;
+  }
+  return slot;
+}
+
+int chipnomadPrepareVoices(ChipNomadState* state) {
+  if (!state) return 0;
+  return voiceEnsure(state, &state->project, true);
+}
+
+ChipNomadVoiceMode chipnomadDefaultVoiceMode(void) {
+#ifdef RGNANO_BUILD
+  return ChipNomadVoiceMode::lazyRealtime;
+#else
+  return ChipNomadVoiceMode::eager;
+#endif
+}
+
+// Audio thread, once per tick after the playback engine chose each track's
+// instrument and before the voices are configured.
+static void voiceAuditTracks(ChipNomadState* s) {
+  const Project* p = &s->audioProject;
+  for (int t = 0; t < p->tracksCount; ++t) {
+    const int ins = s->playbackState.tracks[t].note.instrument;
+    if (ins >= PROJECT_MAX_INSTRUMENTS) continue;
+    const int f = voiceFamilyForType(p->instruments[ins].type);
+    if (f < 0 || voiceFamilyReady(s, t, f)) continue;
+    if (s->voiceMode == ChipNomadVoiceMode::lazyOffline) voiceCreateFamily(s, t, f);
+    else voiceFlagMissing(s, t, f);
+  }
+}
+
 static SoundChip* defaultChipFactory(int chipIndex, int sampleRate, ChipSetup setup) {
   setup.ay.stereoSeparation = 0;
   return new SoundChipAY(sampleRate, setup);
 }
 
 ChipNomadState* chipnomadCreate(void) {
+  return chipnomadCreateEx(chipnomadDefaultVoiceMode());
+}
+
+ChipNomadState* chipnomadCreateEx(ChipNomadVoiceMode voiceMode) {
   ChipNomadState* state = (ChipNomadState*)malloc(sizeof(ChipNomadState));
   if (!state) return NULL;
 
   memset(state, 0, sizeof(ChipNomadState));
+  state->voiceMode = voiceMode;
   state->ownsProjectResources = 1;
   state->audioCommands = new AudioCommandQueue();
   state->midiRouter = midiRouterCreate();
@@ -791,6 +1098,9 @@ ChipNomadState* chipnomadCreate(void) {
 
   state->audioMonitor = new AudioMonitor();
   state->masterEffects = new MasterEffects();
+  // Lazy modes build every voice, preview and the master delay line at the
+  // real rate in chipnomadInitChips instead of at a throwaway 96 kHz here.
+  if (voiceMode != ChipNomadVoiceMode::eager) return state;
   state->masterEffects->init(96000.0f);
 
   state->sidPreview=new SIDVoice();state->sidPreview->init(96000);
@@ -853,25 +1163,14 @@ void chipnomadDestroy(ChipNomadState* state) {
   delete state->oplPreview;
   delete state->dx7Preview;
   delete state->opllPreview;
+  // Audio is stopped: reclaim retired sets first, then delete only the sets
+  // whose gate is open (the slots of a retired set hold dangling pointers).
+  voiceReclaim(state, true);
   for (int i = 0; i < PROJECT_MAX_TRACKS; i++) {
-    for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice) {
-      delete state->braidsVoices[i][voice];
-      delete state->soundbankVoices[i][voice];
-      delete state->sampleVoices[i][voice];
-      delete state->scwfVoices[i][voice];
-      delete state->plaitsVoices[i][voice];
-      delete state->plaitsAltVoices[i][voice];
-      delete state->achchidVoices[i][voice];
-      delete state->drumSynthVoices[i][voice];
-      delete state->mmeVoices[i][voice];
-      delete state->sidVoices[i][voice];
-      delete state->simpleChipVoices[i][voice];
-      delete state->fourOpVoices[i][voice];
-      delete state->oplVoices[i][voice];
-      if(!voice)delete state->dx7Parts[i];
-      delete state->opllVoices[i][voice];
-      delete state->sinteredVoices[i][voice];
-    }
+#define X(F, T, A) if (state->A[i][0]) for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice) delete state->A[i][voice];
+    CN_VOICE_FAMILIES(X)
+#undef X
+    delete state->dx7Parts[i];
   }
 
   if (state->ownsProjectResources) projectFree(&state->project);
@@ -910,6 +1209,7 @@ void chipnomadInitChips(ChipNomadState* state, int sampleRate, ChipFactory facto
   memset(state->chips, 0, sizeof(state->chips));
   state->sampleRate = sampleRate;
   state->masterEffects->init((float)sampleRate);
+  state->masterEffects->reserve((size_t)state->mixBufferSize / 2);
   delete state->masterInsertChain;
   state->masterInsertChain = nullptr;
   for (auto*& chain : state->insertChains) {
@@ -922,36 +1222,29 @@ void chipnomadInitChips(ChipNomadState* state, int sampleRate, ChipFactory facto
   state->masterInsertChain = new(std::nothrow) InsertChain((float)sampleRate);
   if (state->masterInsertChain)
     state->masterInsertChain->sync(state->audioProject.masterInserts, &state->masterInsertAutomation);
-  state->sidPreview->init((float)sampleRate);
-  state->simpleChipPreview->init((float)sampleRate);
-  state->fourOpPreview->init((float)sampleRate);
-  state->oplPreview->init((float)sampleRate);
-  state->dx7Preview->init((float)sampleRate);
-  state->opllPreview->init((float)sampleRate); state->opllPreviewTrack = -1;
+  voiceReclaim(state, true);  // audio is stopped across InitChips
+  if (state->sidPreview) state->sidPreview->init((float)sampleRate);
+  if (state->simpleChipPreview) state->simpleChipPreview->init((float)sampleRate);
+  if (state->fourOpPreview) state->fourOpPreview->init((float)sampleRate);
+  if (state->oplPreview) state->oplPreview->init((float)sampleRate);
+  if (state->dx7Preview) state->dx7Preview->init((float)sampleRate);
+  if (state->opllPreview) state->opllPreview->init((float)sampleRate);
+  state->opllPreviewTrack = -1;
   for (int i = 0; i < PROJECT_MAX_TRACKS; i++) {
     state->trackTilt[i].init((float)sampleRate);
     state->insertChains[i] = new(std::nothrow) InsertChain((float)sampleRate);
     if (state->insertChains[i]) state->insertChains[i]->sync(state->audioProject.trackInserts[i], &state->playbackState.tracks[i].inserts);
     state->insertResetSeen[i] = state->playbackState.tracks[i].insertReset;
-    for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice) {
-      state->braidsVoices[i][voice]->init((float)sampleRate);
-      state->soundbankVoices[i][voice]->init((float)sampleRate);
-      state->sampleVoices[i][voice]->init((float)sampleRate);
-      state->scwfVoices[i][voice]->init((float)sampleRate);
-      state->plaitsVoices[i][voice]->init((float)sampleRate);
-      state->plaitsAltVoices[i][voice]->init((float)sampleRate);
-      state->achchidVoices[i][voice]->init((float)sampleRate);
-      state->drumSynthVoices[i][voice]->init((float)sampleRate);
-      state->mmeVoices[i][voice]->init((float)sampleRate);
-      state->sidVoices[i][voice]->init((float)sampleRate);
-      state->simpleChipVoices[i][voice]->init((float)sampleRate);
-      state->fourOpVoices[i][voice]->init((float)sampleRate);
-      state->oplVoices[i][voice]->init((float)sampleRate);
-      if(!voice)state->dx7Parts[i]->init((float)sampleRate);
-      state->opllVoices[i][voice]->init((float)sampleRate);
-      state->sinteredVoices[i][voice]->init((float)sampleRate);
-    }
+    // A closed gate means any slot pointers are leftovers of a retired set that
+    // voiceReclaim() just deleted; clear them before re-initialising the rest.
+#define X(F, T, A) if (!state->A[i][0]) for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice) state->A[i][voice] = nullptr; \
+    else for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice) state->A[i][voice]->init((float)sampleRate);
+    CN_VOICE_FAMILIES(X)
+#undef X
+    if (state->dx7Parts[i]) state->dx7Parts[i]->init((float)sampleRate);
   }
+  // Lazy modes: build what the song can reach, now that the rate is known.
+  voiceEnsure(state, &state->audioProject, false);
 
   state->audioCommands->initializeBeads(state);
 
@@ -980,6 +1273,7 @@ int chipnomadReserveRenderBuffers(ChipNomadState* state, int frames) {
   if (!state || frames <= 0 || frames > INT_MAX / 2) return 1;
   int requiredSize = frames * 2;
   if (!state->audioMonitor->reserve(frames)) return 1;
+  state->masterEffects->reserve((size_t)frames);
   if (!(requiredSize <= state->mixBufferSize || resizeMixBuffers(state, requiredSize))) return 1;
   return 0;
 }
@@ -989,7 +1283,12 @@ int chipnomadQueueTrackEnabled(ChipNomadState* state, const uint8_t enabled[PROJ
 }
 
 int chipnomadQueueProjectRefresh(ChipNomadState* state) {
-  return state && state->audioCommands ? state->audioCommands->pushProject(state->project) : 0;
+  if (!state || !state->audioCommands) return 0;
+  // Build voices for the new project (and drop idle ones) BEFORE the audio
+  // thread can adopt it, so the callback never sees an instrument whose
+  // voices do not exist yet.
+  voiceEnsure(state, &state->project, true);
+  return state->audioCommands->pushProject(state->project);
 }
 
 int chipnomadQueuePlaybackScale(ChipNomadState* state, uint8_t root, ScalePreset preset) {
@@ -1005,15 +1304,19 @@ void chipnomadQueuePlaybackStop(ChipNomadState* state) {
 }
 
 int chipnomadQueuePlaybackStartSong(ChipNomadState* state, int songRow, int chainRow, int loop) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(0, songRow, chainRow, loop) : 0;
 }
 int chipnomadQueuePlaybackStartChain(ChipNomadState* state, int trackIdx, int songRow, int chainRow, int loop) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(1, trackIdx, songRow, chainRow, loop) : 0;
 }
 int chipnomadQueuePlaybackStartPhrase(ChipNomadState* state, int trackIdx, int songRow, int chainRow, int loop) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(2, trackIdx, songRow, chainRow, loop) : 0;
 }
 int chipnomadQueuePlaybackStartPhraseRow(ChipNomadState* state, int trackIdx, const PhraseRow* row) {
+  if (state && row) voiceEnsureInstrument(state, trackIdx, row->instrument);
   return state && state->audioCommands && row ? state->audioCommands->pushCommand(3, trackIdx, 0, 0, 0, row) : 0;
 }
 // Full-sample one-shot preview of a LAZY sample: same as StartPhraseRow but
@@ -1024,18 +1327,23 @@ int chipnomadQueuePlaybackStartPhraseRowFull(ChipNomadState* state, int trackIdx
   // kStartPhraseRowFull is appended after upstream's preview commands; the
   // numeric value must match the enum (raw IDs 14/15/16 are taken). The enum
   // is private, so the raw literal is used, matching upstream's own pushes.
+  if (state && row) voiceEnsureInstrument(state, trackIdx, row->instrument);
   return state && state->audioCommands && row ? state->audioCommands->pushCommand(17, trackIdx, 0, 0, 0, row) : 0;
 }
 int chipnomadQueuePlaybackQueuePhrase(ChipNomadState* state, int trackIdx, int songRow, int chainRow) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(4, trackIdx, songRow, chainRow) : 0;
 }
 int chipnomadQueuePlaybackStartLiveChain(ChipNomadState* state, int trackIdx, int songRow) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(8, trackIdx, songRow) : 0;
 }
 int chipnomadQueuePlaybackQueueLiveChain(ChipNomadState* state, int trackIdx, int songRow, int urgent) {
+  if (state) voiceEnsure(state, &state->project, false);
   return state && state->audioCommands ? state->audioCommands->pushCommand(9, trackIdx, songRow, urgent) : 0;
 }
 int chipnomadQueuePlaybackPreviewNote(ChipNomadState* state, int trackIdx, uint8_t note, uint8_t instrument) {
+  if (state) voiceEnsureInstrument(state, trackIdx, instrument);
   return state && state->audioCommands ? state->audioCommands->pushCommand(5, trackIdx, note, instrument) : 0;
 }
 int chipnomadQueuePlaybackStopPreview(ChipNomadState* state, int trackIdx) {
@@ -1054,6 +1362,7 @@ void chipnomadQueueClearLoopRange(ChipNomadState* state) {
 const PlaybackStatus* chipnomadGetPlaybackStatus(ChipNomadState* state) {
   if (!state) return NULL;
   state->audioCommands->collectBeads();
+  voiceServiceMissing(state);  // UI thread: build voices the audio thread asked for
   state->audioCommands->readStatus(&state->uiPlaybackStatus);
   return &state->uiPlaybackStatus;
 }
@@ -1109,7 +1418,7 @@ static int advancePlaybackFrame(ChipNomadState* state, uint64_t dueMicros) {
   if (state->audioCommands->takeStopRequest()) {
     chipnomadMidiPanic(state);
     playbackStop(&state->playbackState);
-    state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill(); state->oplPreview->kill();state->simpleChipPreview->kill(); state->opllPreviewTrack = -1;
+    killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview); killIf(state->oplPreview);killIf(state->simpleChipPreview); state->opllPreviewTrack = -1;
   }
   for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) {
     if (!state->insertChains[t]) continue;
@@ -1143,6 +1452,7 @@ static int advancePlaybackFrame(ChipNomadState* state, uint64_t dueMicros) {
   playbackUpdateLiveStickModulation(&state->playbackState, axes, enabled);
   state->frameSampleCounter += state->sampleRate / state->audioProject.tickRate;
   int allTracksStopped = playbackNextFrame(state);
+  if (state->voiceMode != ChipNomadVoiceMode::eager) voiceAuditTracks(state);
   if (!wasPlaying && playbackIsPlaying(&state->playbackState) && state->masterInsertChain)
     state->masterInsertChain->reset();
   for (int t = 0; t < state->audioProject.tracksCount; ++t)
@@ -1160,7 +1470,7 @@ static int advancePlaybackFrame(ChipNomadState* state, uint64_t dueMicros) {
   detectAYPitchConflicts(state);
   state->audioCommands->publishStatus(&state->playbackState);
   if (playbackIsPlaying(&state->playbackState) && state->opllPreviewTrack >= 0) {
-    state->sidPreview->kill();state->fourOpPreview->kill();state->dx7Preview->kill();state->opllPreview->kill(); state->oplPreview->kill();state->simpleChipPreview->kill(); state->opllPreviewTrack = -1;
+    killIf(state->sidPreview);killIf(state->fourOpPreview);killIf(state->dx7Preview);killIf(state->opllPreview); killIf(state->oplPreview);killIf(state->simpleChipPreview); state->opllPreviewTrack = -1;
   }
   return allTracksStopped && state->opllPreviewTrack < 0 && !state->masterEffects->tailActive();
 }
@@ -1211,6 +1521,7 @@ template <typename Voice>
 static void renderMonoVoiceTracks(ChipNomadState* state, Voice* const voices[][CHORD_MAX_VOICES], float* output, int frames) {
   for (int trackIdx = 0; trackIdx < state->audioProject.tracksCount; ++trackIdx) {
     if (!state->playbackState.trackEnabled[trackIdx]) continue;
+    if (!gateLoad(&voices[trackIdx][0])) continue;  // lazy: set not built yet
     for (int slot = 0; slot < state->playbackState.tracks[trackIdx].chordVoiceCount; ++slot) {
       Voice* voice = voices[trackIdx][slot];
       if (!voice->active()) continue;
@@ -1236,6 +1547,7 @@ template <typename Voice>
 static void renderStereoVoiceTracks(ChipNomadState* state, Voice* const voices[][CHORD_MAX_VOICES], float* output, int frames, bool includeReleaseSlots = false) {
   for (int trackIdx = 0; trackIdx < state->audioProject.tracksCount; ++trackIdx) {
     if (!state->playbackState.trackEnabled[trackIdx]) continue;
+    if (!gateLoad(&voices[trackIdx][0])) continue;  // lazy: set not built yet
     for (int slot = 0; slot < (includeReleaseSlots ? CHORD_MAX_VOICES : state->playbackState.tracks[trackIdx].chordVoiceCount); ++slot) {
       Voice* voice = voices[trackIdx][slot];
       if (!voice->active()) continue;
@@ -1316,7 +1628,19 @@ static void processMasterMix(ChipNomadState* state, float* output, int frames) {
   }
 }
 
+static int chipnomadRenderImpl(ChipNomadState* state, float* buffer, int samples);
+
+// renderSeq is odd while a render call runs; voiceReclaim() uses it to know
+// when no render call can still hold a pointer to a retired voice set.
 int chipnomadRender(ChipNomadState* state, float* buffer, int samples) {
+  if (!state) return 0;
+  __atomic_add_fetch(&state->renderSeq, 1u, __ATOMIC_SEQ_CST);
+  int rendered = chipnomadRenderImpl(state, buffer, samples);
+  __atomic_add_fetch(&state->renderSeq, 1u, __ATOMIC_SEQ_CST);
+  return rendered;
+}
+
+static int chipnomadRenderImpl(ChipNomadState* state, float* buffer, int samples) {
   if (!state || !buffer || samples <= 0 || samples > INT_MAX / 2) return 0;
   // Real wall-clock reference for this callback: a row that lands N samples
   // into it is due N/sampleRate seconds after "now", not "now" itself - see
@@ -1348,7 +1672,8 @@ int chipnomadRender(ChipNomadState* state, float* buffer, int samples) {
     renderMonoVoiceTracks(state, state->sinteredVoices, output, frames);
     renderMonoVoiceTracks(state, state->opllVoices, output, frames);
     for(int t=0;t<state->audioProject.tracksCount;++t) {
-      auto* part=state->dx7Parts[t];
+      auto* part=gateLoad(&state->dx7Parts[t]);
+      if(!part)continue;
       int instrument=state->playbackState.tracks[t].note.instrument;
       bool dx7Selected=instrument!=EMPTY_VALUE_8&&state->audioProject.instruments[instrument].type==InstrumentType::DX7;
       if(!part->active()&&!dx7Selected)continue;
@@ -1370,7 +1695,7 @@ int chipnomadRender(ChipNomadState* state, float* buffer, int samples) {
     renderMonoVoiceTracks(state,state->simpleChipVoices,output,frames);
     SIDVoice* sidPool[PROJECT_MAX_TRACKS*CHORD_MAX_VOICES];int sidCount=0;
     // Order roots first across tracks; deterministic stealing retains new roots.
-    for(int slot=0;slot<CHORD_MAX_VOICES;++slot)for(int t=0;t<PROJECT_MAX_TRACKS;++t)sidPool[sidCount++]=state->sidVoices[t][slot];
+    for(int slot=0;slot<CHORD_MAX_VOICES;++slot)for(int t=0;t<PROJECT_MAX_TRACKS;++t)if(gateLoad(&state->sidVoices[t][0]))sidPool[sidCount++]=state->sidVoices[t][slot];
     limitSIDVoices(sidPool,sidCount,4);
     renderMonoVoiceTracks(state,state->sidVoices,output,frames);
     if (state->opllPreviewTrack >= 0 && state->playbackState.trackEnabled[state->opllPreviewTrack]) {
@@ -1436,6 +1761,16 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
 
     if (!track->note.noteTriggered && !track->note.noteReleased && !track->note.noteKilled) continue;
     if (track->note.instrument == EMPTY_VALUE_8) continue;
+    {
+      // Lazy voices: if this instrument's set is not built (realtime mode, UI
+      // has not caught up) drop the event rather than touch a NULL set.
+      int family = voiceFamilyForType(project->instruments[track->note.instrument].type);
+      if (family >= 0 && !voiceFamilyReady(state, trackIdx, family)) {
+        voiceFlagMissing(state, trackIdx, family);
+        track->note.noteTriggered = track->note.noteReleased = track->note.noteKilled = 0;
+        continue;
+      }
+    }
     auto applyEvent = [&](auto* voices) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) {
         if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount))
@@ -1449,7 +1784,7 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
         if (track->note.noteTriggered)
           for (int incoming = 0; incoming < track->chordVoiceCount; ++incoming)
             for (int t = 0; t < project->tracksCount; ++t)
-              for (int v = 0; v < CHORD_MAX_VOICES; ++v)
+              for (int v = 0; v < CHORD_MAX_VOICES && gateLoad(&state->soundbankVoices[t][0]); ++v)
                 state->soundbankVoices[t][v]->chokeFrom(
                     *state->soundbankVoices[trackIdx][incoming]);
         applyEvent(state->soundbankVoices[trackIdx]);
@@ -1543,7 +1878,9 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
     }
     track->note.noteTriggered = track->note.noteReleased = track->note.noteKilled = 0;
   }
-  limitDX7Voices(state->dx7Parts, project->tracksCount);
+  DX7Part* dx7Live[PROJECT_MAX_TRACKS];
+  for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) dx7Live[t] = gateLoad(&state->dx7Parts[t]);
+  limitDX7Voices(dx7Live, project->tracksCount);
 }
 
 // InstrumentType::Midi keeps no voice object of its own (see
@@ -1568,7 +1905,7 @@ void chipnomadCollectSoundbanks(ChipNomadState* state) {
     if (state->audioCommands->hasSoundbank(h)) return true;
     for (int t = 0; t < PROJECT_MAX_TRACKS; ++t)
       for (int v = 0; v < CHORD_MAX_VOICES; ++v)
-        if (state->soundbankVoices[t][v]->active() && state->soundbankVoices[t][v]->handle() == h)
+        if (state->soundbankVoices[t][0] && state->soundbankVoices[t][v]->active() && state->soundbankVoices[t][v]->handle() == h)
           return true;
     return false;
   });
@@ -1579,6 +1916,7 @@ static void updateSoundbankVoices(ChipNomadState* state) {
   for (int t = 0; t < project->tracksCount; ++t) {
     auto* track = &playback->tracks[t];
     auto voices = state->soundbankVoices[t];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::SoundFont) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
@@ -1618,6 +1956,7 @@ static void updateSampleVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; trackIdx++) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SampleVoice** voices = state->sampleVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Sample) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -1762,6 +2101,7 @@ static void updateSCWFVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SCWFVoice** voices = state->scwfVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         (project->instruments[track->note.instrument].type != InstrumentType::SCWF &&
          project->instruments[track->note.instrument].type != InstrumentType::BYOWTBL)) {
@@ -1847,6 +2187,7 @@ static void updateAChChidVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     AChChidVoice** voices = state->achchidVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::AChChid) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -1894,6 +2235,7 @@ static void updateDrumSynthVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     DrumSynthVoice** voices = state->drumSynthVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::DrumSynth) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -1945,6 +2287,7 @@ static void updateMMEVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     MMEVoice** voices = state->mmeVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::MME) { for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill(); continue; }
     InstrumentMME* m = &project->instruments[track->note.instrument].chip.mme;
@@ -2004,6 +2347,7 @@ static void updateSinteredVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SinteredVoice** voices = state->sinteredVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Sintered) { for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill(); continue; }
     InstrumentSintered* s = &project->instruments[track->note.instrument].chip.sintered;
@@ -2052,6 +2396,7 @@ static void updateBraidsVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; trackIdx++) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     BraidsVoice** voices = state->braidsVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
 
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Braids) {
@@ -2141,6 +2486,7 @@ static void updatePlaitsVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     PlaitsVoice** voices = state->plaitsVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Plaits) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2226,6 +2572,7 @@ static void updatePlaitsAltVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     PlaitsAltVoice** voices = state->plaitsAltVoices[trackIdx];
+    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::PlaitsAlt) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2311,7 +2658,12 @@ void chipnomadSetBraidsSettings(ChipNomadState* state, uint8_t bits,
                                uint8_t drift, uint8_t signature,
                                uint32_t signatureSeed) {
   if (!state) return;
+  // Remembered so braids sets built later (lazy modes) get the same settings.
+  state->braidsSettingsValid = 1;
+  state->braidsBits = bits; state->braidsDrift = drift;
+  state->braidsSignature = signature; state->braidsSeed = signatureSeed;
   for (int i = 0; i < PROJECT_MAX_TRACKS; ++i) {
+    if (!state->braidsVoices[i][0]) continue;
     for (int voice = 0; voice < CHORD_MAX_VOICES; ++voice)
       state->braidsVoices[i][voice]->setGlobalSettings(bits, drift, signature,
         signatureSeed);
@@ -2388,7 +2740,7 @@ static void updateOPLLVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->opllVoices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->opllVoices[t]; if (!gateLoad(&voices[0])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || !isOPLL(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2417,13 +2769,14 @@ static void updateOPLLVoices(ChipNomadState* state) {
 
 int chipnomadQueueOPLLPreview(ChipNomadState* state, int track, const InstrumentOPLL* patch) {
   if (!state || !state->audioCommands || track < 0 || track >= PROJECT_MAX_TRACKS) return 0;
+  if (patch) previewEnsure(state, state->opllPreview);
   return state->audioCommands->pushCommand(11, track, patch ? 1 : 0, 0, 0, nullptr, patch);
 }
 static void updateOPLVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->oplVoices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->oplVoices[t]; if (!gateLoad(&voices[0])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || !isOPL(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2452,13 +2805,14 @@ static void updateOPLVoices(ChipNomadState* state) {
 
 int chipnomadQueueOPLPreview(ChipNomadState* state,int track,InstrumentType type,const InstrumentOPL* patch){
   if(!state||!state->audioCommands||track<0||track>=PROJECT_MAX_TRACKS||!isOPL(type))return 0;
+  if (patch) previewEnsure(state, state->oplPreview);
   return state->audioCommands->pushCommand(12,track,patch?1:0,int(type),0,nullptr,nullptr,patch);
 }
 static void updateFourOpVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->fourOpVoices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->fourOpVoices[t]; if (!gateLoad(&voices[0])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || !isFourOp(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2487,13 +2841,14 @@ static void updateFourOpVoices(ChipNomadState* state) {
 
 int chipnomadQueueFourOpPreview(ChipNomadState* state,int track,InstrumentType type,const InstrumentFourOp* patch){
   if(!state||!state->audioCommands||track<0||track>=PROJECT_MAX_TRACKS||!isFourOp(type))return 0;
+  if (patch) previewEnsure(state, state->fourOpPreview);
   return state->audioCommands->pushCommand(15,track,patch?1:0,int(type),0,nullptr,nullptr,nullptr,nullptr,nullptr,patch);
 }
 static void updateSimpleChipVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->simpleChipVoices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->simpleChipVoices[t]; if (!gateLoad(&voices[0])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || !isSimpleChip(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2533,6 +2888,7 @@ static void updateSimpleChipVoices(ChipNomadState* state) {
 
 int chipnomadQueueSimpleChipPreview(ChipNomadState* state,int track,InstrumentType type,const InstrumentSimpleChip* patch){
   if(!state||!state->audioCommands||track<0||track>=PROJECT_MAX_TRACKS||!isSimpleChip(type))return 0;
+  if (patch) previewEnsure(state, state->simpleChipPreview);
   return state->audioCommands->pushCommand(13,track,patch?1:0,int(type),0,nullptr,nullptr,nullptr,patch);
 }
 
@@ -2540,7 +2896,7 @@ static void updateDX7Voices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->dx7Voices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->dx7Voices[t]; if (!gateLoad(&state->dx7Parts[t])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || project->instruments[track->note.instrument].type!=InstrumentType::DX7) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2569,6 +2925,7 @@ static void updateDX7Voices(ChipNomadState* state) {
 
 int chipnomadQueueDX7Preview(ChipNomadState* state,int track,const InstrumentDX7* patch) {
   if(!state||!state->audioCommands||track<0||track>=PROJECT_MAX_TRACKS||(patch&&!validDX7(*patch)))return 0;
+  if (patch) previewEnsure(state, state->dx7Preview);
   return state->audioCommands->pushCommand(14,track,patch?1:0,0,0,nullptr,nullptr,nullptr,nullptr,patch);
 }
 
@@ -2576,7 +2933,7 @@ static void updateSIDVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->sidVoices[t];
+    auto* track = &playback->tracks[t]; auto* voices = state->sidVoices[t]; if (!gateLoad(&voices[0])) continue;
     if (track->note.instrument == EMPTY_VALUE_8 || project->instruments[track->note.instrument].type!=InstrumentType::SID) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -2622,5 +2979,6 @@ static void updateSIDVoices(ChipNomadState* state) {
 
 int chipnomadQueueSIDPreview(ChipNomadState* state,int track,const InstrumentSID* patch){
  if(!state||!state->audioCommands||track<0||track>=PROJECT_MAX_TRACKS||(patch&&!validSID(*patch)))return 0;
+ if(patch)previewEnsure(state,state->sidPreview);
  return state->audioCommands->pushCommand(16,track,patch?1:0,0,0,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,patch);
 }
