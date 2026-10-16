@@ -26,6 +26,9 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <linux/fb.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <alsa/asoundlib.h>
 
 // ---------------------------------------------------------------------------
 // Data directory and log
@@ -34,6 +37,7 @@
 static char dataDir[512];
 static FILE* logFile = NULL;
 static struct timespec startTime;
+static bool logSync = true;  // fsync every line during early init and after audio lines
 
 static long long nowUs(void) {
   struct timespec t;
@@ -67,6 +71,8 @@ void rgnanoLog(const char* format, ...) {
   if (logFile) {
     fprintf(logFile, "[%6lld ms] %s\n", ms, line);
     fflush(logFile);
+    // The tester hard-powers-off a hung device: make the lines durable.
+    if (logSync || strncmp(line, "audio", 5) == 0) fsync(fileno(logFile));
   }
   fprintf(stderr, "[%6lld ms] %s\n", ms, line);
 }
@@ -177,12 +183,159 @@ static void enableFlushToZero(void) {
 #endif
 }
 
-static void SDLCALL audioTrampoline(void*, Uint8* stream, int length) {
-  enableFlushToZero();
-  AudioCallback* callback = audioCallbackPtr.load(std::memory_order_acquire);
-  if (callback) callback((int16_t*)stream, length / 4);
-  else memset(stream, 0, length);
+// ---------------------------------------------------------------------------
+// Out-of-process ALSA probe. Round 3/4 on the device hung inside the USB DAC
+// open (kernel, uninterruptible). A forked child tries each candidate with
+// alsa-lib only (no SDL, no fb); the parent waits kProbeTimeoutMs, then
+// SIGKILLs and moves on without ever waiting on a D-state child again.
+// ---------------------------------------------------------------------------
+
+static const int kProbeTimeoutMs = 2000;
+
+struct ProbeResult {
+  bool ok = false;
+  bool timedOut = false;
+  std::string detail;
+};
+
+static void probeChild(int wfd, const char* name, int rate, int period) {
+  char msg[160];
+  if (getenv("RGNANO_AUDIO_PROBE_TEST_HANG")) for (;;) sleep(1000);
+  snd_pcm_t* pcm = NULL;
+  int err = snd_pcm_open(&pcm, name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+  if (err < 0) { snprintf(msg, sizeof(msg), "open: %s", snd_strerror(err)); goto done; }
+  {
+    snd_pcm_hw_params_t* hw;
+    snd_pcm_hw_params_alloca(&hw);
+    unsigned int r = (unsigned int)rate;
+    snd_pcm_uframes_t per = (snd_pcm_uframes_t)period;
+    if ((err = snd_pcm_hw_params_any(pcm, hw)) < 0 ||
+        (err = snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0 ||
+        (err = snd_pcm_hw_params_set_format(pcm, hw, SND_PCM_FORMAT_S16_LE)) < 0 ||
+        (err = snd_pcm_hw_params_set_channels(pcm, hw, 2)) < 0 ||
+        (err = snd_pcm_hw_params_set_rate_near(pcm, hw, &r, 0)) < 0 ||
+        (err = snd_pcm_hw_params_set_period_size_near(pcm, hw, &per, 0)) < 0 ||
+        (err = snd_pcm_hw_params(pcm, hw)) < 0) {
+      snprintf(msg, sizeof(msg), "hw_params: %s", snd_strerror(err));
+      goto done;
+    }
+    if ((int)r != rate) {
+      snprintf(msg, sizeof(msg), "rate %u != %d", r, rate);
+      err = -1;
+      goto done;
+    }
+    if ((err = snd_pcm_prepare(pcm)) < 0) { snprintf(msg, sizeof(msg), "prepare: %s", snd_strerror(err)); goto done; }
+    {
+      // ~100 ms of silence; EAGAIN (non-blocking, buffer full) counts as written.
+      std::vector<int16_t> silence((size_t)period * 2, 0);
+      int chunks = rate / 10 / period + 1;
+      for (int i = 0; i < chunks; i++) {
+        snd_pcm_sframes_t w = snd_pcm_writei(pcm, silence.data(), (snd_pcm_uframes_t)period);
+        if (w == -EAGAIN) { usleep(5000); continue; }
+        if (w == -EPIPE) { snd_pcm_prepare(pcm); continue; }
+        if (w < 0) { err = (int)w; snprintf(msg, sizeof(msg), "write: %s", snd_strerror(err)); goto done; }
+      }
+    }
+    err = 0;
+    snprintf(msg, sizeof(msg), "ok rate=%u period=%lu", r, (unsigned long)per);
+  }
+done:
+  if (pcm) snd_pcm_close(pcm);
+  char out[200];
+  int n = snprintf(out, sizeof(out), "%c%s", err == 0 ? '+' : '-', msg);
+  ssize_t ignored = write(wfd, out, (size_t)n);
+  (void)ignored;
+  _exit(err == 0 ? 0 : 1);
 }
+
+static ProbeResult probeAlsa(const char* name, int rate, int period) {
+  ProbeResult res;
+  int fds[2];
+  if (pipe(fds) != 0) { res.detail = "pipe failed"; return res; }
+  fcntl(fds[0], F_SETFL, O_NONBLOCK);
+  pid_t pid = fork();
+  if (pid < 0) { close(fds[0]); close(fds[1]); res.detail = "fork failed"; return res; }
+  if (pid == 0) {
+    close(fds[0]);
+    probeChild(fds[1], name, rate, period);
+  }
+  close(fds[1]);
+  long long started = nowUs();
+  int status = 0;
+  bool exited = false;
+  while ((nowUs() - started) / 1000 < kProbeTimeoutMs) {
+    pid_t w = waitpid(pid, &status, WNOHANG);
+    if (w == pid) { exited = true; break; }
+    usleep(5000);
+  }
+  if (!exited) {
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, WNOHANG);  // one non-blocking reap; a D-state child is abandoned
+    res.timedOut = true;
+    res.detail = "TIMED OUT, child killed and abandoned";
+  } else {
+    char buf[220];
+    ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+    if (n > 0) {
+      buf[n] = 0;
+      res.ok = buf[0] == '+';
+      res.detail = buf + 1;
+    } else {
+      res.detail = "child exited without a report";
+    }
+  }
+  close(fds[0]);
+  return res;
+}
+
+struct ProbeWinner {
+  bool valid = false;
+  std::string name;   // ALSA PCM name
+  int devRate = 0;    // rate the device accepted
+  int reqRate = 0;    // rate the engine asked for when probing
+};
+static ProbeWinner probeWinner;
+
+static bool runProbe(int rate, int period) {
+  long long begun = nowUs();
+  struct Cand { const char* name; int rate; };
+  bool card1 = access("/proc/asound/card1", F_OK) == 0 || getenv("RGNANO_AUDIO_PROBE_FORCE_CARD1");
+  rgnanoLog("audio probe: card1 %s, probing out of process (timeout %d ms each)", card1 ? "present" : "absent", kProbeTimeoutMs);
+  std::vector<Cand> cands;
+  if (card1) { cands.push_back({"plughw:1,0", rate}); cands.push_back({"plughw:1,0", 48000}); }
+  cands.push_back({"default", rate});
+  cands.push_back({"plughw:0,0", rate});
+  bool card1Hung = false;
+  for (const Cand& c : cands) {
+    // A hung card1 open leaves a D-state child on that device; the default
+    // PCM routes there when the DAC is plugged, so skip straight to the speaker.
+    if (card1Hung && (strcmp(c.name, "plughw:1,0") == 0 || strcmp(c.name, "default") == 0)) {
+      rgnanoLog("audio probe: skip '%s' %d Hz (card1 hung earlier)", c.name, c.rate);
+      continue;
+    }
+    long long t0 = nowUs();
+    ProbeResult r = probeAlsa(c.name, c.rate, period);
+    rgnanoLog("audio probe: '%s' %d Hz -> %s in %lld ms (%s)", c.name, c.rate,
+              r.ok ? "OK" : (r.timedOut ? "HANG" : "fail"), (nowUs() - t0) / 1000, r.detail.c_str());
+    if (r.timedOut && strcmp(c.name, "plughw:1,0") == 0) card1Hung = true;
+    if (r.ok) {
+      probeWinner.valid = true;
+      probeWinner.name = c.name;
+      probeWinner.devRate = c.rate;
+      probeWinner.reqRate = rate;
+      rgnanoLog("audio probe: winner '%s' at %d Hz, total probe delay %lld ms", c.name, c.rate, (nowUs() - begun) / 1000);
+      return true;
+    }
+  }
+  rgnanoLog("audio probe: no candidate worked, total probe delay %lld ms", (nowUs() - begun) / 1000);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// In-process SDL open of the probe winner. SDL 2.30 ALSA (SDL_alsa_audio.c,
+// get_audio_device) opens the PCM named by $AUDIODEV when no device name is
+// passed, so AUDIODEV=<alsa name> + SDL_OpenAudioDevice(NULL) picks the winner.
+// ---------------------------------------------------------------------------
 
 struct OpenAttempt {
   std::mutex mutex;
@@ -191,21 +344,27 @@ struct OpenAttempt {
   SDL_AudioDeviceID device = 0;
   SDL_AudioSpec obtained;
   std::string error;
-  std::string speakerName;
 };
 
-static bool isSpeaker(const char* name) {
-  // 'V3s Audio Codec, ' on the RG Nano; the USB DAC is 'JadeAudio JA11, USB Audio'.
-  return name && (strstr(name, "V3s") || strstr(name, "Codec")) && !strstr(name, "USB");
+static SDL_AudioStream* bridgeStream = NULL;  // engine rate -> device rate when they differ
+static int bridgeEngineRate = 0;
+static int bridgeFrames = 0;
+
+static void SDLCALL audioTrampoline(void*, Uint8* stream, int length) {
+  enableFlushToZero();
+  AudioCallback* callback = audioCallbackPtr.load(std::memory_order_acquire);
+  if (!callback) { memset(stream, 0, length); return; }
+  if (!bridgeStream) { callback((int16_t*)stream, length / 4); return; }
+  static std::vector<int16_t> scratch;
+  if (scratch.size() < (size_t)bridgeFrames * 2) scratch.resize((size_t)bridgeFrames * 2);
+  while (SDL_AudioStreamAvailable(bridgeStream) < length) {
+    callback(scratch.data(), bridgeFrames);
+    SDL_AudioStreamPut(bridgeStream, scratch.data(), bridgeFrames * 4);
+  }
+  SDL_AudioStreamGet(bridgeStream, stream, length);
 }
 
-static void openWorker(std::shared_ptr<OpenAttempt> attempt, std::string name, bool useName,
-                       bool speaker, int rate, int samples) {
-  if (getenv("RGNANO_AUDIO_TEST_HANG") && !useName && !speaker) {
-    // Test hook: emulate the round-3 hang in the default open (watchdog test).
-    rgnanoLog("audio worker: RGNANO_AUDIO_TEST_HANG set, blocking forever");
-    for (;;) std::this_thread::sleep_for(std::chrono::hours(1));
-  }
+static void openWorker(std::shared_ptr<OpenAttempt> attempt, int rate, int samples) {
   rgnanoLog("audio worker: SDL_InitSubSystem(AUDIO)");
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
     std::lock_guard<std::mutex> lock(attempt->mutex);
@@ -214,25 +373,8 @@ static void openWorker(std::shared_ptr<OpenAttempt> attempt, std::string name, b
     attempt->done.notify_all();
     return;
   }
-  rgnanoLog("audio worker: driver=%s", SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "?");
-  int count = SDL_GetNumAudioDevices(0);
-  std::string speakerName;
-  for (int i = 0; i < count; i++) {
-    const char* n = SDL_GetAudioDeviceName(i, 0);
-    rgnanoLog("audio worker: output device %d: '%s'", i, n ? n : "(null)");
-    if (speakerName.empty() && isSpeaker(n)) speakerName = n;
-  }
-  if (speaker) {
-    if (speakerName.empty()) {
-      std::lock_guard<std::mutex> lock(attempt->mutex);
-      attempt->error = "no speaker device in the SDL list";
-      attempt->finished = true;
-      attempt->done.notify_all();
-      return;
-    }
-    name = speakerName;
-    useName = true;
-  }
+  rgnanoLog("audio worker: driver=%s AUDIODEV=%s", SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "?",
+            getenv("AUDIODEV") ? getenv("AUDIODEV") : "(unset)");
   SDL_AudioSpec want, have;
   SDL_zero(want);
   want.freq = rate;
@@ -240,27 +382,22 @@ static void openWorker(std::shared_ptr<OpenAttempt> attempt, std::string name, b
   want.channels = 2;
   want.samples = (Uint16)samples;
   want.callback = audioTrampoline;
-  rgnanoLog("audio worker: SDL_OpenAudioDevice(%s%s%s) %d Hz S16 2ch %d",
-            useName ? "'" : "", useName ? name.c_str() : "default", useName ? "'" : "", rate, samples);
+  rgnanoLog("audio worker: SDL_OpenAudioDevice(default via AUDIODEV) %d Hz S16 2ch %d", rate, samples);
   SDL_zero(have);
-  // allowed_changes = 0: SDL converts to whatever the device really runs, so
-  // the engine always renders the rate it was initialised with.
-  SDL_AudioDeviceID device = SDL_OpenAudioDevice(useName ? name.c_str() : NULL, 0, &want, &have, 0);
+  SDL_AudioDeviceID device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
   std::lock_guard<std::mutex> lock(attempt->mutex);
   attempt->device = device;
   attempt->obtained = have;
-  attempt->speakerName = speakerName;
   if (!device) attempt->error = SDL_GetError();
   attempt->finished = true;
   attempt->done.notify_all();
 }
 
-static SDL_AudioDeviceID tryOpen(const char* label, const std::string& name, bool useName, bool speaker,
-                                 int rate, int samples, std::string* usedName) {
+static SDL_AudioDeviceID tryOpen(const char* label, int rate, int samples) {
   rgnanoLog("audio: attempt '%s' (timeout %d ms)", label, kOpenTimeoutMs);
   auto attempt = std::make_shared<OpenAttempt>();
   long long started = nowUs();
-  std::thread(openWorker, attempt, name, useName, speaker, rate, samples).detach();
+  std::thread(openWorker, attempt, rate, samples).detach();
   std::unique_lock<std::mutex> lock(attempt->mutex);
   if (!attempt->done.wait_for(lock, std::chrono::milliseconds(kOpenTimeoutMs), [&] { return attempt->finished; })) {
     rgnanoLog("audio: attempt '%s' TIMED OUT after %d ms, abandoning the worker thread", label, kOpenTimeoutMs);
@@ -275,21 +412,42 @@ static SDL_AudioDeviceID tryOpen(const char* label, const std::string& name, boo
             label, (nowUs() - started) / 1000, attempt->device,
             SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "?",
             have.freq, have.format, have.channels, have.samples, have.size);
-  if (usedName) *usedName = speaker ? attempt->speakerName : name;
   return attempt->device;
 }
 
 static bool openAudio(int rate, int samples) {
-  const char* forced = getenv("RGNANO_AUDIO_DEVICE");
-  std::string used;
-  SDL_AudioDeviceID device = 0;
+  const char* forced = getenv("RGNANO_AUDIO_DEVICE");  // ALSA PCM name, skips the probe
+  const char* drv = getenv("SDL_AUDIODRIVER");
+  bool probeSkipped = (drv && drv[0] && strcmp(drv, "alsa") != 0);  // dummy/test drivers
+  std::string name;
+  int devRate = rate;
   if (forced && forced[0]) {
-    device = tryOpen("forced", forced, true, false, rate, samples, &used);
-  } else if (!audioDeviceName.empty()) {
-    device = tryOpen("remembered", audioDeviceName, true, false, rate, samples, &used);
+    name = forced;
+    rgnanoLog("audio: RGNANO_AUDIO_DEVICE forces '%s', probe skipped", forced);
+  } else if (probeSkipped) {
+    rgnanoLog("audio: SDL_AUDIODRIVER=%s, probe skipped", drv);
   } else {
-    device = tryOpen("default", "", false, false, rate, samples, &used);
-    if (!device) device = tryOpen("speaker", "", false, true, rate, samples, &used);
+    if (!probeWinner.valid && !runProbe(rate, samples)) {
+      rgnanoLog("audio: NO DEVICE. Running silent with a software clock");
+      audioFailed = true;
+      audioRate = rate;
+      audioSamples = samples;
+      return false;
+    }
+    name = probeWinner.name;
+    // Native rate worked: let the plug layer resample other rates. Only the
+    // fallback rate (48000) needs the engine-to-device bridge.
+    devRate = (probeWinner.devRate == probeWinner.reqRate) ? rate : probeWinner.devRate;
+  }
+  if (!name.empty()) setenv("AUDIODEV", name.c_str(), 1);
+  unsetenv("SDL_AUDIO_DEVICE_NAME");
+  SDL_AudioDeviceID device = tryOpen(name.empty() ? "default" : name.c_str(), devRate, samples);
+  if (device && devRate != rate) {
+    bridgeStream = SDL_NewAudioStream(AUDIO_S16SYS, 2, rate, AUDIO_S16SYS, 2, devRate);
+    bridgeEngineRate = rate;
+    bridgeFrames = samples;
+    rgnanoLog("audio: bridging engine %d Hz -> device %d Hz (%s)", rate, devRate, bridgeStream ? "ok" : "STREAM FAILED");
+    if (!bridgeStream) { SDL_CloseAudioDevice(device); device = 0; }
   }
   if (!device) {
     rgnanoLog("audio: NO DEVICE. Running silent with a software clock");
@@ -302,7 +460,8 @@ static bool openAudio(int rate, int samples) {
   audioDevice = device;
   audioRate = rate;
   audioSamples = samples;
-  audioDeviceName = used;
+  audioDeviceName = name;
+  rgnanoLog("audio: CHOSEN device '%s', device rate %d Hz, engine rate %d Hz", name.empty() ? "default" : name.c_str(), devRate, rate);
   return true;
 }
 
@@ -372,6 +531,7 @@ void rgnanoAudioClose(void) {
     SDL_CloseAudioDevice(audioDevice);
     audioDevice = 0;
   }
+  if (bridgeStream) { SDL_FreeAudioStream(bridgeStream); bridgeStream = NULL; }
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +554,7 @@ void rgnanoPlatformEarlyInit(void) {
   rgnanoLog("early init: opening audio first (32000 Hz, 512 frames)");
   openAudio(32000, 512);
   seedAssets();
+  logSync = false;
 }
 
 // ---------------------------------------------------------------------------

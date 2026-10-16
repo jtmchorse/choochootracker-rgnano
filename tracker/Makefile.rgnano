@@ -36,7 +36,7 @@ CFLAGS = $(filter-out -flto -Os -g,$(COMMON_CFLAGS)) $(RGNANO_OPT) $(INCLUDES) \
   -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
 # No MIDI backend (DESKTOP_BUILD/PORTMASTER_BUILD off) and no GAMEPAD_SUPPORT:
 # the buttons arrive as key events from SDL's evdev backend.
-XTRA_LIBS = -L$(RGNANO_SDL2_ROOT)/lib -lSDL2 -Wl,--allow-shlib-undefined \
+XTRA_LIBS = -L$(RGNANO_SDL2_ROOT)/lib -lSDL2 -lasound -Wl,--allow-shlib-undefined \
   -static-libstdc++ -static-libgcc -ldl -lpthread -lm
 
 object_for = $(BUILD)/obj/$(subst ../,up/,$(basename $(1))).o
