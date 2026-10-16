@@ -9,6 +9,7 @@
 #include "common.h"
 #ifdef RGNANO_BUILD
 #include "rgnano_platform.h"
+#include "rgnano_keymap.h"
 #endif
 
 int main(int argv, char** args) {
@@ -18,6 +19,10 @@ int main(int argv, char** args) {
   rgnanoPlatformEarlyInit();
 #endif
   settingsLoad();
+#ifdef RGNANO_BUILD
+  if (rgnanoMigrateKeymap(&appSettings))
+    rgnanoLog("keymap: saved key map held keys this hardware cannot send; slot 0 reset to the RG Nano defaults (keymapVersion %d)", appSettings.keymapVersion);
+#endif
 
   // Load custom font before gfxSetup so it uses the correct font
   if (appSettings.fontPath[0] != '\0') {

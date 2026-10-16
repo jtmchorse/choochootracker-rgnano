@@ -53,6 +53,7 @@ enum class TrackVisualMode : uint8_t { detailed, audio };
 struct TrackVisualSettings { TrackVisualMode mode = TrackVisualMode::detailed; };
 
 struct AppSettings {
+  int keymapVersion;  // settings.txt "keymapVersion": one-time key map migrations (RG Nano)
   int screenWidth;
   int screenHeight;
   int audioSampleRate;

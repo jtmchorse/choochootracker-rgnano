@@ -211,6 +211,12 @@ static int inputCodeToKey(InputCode input) {
   return keyUnmapped;
 }
 
+int appInputWantsKey(InputCode input) {
+  if (inputRawCallback) return 1;
+  return inputCodeToKey(input) != keyUnmapped || isMotionRecordTrigger(input) ||
+         motionLiveInputMask(input) || isMotionEraseTrigger(input);
+}
+
 static void applyLoopRange(void) {
   LoopRange range = screenGetLoopRange(currentScreen);
   if (range.enabled) {

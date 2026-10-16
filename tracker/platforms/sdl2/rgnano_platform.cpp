@@ -190,16 +190,62 @@ static void enableFlushToZero(void) {
 // SIGKILLs and moves on without ever waiting on a D-state child again.
 // ---------------------------------------------------------------------------
 
-static const int kProbeTimeoutMs = 2000;
+static const int kProbeTimeoutMs = 3000;  // alsa-lib open + SDL init/open + 150 ms of silence
 
 struct ProbeResult {
   bool ok = false;
   bool timedOut = false;
+  bool crashed = false;
   std::string detail;
 };
 
+// Child stage 2: exactly what the parent will do afterwards, in the child's own
+// address space. Round 4.1 died inside SDL_OpenAudioDevice (SIGSEGV in the
+// USB DAC path), which an alsa-lib-only open cannot predict. Same env
+// (AUDIODEV, SDL_AUDIODRIVER=alsa), same SDL calls and flags as openWorker /
+// tryOpen, then 150 ms of silence through the real callback. No video, no fb.
+static std::atomic<int> probeCallbacks{0};
+static void SDLCALL probeSilence(void*, Uint8* stream, int length) {
+  memset(stream, 0, (size_t)length);
+  probeCallbacks.fetch_add(1);
+}
+
+static const char* probeSdlStage(const char* name, int rate, int period, char* msg, size_t msgSize) {
+  setenv("AUDIODEV", name, 1);
+  setenv("SDL_AUDIODRIVER", "alsa", 1);
+  unsetenv("SDL_AUDIO_DEVICE_NAME");
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) { snprintf(msg, msgSize, "sdl init: %s", SDL_GetError()); return NULL; }
+  SDL_AudioSpec want, have;
+  SDL_zero(want);
+  want.freq = rate;
+  want.format = AUDIO_S16SYS;
+  want.channels = 2;
+  want.samples = (Uint16)period;
+  want.callback = probeSilence;
+  SDL_zero(have);
+  {
+    // Test hook: die inside the SDL stage. "1" crashes every candidate, any
+    // other value only the candidate with that ALSA name.
+    const char* crash = getenv("RGNANO_AUDIO_PROBE_TEST_CRASH");
+    if (crash && (strcmp(crash, "1") == 0 || strcmp(crash, name) == 0)) raise(SIGSEGV);
+  }
+  SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+  if (!dev) { snprintf(msg, msgSize, "sdl open: %s", SDL_GetError()); return NULL; }
+  SDL_PauseAudioDevice(dev, 0);
+  SDL_Delay(150);
+  SDL_PauseAudioDevice(dev, 1);
+  SDL_CloseAudioDevice(dev);
+  SDL_Quit();
+  snprintf(msg, msgSize, "ok sdl rate=%d samples=%d callbacks=%d", have.freq, have.samples, probeCallbacks.load());
+  return msg;
+}
+
+// The child reports progress on the pipe as it goes, one marker per stage
+// ("A" alsa-lib open passed, "S" entering the SDL stage), and a final "+text"
+// or "-text". If it dies by a signal the parent still knows the last stage.
 static void probeChild(int wfd, const char* name, int rate, int period) {
   char msg[160];
+  ssize_t ignored;
   if (getenv("RGNANO_AUDIO_PROBE_TEST_HANG")) for (;;) sleep(1000);
   snd_pcm_t* pcm = NULL;
   int err = snd_pcm_open(&pcm, name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
@@ -237,13 +283,25 @@ static void probeChild(int wfd, const char* name, int rate, int period) {
       }
     }
     err = 0;
-    snprintf(msg, sizeof(msg), "ok rate=%u period=%lu", r, (unsigned long)per);
+    snprintf(msg, sizeof(msg), "ok alsa rate=%u period=%lu", r, (unsigned long)per);
   }
 done:
-  if (pcm) snd_pcm_close(pcm);
+  if (pcm) { snd_pcm_close(pcm); pcm = NULL; }
+  if (err == 0 && !getenv("RGNANO_AUDIO_PROBE_ALSA_ONLY")) {
+    ignored = write(wfd, "A", 1);  // alsa-lib stage passed; the SDL stage can still crash
+    ignored = write(wfd, "S", 1);
+    char sdlMsg[120], both[160];
+    if (probeSdlStage(name, rate, period, sdlMsg, sizeof(sdlMsg))) {
+      snprintf(both, sizeof(both), "%s; %s", msg, sdlMsg);
+    } else {
+      err = -1;
+      snprintf(both, sizeof(both), "%s", sdlMsg);
+    }
+    snprintf(msg, sizeof(msg), "%s", both);
+  }
   char out[200];
   int n = snprintf(out, sizeof(out), "%c%s", err == 0 ? '+' : '-', msg);
-  ssize_t ignored = write(wfd, out, (size_t)n);
+  ignored = write(wfd, out, (size_t)n);
   (void)ignored;
   _exit(err == 0 ? 0 : 1);
 }
@@ -268,21 +326,39 @@ static ProbeResult probeAlsa(const char* name, int rate, int period) {
     if (w == pid) { exited = true; break; }
     usleep(5000);
   }
+  // Whatever the child managed to write, even if it was killed or crashed.
+  char buf[260];
+  ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+  buf[n > 0 ? n : 0] = 0;
+  const char* text = buf;
+  bool alsaPassed = false, inSdl = false;
+  for (; *text == 'A' || *text == 'S'; text++) {
+    if (*text == 'A') alsaPassed = true;
+    if (*text == 'S') inSdl = true;
+  }
+  const char* stage = inSdl ? "in the SDL open stage (alsa-lib open had passed)"
+                            : (alsaPassed ? "after the alsa-lib open" : "in the alsa-lib stage");
   if (!exited) {
     kill(pid, SIGKILL);
     waitpid(pid, &status, WNOHANG);  // one non-blocking reap; a D-state child is abandoned
     res.timedOut = true;
-    res.detail = "TIMED OUT, child killed and abandoned";
+    res.detail = std::string("TIMED OUT ") + stage + ", child killed and abandoned";
+  } else if (WIFSIGNALED(status)) {
+    int sig = WTERMSIG(status);
+    const char* sigName = sig == SIGSEGV ? "SIGSEGV" : sig == SIGBUS ? "SIGBUS" : sig == SIGABRT ? "SIGABRT" :
+                          sig == SIGILL ? "SIGILL" : sig == SIGFPE ? "SIGFPE" : sig == SIGKILL ? "SIGKILL" :
+                          sig == SIGTERM ? "SIGTERM" : sig == SIGPIPE ? "SIGPIPE" : "signal";
+    char d[200];
+    snprintf(d, sizeof(d), "child killed by %s (%d) %s", sigName, sig, stage);
+    res.crashed = true;
+    res.detail = d;
+  } else if (*text) {
+    res.ok = text[0] == '+' && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    res.detail = text + 1;
+    if (!res.ok && WIFEXITED(status)) res.detail += " (child exit code " + std::to_string(WEXITSTATUS(status)) + ")";
   } else {
-    char buf[220];
-    ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
-    if (n > 0) {
-      buf[n] = 0;
-      res.ok = buf[0] == '+';
-      res.detail = buf + 1;
-    } else {
-      res.detail = "child exited without a report";
-    }
+    res.detail = std::string("child exited without a report, exit code ") +
+                 (WIFEXITED(status) ? std::to_string(WEXITSTATUS(status)) : "?") + " " + stage;
   }
   close(fds[0]);
   return res;
@@ -306,6 +382,7 @@ static bool runProbe(int rate, int period) {
   cands.push_back({"default", rate});
   cands.push_back({"plughw:0,0", rate});
   bool card1Hung = false;
+  bool dacFailed = false;  // some DAC candidate (plughw:1,0 or the default routed there) did not work
   for (const Cand& c : cands) {
     // A hung card1 open leaves a D-state child on that device; the default
     // PCM routes there when the DAC is plugged, so skip straight to the speaker.
@@ -316,9 +393,12 @@ static bool runProbe(int rate, int period) {
     long long t0 = nowUs();
     ProbeResult r = probeAlsa(c.name, c.rate, period);
     rgnanoLog("audio probe: '%s' %d Hz -> %s in %lld ms (%s)", c.name, c.rate,
-              r.ok ? "OK" : (r.timedOut ? "HANG" : "fail"), (nowUs() - t0) / 1000, r.detail.c_str());
-    if (r.timedOut && strcmp(c.name, "plughw:1,0") == 0) card1Hung = true;
+              r.ok ? "OK" : (r.timedOut ? "HANG" : (r.crashed ? "CRASH" : "fail")), (nowUs() - t0) / 1000, r.detail.c_str());
+    if ((r.timedOut || r.crashed) && strcmp(c.name, "plughw:1,0") == 0) card1Hung = true;
+    if (!r.ok && card1 && (strcmp(c.name, "plughw:1,0") == 0 || strcmp(c.name, "default") == 0)) dacFailed = true;
     if (r.ok) {
+      if (card1 && dacFailed && strcmp(c.name, "plughw:0,0") == 0)
+        rgnanoLog("audio probe: the USB DAC (card1) is UNUSABLE on this device; the built-in speaker (plughw:0,0) is in use");
       probeWinner.valid = true;
       probeWinner.name = c.name;
       probeWinner.devRate = c.rate;
@@ -327,6 +407,8 @@ static bool runProbe(int rate, int period) {
       return true;
     }
   }
+  if (card1)
+    rgnanoLog("audio probe: the USB DAC (card1) is UNUSABLE on this device and so is the built-in speaker; no audio output");
   rgnanoLog("audio probe: no candidate worked, total probe delay %lld ms", (nowUs() - begun) / 1000);
   return false;
 }

@@ -50,6 +50,7 @@ static int normalizeAudioBufferSize(int size) {
 AppSettings appSettings;
 
 void initDefaultAppSettings(void) {
+  appSettings.keymapVersion = 0;
   appSettings.screenWidth = 0; // 0 to auto-detect resolution
   appSettings.screenHeight = 0;
   appSettings.audioSampleRate = kAudioSampleRate;
@@ -202,6 +203,7 @@ int settingsSave(void) {
   FILE* file = fopen(settingsPath, "w");
   if (file == NULL) return 1;
 
+  fprintf(file, "keymapVersion: %d\n", appSettings.keymapVersion);
   fprintf(file, "screenWidth: %d\n", appSettings.screenWidth);
   fprintf(file, "screenHeight: %d\n", appSettings.screenHeight);
   fprintf(file, "audioSampleRate: %d\n", appSettings.audioSampleRate);
@@ -319,7 +321,9 @@ int settingsLoad(void) {
       len--;
     }
 
-    if (strncmp(line, "bootScreenNight: ", 17) == 0) {
+    if (strncmp(line, "keymapVersion: ", 15) == 0) {
+      sscanf(line + 15, "%d", &appSettings.keymapVersion);
+    } else if (strncmp(line, "bootScreenNight: ", 17) == 0) {
       int enabled;
       if (sscanf(line + 17, "%d", &enabled) == 1 && (enabled == 0 || enabled == 1))
         appSettings.bootScreenNight = (uint8_t)enabled;

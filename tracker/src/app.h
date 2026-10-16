@@ -22,6 +22,8 @@ InputCode appCurrentInput(void);
 
 // Raw input callback for key mapping screen
 extern void (*inputRawCallback)(InputCode input, int isDown);
+// True if the app wants this keyboard key: the key mapping screen is capturing, or the key is mapped.
+int appInputWantsKey(InputCode input);
 
 
 #ifdef __cplusplus
