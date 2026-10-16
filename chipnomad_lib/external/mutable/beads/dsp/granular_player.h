@@ -68,6 +68,7 @@ class GranularPlayer {
     simple_scheduler_threshold_ = int(sample_rate * kSimpleSchedulerThreshold);
     
     grain_interval_ = 1;
+    grain_limit_ = num_grains;
     
     max_grain_duration_ = sample_rate * 4.0f;
     sample_rate_ = sample_rate;
@@ -75,6 +76,14 @@ class GranularPlayer {
     Reset();
   }
   
+  // Host extension: caps the simultaneous grains (RG Nano "FX lite"). Takes
+  // effect on the next Reset(); the grains above the cap are never started
+  // or rendered. Voice stealing and fades work on the first N grains.
+  inline void set_grain_limit(int limit) {
+    grain_limit_ = limit < 1 ? 1 : (limit > num_grains ? num_grains : limit);
+  }
+  inline int grain_limit() const { return grain_limit_; }
+
   inline void Reset() {
     for (int i = 0; i < num_grains; ++i) {
       grain_[i].Init(sample_rate_);
@@ -105,7 +114,7 @@ class GranularPlayer {
   
   inline int CountActiveGrains() const {
     int num_active_grains = 0;
-    for (int i = 0; i < num_grains; ++i) {
+    for (int i = 0; i < grain_limit_; ++i) {
       if (!grain_[i].done()) {
         ++num_active_grains;
       }
@@ -141,10 +150,10 @@ class GranularPlayer {
       std::rotate(
           &grain_priority_list_[0],
           &grain_priority_list_[1],
-          &grain_priority_list_[num_grains]);
+          &grain_priority_list_[grain_limit_]);
       grain_priority_list_[0]->FadeOut(
           std::min(grain_interval_, instant_crossfade_time_));
-      for (int i = 1; i < num_grains - 1; ++i) {
+      for (int i = 1; i < grain_limit_ - 1; ++i) {
         grain_priority_list_[i]->FadeOut(instant_crossfade_time_);
       }
     } else {
@@ -159,7 +168,7 @@ class GranularPlayer {
         std::rotate(
             &grain_priority_list_[0],
             &grain_priority_list_[1],
-            &grain_priority_list_[num_grains]);
+            &grain_priority_list_[grain_limit_]);
         
         fade_time[0] = grain_interval_ + 1;
         fade_time[1] = instant_crossfade_time_;
@@ -179,7 +188,7 @@ class GranularPlayer {
         std::partial_sort(
             &grain_priority_list_[0],
             &grain_priority_list_[num_safety_grains],
-            &grain_priority_list_[num_grains],
+            &grain_priority_list_[grain_limit_],
             T::Compare);
       
         fade_time[0] = instant_crossfade_time_;
@@ -214,6 +223,7 @@ class GranularPlayer {
   float one_hertz_;
   
   int grain_interval_;
+  int grain_limit_ = num_grains;
   
   DISALLOW_COPY_AND_ASSIGN(GranularPlayer);
 };

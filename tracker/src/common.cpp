@@ -9,6 +9,7 @@
 #include <emscripten.h>
 #endif
 #include <chipnomad_lib.h>
+#include <fx_profile.h>
 
 static char settingsPath[PATH_LENGTH + 32];
 static char autosavePath[PATH_LENGTH + 32];
@@ -95,6 +96,13 @@ void initDefaultAppSettings(void) {
 #else
   appSettings.waveformRefreshHz = 30;
 #endif
+  appSettings.playFps = 20;
+#ifdef RGNANO_BUILD
+  appSettings.fxLite = 1;
+#else
+  appSettings.fxLite = 0;
+#endif
+  fxLiteSet(appSettings.fxLite != 0);
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
     visual.mode = TrackVisualMode::detailed;
@@ -238,6 +246,8 @@ int settingsSave(void) {
   fprintf(file, "quickHelpReleaseSeen: %d\n", appSettings.quickHelpReleaseSeen);
   fprintf(file, "ayWavetableLfoView: %d\n", appSettings.ayWavetableLfoView);
   fprintf(file, "waveformRefreshHz: %d\n", appSettings.waveformRefreshHz);
+  fprintf(file, "playFps: %d\n", appSettings.playFps);
+  fprintf(file, "fxLite: %d\n", appSettings.fxLite);
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -393,6 +403,10 @@ int settingsLoad(void) {
       sscanf(line + 20, "%d", &appSettings.ayWavetableLfoView);
     } else if (strncmp(line, "waveformRefreshHz: ", 19) == 0) {
       sscanf(line + 19, "%d", &appSettings.waveformRefreshHz);
+    } else if (strncmp(line, "playFps: ", 9) == 0) {
+      sscanf(line + 9, "%d", &appSettings.playFps);
+    } else if (strncmp(line, "fxLite: ", 8) == 0) {
+      sscanf(line + 8, "%d", &appSettings.fxLite);
     } else if (strncmp(line, "stickLiveMode: ", 15) == 0) {
       appSettings.stickLiveMode = strcmp(line + 15, "FREE") == 0 ? StickLiveMode::free :
         strcmp(line + 15, "TOGGLE") == 0 ? StickLiveMode::toggle : StickLiveMode::hold;
@@ -546,6 +560,10 @@ int settingsLoad(void) {
   if (appSettings.braidsDrift < 0 || appSettings.braidsDrift > 4) appSettings.braidsDrift = 0;
   if (appSettings.braidsSignature < 0 || appSettings.braidsSignature > 4) appSettings.braidsSignature = 0;
   if (appSettings.waveformRefreshHz < 1 || appSettings.waveformRefreshHz > 60) appSettings.waveformRefreshHz = 30;
+  if (appSettings.playFps != 10 && appSettings.playFps != 15 && appSettings.playFps != 20 && appSettings.playFps != 30)
+    appSettings.playFps = 20;
+  appSettings.fxLite = appSettings.fxLite ? 1 : 0;
+  fxLiteSet(appSettings.fxLite != 0);
   for (int i = 0; i < MIDI_CHANNEL_COUNT; i++) {
     if (appSettings.midiChannelInstrument[i] < -1 || appSettings.midiChannelInstrument[i] >= PROJECT_MAX_INSTRUMENTS)
       appSettings.midiChannelInstrument[i] = -1;

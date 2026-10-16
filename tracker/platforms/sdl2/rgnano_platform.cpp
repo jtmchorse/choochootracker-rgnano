@@ -3,6 +3,7 @@
 #include "rgnano_platform.h"
 #include "rgnano_scale.h"
 #include "version.h"
+#include "fx_profile.h"
 #include "corelib_file.h"
 #include <SDL2/SDL.h>
 #include <algorithm>
@@ -577,6 +578,15 @@ void rgnanoStatsAddLimiter(float minGain, float meanReduction, unsigned engagedF
 
 // Called every UI frame from the main loop (main thread). Logs a window every
 // 10 s while the sequencer plays and a summary when it stops.
+// Per-effect cost for the window that just closed (see chipnomad_lib/fx_profile.h).
+static void logFxProfile(unsigned callbacks) {
+  FxProfile fp;
+  chipnomadGetFxProfile(&fp, true);
+  char fx[200];
+  fxProfileFormat(fp, (int)callbacks, fx, sizeof(fx));
+  rgnanoLog("astat fx us/cb: %s", fx);
+}
+
 void rgnanoStatsTick(int playing) {
   using namespace astat;
   static bool wasPlaying = false, rtLogged = false;
@@ -641,10 +651,12 @@ void rgnanoStatsTick(int playing) {
   if (!stopping) {
     snprintf(tag, sizeof(tag), "%ds", ++windows * 10);
     line(tag, w, limW, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    logFxProfile(w.calls);
     lastWall = now; lastProc = proc; lastMain = mainCpu; lastAudio = audCpu;
   } else {
     wasPlaying = false;
     line("window(final)", w, limW, wall, proc - lastProc, mainCpu - lastMain, audCpu - lastAudio);
+    logFxProfile(w.calls);
     line("SUMMARY", total, limTotal, totalWall, proc - startProc, mainCpu - startMain, audCpu - startAudio);
   }
 }

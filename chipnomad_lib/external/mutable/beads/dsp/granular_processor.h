@@ -47,11 +47,14 @@ class GranularProcessor {
   GranularProcessor() { }
   ~GranularProcessor() { }
   
+  // clear=false only attaches the (shared) recording banks; the host clears
+  // them once in Reset().
   inline void Init(
       float sample_rate,
-      uint8_t* buffers[]) {
-    mono_delay_line_.Init(buffers);
-    stereo_delay_line_.Init(buffers);
+      uint8_t* buffers[],
+      bool clear = true) {
+    mono_delay_line_.Init(buffers, clear);
+    stereo_delay_line_.Init(buffers, clear);
 
     dummy_granular_player_.Init(sample_rate);
     granular_player_.Init(sample_rate);
@@ -81,6 +84,21 @@ class GranularProcessor {
     stereo_delay_line_.Reset();
     granular_player_.Reset();
     multitap_delay_.Reset();
+  }
+
+  // Both delay lines view the same banks, so only the line in use needs to
+  // wipe them; the other one just rewinds its pointers. Same final state as
+  // Reset(), without clearing the 768 KB twice.
+  inline void Reset(bool mono) {
+    mono_delay_line_.Reset(mono);
+    stereo_delay_line_.Reset(!mono);
+    granular_player_.Reset();
+    multitap_delay_.Reset();
+  }
+
+  // Host extension: cap simultaneous grains (call before Reset).
+  inline void set_grain_limit(int limit) {
+    granular_player_.set_grain_limit(limit);
   }
   
   inline int max_delay_times_ratio() const {

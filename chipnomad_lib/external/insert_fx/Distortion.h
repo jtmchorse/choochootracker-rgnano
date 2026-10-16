@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include "dither_scale.h"
 namespace insert_dsp {
 class Distortion {
 public:
@@ -156,12 +157,12 @@ void Distortion::processReplacing(float **inputs, float **outputs, int sampleFra
 		}
 
 		//begin 32 bit stereo floating point dither
-		int expon; frexpf((float)inputSampleL, &expon);
+		const double scaleL = ditherScale((float)inputSampleL);
 		fpdL ^= fpdL << 13; fpdL ^= fpdL >> 17; fpdL ^= fpdL << 5;
-		inputSampleL += ((double(fpdL)-uint32_t(0x7fffffff)) * 5.5e-36 * ldexp(1.0,expon+62));
-		frexpf((float)inputSampleR, &expon);
+		inputSampleL += ((double(fpdL)-uint32_t(0x7fffffff)) * 5.5e-36 * scaleL);
+		const double scaleR = ditherScale((float)inputSampleR);
 		fpdR ^= fpdR << 13; fpdR ^= fpdR >> 17; fpdR ^= fpdR << 5;
-		inputSampleR += ((double(fpdR)-uint32_t(0x7fffffff)) * 5.5e-36 * ldexp(1.0,expon+62));
+		inputSampleR += ((double(fpdR)-uint32_t(0x7fffffff)) * 5.5e-36 * scaleR);
 		//end 32 bit stereo floating point dither
 
 		*out1 = inputSampleL;

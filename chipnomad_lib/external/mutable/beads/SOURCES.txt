@@ -29,3 +29,23 @@ only the unavailable Beads slot dry, with other insert effects still working.
 The stereo recording capacity remains 4 seconds (192000 frames).
 
 This is an adaptation of Beads, not an emulation of its panel/CV hardware.
+
+RG Nano "FX lite" additions (chipnomad_lib/fx_profile.h, default ON for RGNANO_BUILD):
+ - Processor::MEDIA_DIGITAL_LITE: the 16-bit digital engine at 32 kHz with a 4 s
+   buffer (128000 frames, the same 4 s as the 48 kHz engine) and at most 16 grains.
+   With a 32 kHz host the 48 kHz rate converters are bypassed, which was the
+   largest single cost. Chosen in BeadsInsert::reset(), so the setting takes
+   effect the next time playback starts. Sound compared with the full engine on
+   identical input: level within about +/-1 dB after a 0.9 wet trim, spectrum
+   within 1 dB below 8 kHz; the 12-16 kHz octave is about 3 dB brighter (no
+   14.7 kHz converter low-pass), pitch-down grains pick up interpolation images
+   in the top two octaves (about 15 dB below the total at -12 st; the 32 kHz
+   rate is what Beads' own vintage mode does), and dense textures that need more
+   than 16 simultaneous grains steal grains sooner, so they sound slightly thinner.
+ - GranularPlayer::set_grain_limit, DelayLine::Init(clear=false), GranularProcessor::
+   Reset(mono): Init no longer wipes the three shared 768 KB recording banks ten times
+   (only the line in use is cleared once). Bit-identical, and 10x less memset at every
+   playback start per Beads instance.
+ - Reverb::ProcessDryOnly: the host never feeds Beads' internal reverb (amount 0), so
+   the engine (about 10 reads/writes of a 64 KB memory per sample) is skipped and only
+   its dry gain ramp runs. Bit-identical.

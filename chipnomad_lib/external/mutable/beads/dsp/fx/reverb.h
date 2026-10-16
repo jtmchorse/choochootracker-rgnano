@@ -161,6 +161,21 @@ class Reverb {
     }
   }
   
+  // Host extension: Process() when mix is 0 and the memory is still silent.
+  // Every wet term is exactly 0, so only the dry gain ramp has to run
+  // (state `dry_` is advanced exactly as Process() would). Callers must
+  // have set mix 0 and never fed the engine.
+  void ProcessDryOnly(FloatFrame* in_out, size_t size) {
+    mix_ = 0.0f;
+    stmlib::ParameterInterpolator dry_modulation(&dry_, 1.0f, size);
+    while (size--) {
+      const float dry_amount = dry_modulation.Next();
+      in_out->l = in_out->l * dry_amount;
+      in_out->r = in_out->r * dry_amount;
+      ++in_out;
+    }
+  }
+
   inline void set_mix(float mix) {
     mix_ = mix;
   }

@@ -8,6 +8,7 @@
 #include "../../src/corelib/corelib_assets.h"
 #ifdef RGNANO_BUILD
 #include "app.h"
+#include "common.h"
 #include "rgnano_platform.h"
 #include "rgnano_keymap.h"
 #endif
@@ -241,6 +242,9 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
   initGamepad();
 #endif
 
+#ifdef RGNANO_BUILD
+  uint32_t nextTickAt = SDL_GetTicks(), nextDrawAt = nextTickAt;
+#endif
   while (1) {
     start = SDL_GetTicks();
 
@@ -628,6 +632,55 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
     }
 #endif
 
+#ifdef RGNANO_BUILD
+    // One Cortex-A7 shared with the audio thread. Input is dispatched above on
+    // every pass; the UI tick (key repeat, autosave, MIDI poll) and the screen
+    // present run on their own clocks:
+    //   stopped: tick 30, draw 30
+    //   playing: tick max(20, Play FPS), draw = Play FPS (Settings > Graphics)
+    // so a 10 fps present cap saves CPU without slowing key repeat, and the
+    // wait below ends as soon as an input event arrives.
+    {
+      const int playing = appIsPlaying();
+      const int drawFps = playing ? appSettings.playFps : FPS;
+      const int tickFps = playing ? (appSettings.playFps > 20 ? appSettings.playFps : 20) : FPS;
+      uint32_t now = SDL_GetTicks();
+      if ((int32_t)(now - nextTickAt) >= 0) {
+        eventData.type = MainLoopEvent::tick;
+        eventData.data.value = 0;
+        onEvent(eventData);
+        const uint32_t period = 1000u / (uint32_t)tickFps;
+        // Anchored to the schedule so SDL_Delay rounding does not slow the tick;
+        // resynchronised if a long stall left it more than a period behind.
+        nextTickAt += period;
+        if ((int32_t)(now - nextTickAt) > (int32_t)period) nextTickAt = now + period;
+      }
+      if ((int32_t)(now - nextDrawAt) >= 0) {
+        draw();
+        gfxUpdateScreen();
+        uint32_t done = SDL_GetTicks();
+        busytime = done - now;
+        frameTimeUs = (int)(busytime * 1000);
+        {
+          float lim = 1.0f, mean = 0.0f; unsigned eng = 0, tot = 0;
+          if (appTakeLimiterStats(&lim, &mean, &eng, &tot)) rgnanoStatsAddLimiter(lim, mean, eng, tot);
+        }
+        rgnanoStatsTick(playing);
+        const uint32_t period = 1000u / (uint32_t)drawFps;
+        nextDrawAt += period;
+        if ((int32_t)(done - nextDrawAt) > 0) nextDrawAt = done;  // a slow frame never queues extra ones
+      }
+      const uint32_t wake = (int32_t)(nextTickAt - nextDrawAt) < 0 ? nextTickAt : nextDrawAt;
+      for (;;) {
+        const uint32_t t = SDL_GetTicks();
+        if ((int32_t)(wake - t) <= 0) break;
+        SDL_PumpEvents();
+        if (SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) break;
+        const uint32_t slice = wake - t;
+        SDL_Delay(slice > 4 ? 4 : slice);
+      }
+    }
+#else
     eventData.type = MainLoopEvent::tick;
     eventData.data.value = 0;
     onEvent(eventData);
@@ -642,24 +695,11 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
 #else
     int targetFps = FPS;
 #endif
-#ifdef RGNANO_BUILD
-    // One Cortex-A7 shared with the audio thread: while the sequencer plays,
-    // present at ~20 fps (50 ms) and leave the rest of the core to the
-    // engine; 30 fps when stopped.
-    {
-      const int playing = appIsPlaying();
-      targetFps = playing ? 20 : FPS;
-      {
-        float lim = 1.0f, mean = 0.0f; unsigned eng = 0, tot = 0;
-        if (appTakeLimiterStats(&lim, &mean, &eng, &tot)) rgnanoStatsAddLimiter(lim, mean, eng, tot);
-      }
-      rgnanoStatsTick(playing);
-    }
-#endif
     uint32_t delay = 1000 / (uint32_t)targetFps;
     if (delay > busytime) {
       SDL_Delay(delay - busytime);
     }
+#endif
   }
 }
 

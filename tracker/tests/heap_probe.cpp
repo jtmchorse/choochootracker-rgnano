@@ -14,6 +14,7 @@
 //     --seconds N        seconds to render (default 4)
 //     --trap             abort() on any allocation inside the render call
 //     --hash             print FNV-1a of every rendered float (A/B compare)
+//     --beads N          put Beads in N (1 or 2) insert slots of every generated track
 //     --csv              one machine-readable line
 //
 // Built by `make -f Makefile.test heap-probe`; add RGNANO=1 for the
@@ -32,6 +33,7 @@
 #include <vector>
 
 #include "chipnomad_lib.h"
+#include "insert_fx.h"
 #include "audio_monitor.h"
 #include "playback.h"
 #include "project.h"
@@ -91,6 +93,7 @@ int main(int argc, char** argv) {
   std::string mode;
   int rate = 32000, seconds = 4;
   bool hash = false, csv = false;
+  int beadsSlots = 0;
   std::string typesArg;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -104,6 +107,7 @@ int main(int argc, char** argv) {
     else if (a == "--trap") gTrap = true;
     else if (a == "--hash") hash = true;
     else if (a == "--csv") csv = true;
+    else if (a == "--beads" && i + 1 < argc) beadsSlots = atoi(argv[++i]);
     else { path = argv[i]; project = "file"; }
   }
 
@@ -135,6 +139,9 @@ int main(int argc, char** argv) {
       InstrumentType::Plaits, InstrumentType::SegaPSG};
     buildTrackSong(loaded, 4, t);
   }
+
+  for (int t = 0; t < loaded->tracksCount && beadsSlots > 0; ++t)
+    for (int slot = 0; slot < beadsSlots && slot < 2; ++slot) insertSelect(&loaded->trackInserts[t][slot], insertBeads);
 
   long long projectBytes = gLive.load() - startLive;  // .cct payload incl. sample data
   long long baseLive = startLive;

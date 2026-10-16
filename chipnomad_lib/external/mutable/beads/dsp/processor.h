@@ -59,7 +59,11 @@ class Processor {
     MEDIA_DIRTY_TAPE,
     MEDIA_CLEAN_TAPE,
     MEDIA_VINTAGE_DIGITAL,
-    MEDIA_DIGITAL
+    MEDIA_DIGITAL,
+    // Host extension (RG Nano "FX lite"): the 16-bit digital engine run at
+    // 32 kHz with a 4 s buffer, so a 32 kHz host needs no resampling, and a
+    // capped grain count. Same sound design as MEDIA_DIGITAL otherwise.
+    MEDIA_DIGITAL_LITE
   };
   
   struct MixParameters {
@@ -69,26 +73,31 @@ class Processor {
     bool output_gate;
   };
   
-  void Init(uint8_t* buffers[], uint16_t* reverb_buffer);
+  void Init(uint8_t* buffers[], uint16_t* reverb_buffer,
+            Media media = MEDIA_DIGITAL, int lite_grain_limit = 32);
   void Configure(Media media, bool mono);
+  static constexpr float kLiteSampleRate = 32000.0f;
+  // True while the internal reverb has never been fed: the host leaves its
+  // amount at zero, so Process() can skip the engine without changing a bit.
+  bool reverb_engine_idle() const { return !reverb_used_; }
   
   inline Media media() const { return media_; }
   inline bool mono() const { return mono_; }
   
   inline float sample_rate() const {
 #ifdef ENABLE_HARDWARE_24K
-    float sr[4] = { 24000.0f, 48000.0f, 32000.0f, 48000.0f };
+    float sr[5] = { 24000.0f, 48000.0f, 32000.0f, 48000.0f, kLiteSampleRate };
 #else
-    float sr[4] = { 48000.0f, 48000.0f, 32000.0f, 48000.0f };
+    float sr[5] = { 48000.0f, 48000.0f, 32000.0f, 48000.0f, kLiteSampleRate };
 #endif  // ENABLE_HARDWARE_24K
     return sr[media_];
   }
   
   inline int ratio() const {
 #ifdef ENABLE_HARDWARE_24K
-    int ratio[4] = { 1, 2, 1, 1 };
+    int ratio[5] = { 1, 2, 1, 1, 1 };
 #else
-    int ratio[4] = { 2, 2, 1, 1 };
+    int ratio[5] = { 2, 2, 1, 1, 1 };
 #endif  // ENABLE_HARDWARE_24K
     return ratio[media_];
   }
@@ -107,6 +116,8 @@ class Processor {
         return processor_clean_tape_.mutable_delay_write_ptr(mono_);
       case MEDIA_VINTAGE_DIGITAL:
         return processor_vintage_digital_.mutable_delay_write_ptr(mono_);
+      case MEDIA_DIGITAL_LITE:
+        return processor_digital_lite_.mutable_delay_write_ptr(mono_);
       case MEDIA_DIGITAL:
       default:
         return processor_digital_.mutable_delay_write_ptr(mono_);
@@ -127,6 +138,8 @@ class Processor {
         return processor_clean_tape_.remaining(mono_);
       case MEDIA_VINTAGE_DIGITAL:
         return processor_vintage_digital_.remaining(mono_);
+      case MEDIA_DIGITAL_LITE:
+        return processor_digital_lite_.remaining(mono_);
       case MEDIA_DIGITAL:
       default:
         return processor_digital_.remaining(mono_);
@@ -172,6 +185,11 @@ class Processor {
       RESOLUTION_12_BIT,
       kDelayBufferSizeBits / (12 * 2),
       1> processor_vintage_digital_;
+  // 4 s at 32 kHz, same 16-bit stereo storage as the 48 kHz digital engine.
+  GranularProcessor<
+      RESOLUTION_16_BIT,
+      128000,
+      1> processor_digital_lite_;
   GranularProcessor<
       RESOLUTION_12_BIT,
       kDelayBufferSizeBits / (12 * 2),
@@ -194,6 +212,8 @@ class Processor {
   Media media_;
   bool process_dry_;
   bool mono_;
+  bool reverb_used_;
+  int lite_grain_limit_;
   
   float delay_mode_transition_;
 

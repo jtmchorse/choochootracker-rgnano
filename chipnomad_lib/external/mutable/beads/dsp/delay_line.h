@@ -191,7 +191,7 @@ class DelayLine {
     Init(buffers);
   }
 
-  void Init(uint8_t* buffers[]) {
+  void Init(uint8_t* buffers[], bool clear = true) {
     /*assert((delay_line_size_in_bytes() + freeze_tail_size_in_bytes()) <= \
            bank_size * num_banks);
     if (resolution == RESOLUTION_16_BIT && num_channels == 2) {
@@ -219,7 +219,7 @@ class DelayLine {
       items_[i] = static_cast<ItemType*>(static_cast<void*>(buffers[i]));
     }
     
-    Reset();
+    Reset(clear);
   }
   
   inline size_t freeze_tail_size_in_bytes() const {

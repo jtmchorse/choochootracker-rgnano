@@ -1226,6 +1226,7 @@ void chipnomadInitChips(ChipNomadState* state, int sampleRate, ChipFactory facto
   // while audio is stopped before preparing instances at the new rate.
   state->audioCommands->discardProject();
   state->masterInsertChain = new(std::nothrow) InsertChain((float)sampleRate);
+  if (state->masterInsertChain) state->masterInsertChain->setRealtime(state->voiceMode == ChipNomadVoiceMode::lazyRealtime);
   if (state->masterInsertChain)
     state->masterInsertChain->sync(state->audioProject.masterInserts, &state->masterInsertAutomation);
   voiceReclaim(state, true);  // audio is stopped across InitChips
@@ -1239,6 +1240,7 @@ void chipnomadInitChips(ChipNomadState* state, int sampleRate, ChipFactory facto
   for (int i = 0; i < PROJECT_MAX_TRACKS; i++) {
     state->trackTilt[i].init((float)sampleRate);
     state->insertChains[i] = new(std::nothrow) InsertChain((float)sampleRate);
+    if (state->insertChains[i]) state->insertChains[i]->setRealtime(state->voiceMode == ChipNomadVoiceMode::lazyRealtime);
     if (state->insertChains[i]) state->insertChains[i]->sync(state->audioProject.trackInserts[i], &state->playbackState.tracks[i].inserts);
     state->insertResetSeen[i] = state->playbackState.tracks[i].insertReset;
     // A closed gate means any slot pointers are leftovers of a retired set that

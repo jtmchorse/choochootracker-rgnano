@@ -38,7 +38,8 @@ struct WorkCompressor {
       float level = fabsf(sc);
       env += (level > env ? atk : rel) * (level - env);
       float over = 20 * log10f(std::max(env, 1e-6f)) - thr;
-      float g = powf(10, (over > 0 ? over * (1 / ratio - 1) : 0) / 20) * mup;
+      // powf(10, 0) is exactly 1, so below threshold the pow can be skipped.
+      float g = (over > 0 ? powf(10, over * (1 / ratio - 1) / 20) : 1.0f) * mup;
       l[i] = l[i] * (1 - mix) + (l[i] * g) * mix;
       r[i] = r[i] * (1 - mix) + (r[i] * g) * mix;
     }

@@ -4,8 +4,24 @@
 #include <math.h>
 
 #include "project.h"
+#include "fx_profile.h"
 
 static constexpr float tailThreshold = 0.000001f;
+
+namespace {
+// Accumulates wall time of a master-effect section into the FX profile.
+// Per-sample rendering (fast-LFO projects) times one call in 64 and scales it.
+struct ScopedCost {
+  int which;
+  unsigned weight;
+  uint64_t started;
+  ScopedCost(int w, size_t frames) : which(w), weight(frames >= 32 ? 1u : ((++tick & 63u) == 0 ? 64u : 0u)),
+      started(weight ? fxProfileNowNs() : 0) {}
+  ~ScopedCost() { fxProfileMaster(which, weight ? (fxProfileNowNs() - started) * weight : 0); }
+  static unsigned tick;
+};
+unsigned ScopedCost::tick = 0;
+}  // namespace
 
 static float mixerGain(uint8_t value) {
   if (value == 0) return 0.0f;
@@ -89,7 +105,16 @@ void MasterEffects::process(float* reverbBus, float* delayBus, float* output,
   reverbTailFrames_ = reverbTailFrames_ > frames ? reverbTailFrames_ - frames : 0;
   delayTailFrames_ = delayTailFrames_ > frames ? delayTailFrames_ - frames : 0;
 
-  if (delayBus && !delayLine_.empty()) {
+  bool delayIdle = false;
+  if (delayBus && !delayLine_.empty() && delayTailFrames_ == 0 && fxLiteEnabled()) {
+    // FX lite: nothing in and the echoes have been under -120 dBFS for a whole
+    // delay time, so the line only holds silence. Leave it untouched.
+    float peak = 0.0f;
+    for (size_t i = 0; i < frames * 2; ++i) peak = std::max(peak, fabsf(delayBus[i]));
+    delayIdle = peak <= tailThreshold;
+  }
+  if (delayBus && !delayLine_.empty() && !delayIdle) {
+    ScopedCost cost(2, frames);
     size_t capacity = delayLine_.size() / 2;
     float tickRate = project->tickRate > 0.0f ? project->tickRate : 50.0f;
     size_t delaySamples = (size_t)(sampleRate_ * project->delayTicks / tickRate + 0.5f);
@@ -120,6 +145,7 @@ void MasterEffects::process(float* reverbBus, float* delayBus, float* output,
 
   if (reverbBus) {
     uint8_t algorithm = project->reverbAlgorithm == 1 ? 1 : 0;
+    ScopedCost cost(algorithm, frames);
     if (algorithm != activeReverbAlgorithm_) {
       reverbTailFrames_ = 0;
       if (algorithm) {
@@ -133,6 +159,13 @@ void MasterEffects::process(float* reverbBus, float* delayBus, float* output,
         reverbHighpassOutputState_[0] = reverbHighpassOutputState_[1] = 0.0f;
       }
       activeReverbAlgorithm_ = algorithm;
+    }
+    if (reverbTailFrames_ == 0 && fxLiteEnabled()) {
+      // FX lite: no input this block and the tail has been under -120 dBFS for
+      // a full second, so the reverb would only add silence. Skip it.
+      float peak = 0.0f;
+      for (size_t i = 0; i < frames * 2; ++i) peak = std::max(peak, fabsf(reverbBus[i]));
+      if (peak <= tailThreshold) return;
     }
     float gain = project->perceptualEffects ? mixerGain(project->reverbReturn) : project->reverbReturn / 100.0f;
     if (algorithm) {
