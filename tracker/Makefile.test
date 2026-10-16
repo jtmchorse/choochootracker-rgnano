@@ -264,3 +264,14 @@ $(VOICE_ALLOC_EXECUTABLE): $(VOICE_ALLOC_OBJECTS)
 voice-alloc-check: $(VOICE_ALLOC_EXECUTABLE)
 	@$(VOICE_ALLOC_EXECUTABLE)
 -include $(HEAP_PROBE_OBJECTS:.o=.d) $(VOICE_ALLOC_OBJECTS:.o=.d)
+
+# RG Nano FX CPU profiler / offline renderer (tests/fx_profile.cpp). Build
+# optimised: make -f Makefile.test fx-profile BUILD_DIR=build/fxprof \
+#   CFLAGS='-std=c++17 -O2 -w -DNDEBUG -DTEST -DTEST_PORTMASTER_INPUT'
+FXPROF_OBJECTS = $(foreach source,tests/fx_profile.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(eval $(call compile_source,tests/fx_profile.cpp))
+$(BUILD_DIR)/fx_profile: $(FXPROF_OBJECTS)
+	@$(CXX) $(FXPROF_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: fx-profile
+fx-profile: $(BUILD_DIR)/fx_profile
+-include $(FXPROF_OBJECTS:.o=.d)

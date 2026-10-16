@@ -59,6 +59,17 @@ void ott_dsp_process_stereo(ott_dsp_t *left, ott_dsp_t *right,
                             const float *inL, const float *inR,
                             float *outL, float *outR, size_t n);
 
+/* RG Nano "FX lite" variant of ott_dsp_process_stereo: identical signal path,
+ * but the log/exp gain computer and envelope ballistics run once every
+ * OTT_LITE_DECIM samples (8 kHz control rate at 32 kHz) and the resulting
+ * band gains are ramped linearly between updates. The RMS detectors, the
+ * crossover and the gain application stay per-sample. Needs both channels.
+ * Costs about a quarter of the transcendental work of the full path. */
+#define OTT_LITE_DECIM 4
+void ott_dsp_process_stereo_lite(ott_dsp_t *left, ott_dsp_t *right,
+                                 const float *inL, const float *inR,
+                                 float *outL, float *outR, size_t n);
+
 /* Split a single input sample into 3 bands using the LR4 crossover, with the
  * current input gain applied. No compression. Intended for unit tests that
  * need to verify the crossover sums flat. bands[0]=low, [1]=mid, [2]=high. */

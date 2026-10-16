@@ -10,6 +10,8 @@
 #include "screens.h"
 #include "screens/selection_popup.h"
 #include "chipnomad_lib.h"
+#include "fx_profile.h"
+#include "insert_fx.h"
 #include "project_utils.h"
 #include "waveform_display.h"
 #include "piano_display.h"
@@ -763,6 +765,15 @@ void appOnEvent(MainLoopEventData eventData) {
     break;
   case MainLoopEvent::tick: {
     soundbankPoll();
+    {
+      // Overload governor (live engines): tell the user why an insert went quiet.
+      static uint32_t shedSeen = 0;
+      const uint32_t shed = fxShedEvents();
+      if (shed != shedSeen) {
+        shedSeen = shed;
+        screenMessage(MESSAGE_TIME_ERROR, "CPU overload: %s bypassed", insertDescriptor((int)fxShedModule()).name);
+      }
+    }
     int motionRecordChanged = 0;
     MotionRecordEvent motionRecordEvent;
     while (chipnomadConsumeMotionRecordEvent(&motionRecordEvent))

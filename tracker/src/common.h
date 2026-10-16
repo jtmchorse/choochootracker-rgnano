@@ -72,6 +72,12 @@ struct AppSettings {
   int quickHelpReleaseSeen;
   int ayWavetableLfoView;
   int waveformRefreshHz;
+  // RG Nano: screen presents per second while the song plays (10/15/20/30).
+  // The sequencer tick and input polling do not depend on it. Stopped is 30.
+  int playFps;
+  // "FX lite" (see chipnomad_lib/fx_profile.h): cheaper effect rendering. 1 on
+  // RG Nano by default, 0 elsewhere. 0 renders every effect at full quality.
+  int fxLite;
   // Port indices are runtime-only (not saved): enumeration order isn't
   // stable across reboots/replugging. -1 = off. What IS saved is each
   // device's name (below); appSetup() resolves it back to a live index on

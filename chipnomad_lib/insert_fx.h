@@ -67,6 +67,13 @@ class InsertChain {
   void trigger();
   uint16_t sync(const InsertConfig config[2], InsertAutomation*, bool rendered = true);
   bool active() const;
+  // Live-audio engines only (never offline export): arms the overload governor,
+  // which bypasses the costliest slot when the effects alone would take most of
+  // the CPU. See fx_profile.h.
+  void setRealtime(bool);
+  // Diagnostics: the largest absolute input/output sample a slot has seen since the
+  // last call with reset=true (before the dry/wet fade, after clamping to +/-32).
+  void peaks(int slot, float* input, float* output, bool reset);
   void process(float* interleaved, int frames, const uint8_t effective[2][8]);
 
  private:

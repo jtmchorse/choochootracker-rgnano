@@ -40,3 +40,11 @@ gains and crossover defaults retained. Rui-727 implementation; not official
 Xfer or Ableton code. Upstream standalone tests run against the copied core.
 
 All imported DSP uses MIT terms. Full copyright and license notices follow.
+
+Host additions for the RG Nano (chipnomad_lib/fx_profile.h):
+ - dither_scale.h: exact replacement for frexpf/ldexp in the Airwindows dither
+   (Distortion, StereoDoubler). Bit-identical; removes four libm calls per sample.
+ - work_compressor.h: skips powf(10, 0) below threshold (exactly 1). Bit-identical.
+ - ott_dsp.c: ott_dsp_process_stereo_lite, the gain computer and ballistics run every
+   4 samples with linear gain ramps between updates (8 kHz control rate at 32 kHz).
+   Measured 70 dB below the signal against the full path. FX lite only.
