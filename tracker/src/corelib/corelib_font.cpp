@@ -15,13 +15,14 @@ static char lineBuffer[1024];
 static const Font defaultFont = {
   "Default", // name
   { // resolutions
+    {8, 12, font8x12},
     {12, 16, font12x16},
     {16, 24, font16x24},
     {24, 36, font24x36},
     {32, 48, font32x48},
     {48, 54, font48x54}
   },
-  5 // resolutionCount
+  6 // resolutionCount
 };
 
 static const Font* currentFont = &defaultFont;
@@ -99,7 +100,7 @@ Font* fontLoad(const char* path) {
         font->resolutions[resIdx].data = currentData;
       }
       resIdx++;
-      if (resIdx >= 5) break;
+      if (resIdx >= 6) break;
 
       p += 11;
       int w, h;
