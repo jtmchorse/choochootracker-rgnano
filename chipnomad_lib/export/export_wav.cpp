@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "playback.h"
+#include "synth/master_limiter.h"
 
 struct WAVHeader {
   char riff[4];
@@ -46,7 +47,7 @@ static void writeWAVHeader(FILE* file, int sampleRate, int channels, int bitDept
 // ExporterWAV
 ///////////////////////////////////////////////////////////////////////////////
 
-ExporterWAV::ExporterWAV(const char* path, Project* project, int startRow, int sampleRate, int bitDepth, float mixVolume, bool stems)
+ExporterWAV::ExporterWAV(const char* path, Project* project, int startRow, int sampleRate, int bitDepth, float mixVolume, bool stems, int masterLimiter)
   : Exporter(project, startRow) {
   this->sampleRate = sampleRate;
   this->bitDepth = bitDepth;
@@ -84,6 +85,21 @@ ExporterWAV::ExporterWAV(const char* path, Project* project, int startRow, int s
   chipnomadSetQuality(chipnomadState, ChipNomadQuality::best);
   chipnomadState->mixVolume = mixVolume;
 
+  // Same bus chain as live playback: mixVolume trim, then the master limiter,
+  // then the integer conversion in writeSamples. masterLimiter < 0 follows the
+  // build default (on for RGNANO_BUILD, off elsewhere); the app passes
+  // appSettings.masterLimiter. Stems are deliberately left unlimited: each
+  // stem is a raw track a user will remix, so limiting them separately would
+  // change their relative levels. The limiter is the state's own instance,
+  // freshly created and inited at the export sample rate by chipnomadInitChips.
+  if (masterLimiter < 0) masterLimiter = chipnomadDefaultMasterLimiter();
+  limiterOn = masterLimiter != 0 && !stems;
+  chipnomadSetMasterLimiter(chipnomadState, limiterOn ? 1 : 0);
+  // The limiter delays the signal by its lookahead. Drop that many frames at
+  // the start and flush the same number at the end (finish) so the file keeps
+  // the unlimited length and timing.
+  limiterSkip = limiterOn ? chipnomadState->masterLimiter->latency() : 0;
+
   if (stems) {
     for (int t = 0; t < PROJECT_MAX_TRACKS; t++) {
       chipnomadState->playbackState.trackEnabled[t] = (t == 0) ? 1 : 0;
@@ -95,7 +111,15 @@ int ExporterWAV::next() {
   int samplesRendered = chipnomadRender(chipnomadState, renderBuffer, sampleRate);
 
   if (samplesRendered > 0 && files[currentTrack]) {
-    writeSamples(files[currentTrack], renderBuffer, samplesRendered);
+    float* out = renderBuffer;
+    int count = samplesRendered;
+    if (limiterSkip > 0) {
+      int skip = limiterSkip < count ? limiterSkip : count;
+      out += skip * channels;
+      count -= skip;
+      limiterSkip -= skip;
+    }
+    if (count > 0) writeSamples(files[currentTrack], out, count);
   }
 
   if (samplesRendered < sampleRate) {
@@ -118,6 +142,17 @@ int ExporterWAV::next() {
 }
 
 int ExporterWAV::finish() {
+  if (limiterOn && files && files[0] && renderBuffer) {
+    // Flush the lookahead: push silence through the limiter and write the
+    // frames that were still inside it (minus any not yet skipped).
+    int tail = chipnomadState->masterLimiter->latency();
+    if (tail > sampleRate) tail = sampleRate;
+    memset(renderBuffer, 0, sizeof(float) * tail * channels);
+    chipnomadState->masterLimiter->process(renderBuffer, tail);
+    int skip = limiterSkip < tail ? limiterSkip : tail;
+    if (tail - skip > 0) writeSamples(files[0], renderBuffer + skip * channels, tail - skip);
+    limiterSkip = 0;
+  }
   for (int i = 0; i < fileCount; i++) {
     if (files[i]) {
       int dataSize = totalSamples * channels * (bitDepth / 8);

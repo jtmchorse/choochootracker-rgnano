@@ -268,8 +268,10 @@ void chipnomadSetQuality(ChipNomadState* state, ChipNomadQuality quality);
 /**
 * Master limiter on the final stereo bus (after mixVolume and the master
 * effects, before the host converts to integer). Off keeps the render
-* bit-identical to a build without it. A fresh state has it off (offline
-* export and tests are unaffected); the app applies appSettings.masterLimiter,
+* bit-identical to a build without it. A fresh state has it off (tests are
+* unaffected); the WAV exporter (ExporterWAV, non-stem) applies the same
+* limiter, gated on appSettings.masterLimiter, so an export does not clip
+* where the device output did not; stems stay unlimited. The app applies appSettings.masterLimiter,
 * whose default is chipnomadDefaultMasterLimiter(): on for RGNANO_BUILD, off
 * elsewhere.
 *

@@ -86,3 +86,5 @@ Key mapping screen still remaps everything.
     /root/work/qemu-run.sh 20            # boots, runs 20 s, dumps the frame
     readelf -d tracker/build/rgnano/choochootracker | grep NEEDED   # SDL2 + libc only
     sh -n tracker/packaging/rgnano/choochootracker.sh
+
+WAV export (single mixed file and bounce) runs the same mix trim and master limiter as live playback when Settings > master limiter is on, so exports match what the device plays; stem export stays unlimited.
