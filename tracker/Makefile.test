@@ -286,3 +286,13 @@ $(BUILD_DIR)/fx_profile: $(FXPROF_OBJECTS)
 .PHONY: fx-profile
 fx-profile: $(BUILD_DIR)/fx_profile
 -include $(FXPROF_OBJECTS:.o=.d)
+
+# On-device cost battery (tests/bench_device.cpp), built for the RG Nano by
+# packaging/rgnano/make-bench-opk.sh, or on a PC to produce the x86 estimate table.
+BENCHDEV_OBJECTS = $(foreach source,tests/bench_device.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(eval $(call compile_source,tests/bench_device.cpp))
+$(BUILD_DIR)/bench_device: $(BENCHDEV_OBJECTS)
+	@$(CXX) $(BENCHDEV_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: bench-device
+bench-device: $(BUILD_DIR)/bench_device
+-include $(BENCHDEV_OBJECTS:.o=.d)

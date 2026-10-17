@@ -8,6 +8,11 @@
 #ifdef WEB_BUILD
 #include <emscripten.h>
 #endif
+#ifdef RGNANO_BUILD
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
+// Weak no-op so host test builds link; the device platform file defines the real one.
+extern "C" __attribute__((weak)) void rgnanoLog(const char*, ...) {}
+#endif
 #include <chipnomad_lib.h>
 #include <fx_profile.h>
 
@@ -103,6 +108,11 @@ void initDefaultAppSettings(void) {
   appSettings.fxLite = 0;
 #endif
   fxLiteSet(appSettings.fxLite != 0);
+#ifdef RGNANO_BUILD
+  appSettings.trackView = 1;
+#else
+  appSettings.trackView = 0;
+#endif
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
     visual.mode = TrackVisualMode::detailed;
@@ -248,6 +258,7 @@ int settingsSave(void) {
   fprintf(file, "waveformRefreshHz: %d\n", appSettings.waveformRefreshHz);
   fprintf(file, "playFps: %d\n", appSettings.playFps);
   fprintf(file, "fxLite: %d\n", appSettings.fxLite);
+  fprintf(file, "trackView: %d\n", appSettings.trackView);
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -336,7 +347,13 @@ int settingsLoad(void) {
 #endif
 
   FILE* file = fopen(settingsPath, "r");
-  if (file == NULL) return 1;
+  if (file == NULL) {
+#ifdef RGNANO_BUILD
+    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d (defaults)", settingsPath,
+              (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+#endif
+    return 1;
+  }
   bool sawMasterLimiter = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
@@ -407,6 +424,8 @@ int settingsLoad(void) {
       sscanf(line + 9, "%d", &appSettings.playFps);
     } else if (strncmp(line, "fxLite: ", 8) == 0) {
       sscanf(line + 8, "%d", &appSettings.fxLite);
+    } else if (strncmp(line, "trackView: ", 11) == 0) {
+      sscanf(line + 11, "%d", &appSettings.trackView);
     } else if (strncmp(line, "stickLiveMode: ", 15) == 0) {
       appSettings.stickLiveMode = strcmp(line + 15, "FREE") == 0 ? StickLiveMode::free :
         strcmp(line + 15, "TOGGLE") == 0 ? StickLiveMode::toggle : StickLiveMode::hold;
@@ -543,7 +562,11 @@ int settingsLoad(void) {
   // existed (it has no masterLimiter line): the old 100% default becomes the
   // new 50% default. A volume the user lowered on purpose is left alone, and
   // the next save writes masterLimiter so this never runs twice.
-  if (!sawMasterLimiter && appSettings.mixVolume >= 0.99f) appSettings.mixVolume = 0.5f;
+  const bool migrated = !sawMasterLimiter && appSettings.mixVolume >= 0.99f;
+  if (migrated) appSettings.mixVolume = 0.5f;
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
+            migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
+            appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
 #else
   (void)sawMasterLimiter;
 #endif
@@ -563,6 +586,7 @@ int settingsLoad(void) {
   if (appSettings.playFps != 10 && appSettings.playFps != 15 && appSettings.playFps != 20 && appSettings.playFps != 30)
     appSettings.playFps = 20;
   appSettings.fxLite = appSettings.fxLite ? 1 : 0;
+  appSettings.trackView = appSettings.trackView ? 1 : 0;
   fxLiteSet(appSettings.fxLite != 0);
   for (int i = 0; i < MIDI_CHANNEL_COUNT; i++) {
     if (appSettings.midiChannelInstrument[i] < -1 || appSettings.midiChannelInstrument[i] >= PROJECT_MAX_INSTRUMENTS)

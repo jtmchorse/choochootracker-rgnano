@@ -19,6 +19,8 @@ const AppScreen screenSong = {nullptr, nullptr, noOp, noOp, ignoreInput};
 const AppScreen screenTitle = {nullptr, nullptr, noOp, noOp, ignoreInput};
 const AppScreen screenPhrase = {nullptr, nullptr, noOp, noOp, ignoreInput};
 const AppScreen screenInstrument = {nullptr, nullptr, noOp, noOp, ignoreInput};
+int mockPageMoves, mockPageDir;
+void songPageMove(int dir) { ++mockPageMoves; mockPageDir = dir; }
 int cInstrument = 0;
 // Instrument screen boundaries for exercising the real native preview helper.
 int mockEnvelopePreviewCount;

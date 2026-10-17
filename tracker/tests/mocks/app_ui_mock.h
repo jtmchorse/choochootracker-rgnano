@@ -11,3 +11,4 @@ extern int mockLastInputKeys;
 extern int mockEnvelopePreviewCount;
 extern int mockBitmapDrawCount, mockBitmapDrawRow;
 extern int mockAudioReconfigureResult, mockAudioReconfigureCalls, mockAudioReconfigureSize, mockAudioCpuLoad;
+extern int mockPageMoves, mockPageDir;  // songPageMove() calls and last direction
