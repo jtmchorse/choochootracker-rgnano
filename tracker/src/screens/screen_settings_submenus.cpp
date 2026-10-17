@@ -10,6 +10,11 @@
 #include "waveform_display.h"
 #include <fx_profile.h>
 #include <string.h>
+#ifdef RGNANO_BUILD
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
+#else
+#define rgnanoLog(...) ((void)0)
+#endif
 
 static int columnCount(int) { return 1; }
 static void noHeader(int, CellState) {}
@@ -170,8 +175,8 @@ static void mixerField(int, int row, CellState state) {
   else gfxPrint(23, 4, appSettings.masterLimiter ? "ON " : "OFF");
 }
 static int mixerEdit(int, int row, CellEditAction action) {
-  if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; } return handled; }
-  if (row == 2) { int handled = edit8noLast(action, (uint8_t*)&appSettings.masterLimiter, 1, 0, 1); if (handled && chipnomadState) chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter); return handled; }
+  if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; rgnanoLog("mixer: mixVolume now %d%%", (int)value); } return handled; }
+  if (row == 2) { int handled = edit8noLast(action, (uint8_t*)&appSettings.masterLimiter, 1, 0, 1); if (handled && chipnomadState) chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter); if (handled) rgnanoLog("mixer: masterLimiter now %s", appSettings.masterLimiter ? "on" : "off"); return handled; }
   int handled = edit16withMinMax(action, &chipnomadState->project.tiltPivotHz, 250, 250, 4000); if (handled) projectModified = 1; return handled;
 }
 static ScreenData mixerData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};

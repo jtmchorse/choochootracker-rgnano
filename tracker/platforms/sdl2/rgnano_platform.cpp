@@ -5,6 +5,7 @@
 #include "version.h"
 #include "fx_profile.h"
 #include "corelib_file.h"
+#include "common.h"
 #include <SDL2/SDL.h>
 #include <algorithm>
 #include <atomic>
@@ -443,6 +444,9 @@ struct OpenAttempt {
 // thread must never block on flash I/O). Lines are prefixed "astat" so they
 // are not fsynced like the "audio" open lines.
 // ---------------------------------------------------------------------------
+static void mixTag(char* b, size_t n) {
+  snprintf(b, n, "mix=%d%% lim=%s", chipnomadState ? (int)(chipnomadState->mixVolume * 100.0f + .5f) : -1, appSettings.masterLimiter ? "on" : "off");
+}
 namespace astat {
 struct Snap {
   uint32_t calls, over50, over80, over100, late, clipped, maxRenderUs, maxGapUs, peak;
@@ -619,8 +623,9 @@ void rgnanoStatsTick(int playing) {
     startMain = lastMain = threadCpuNs() / 1000;
     startAudio = lastAudio = (long long)audioCpuNs.load() / 1000;
     const int rate = cbRate.load(), frames = cbFrames.load();
-    rgnanoLog("astat: playback started; callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s",
-              frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)");
+    char mixBuf[48]; mixTag(mixBuf, sizeof(mixBuf));
+    rgnanoLog("astat: playback started; callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s | %s",
+              frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)", mixBuf);
     return;
   }
   if (!wasPlaying) return;
@@ -639,12 +644,13 @@ void rgnanoStatsTick(int playing) {
   auto line = [&](const char* tag, const Snap& a, const LimAcc& lim, double span, long long pCpu, long long mCpu, long long aCpu) {
     char limBuf[64];
     limText(lim, limBuf, sizeof(limBuf));
+    char mixBuf[48]; mixTag(mixBuf, sizeof(mixBuf));
     if (span < 1.0) span = 1.0;
     if (aCpu < 0) aCpu = 0;  // audio thread was replaced by a buffer-size reopen
     rgnanoLog("astat %s: cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
-              "clip=%u peak=%.1fdBFS | limiter %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
+              "clip=%u peak=%.1fdBFS | limiter %s | %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
               tag, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
-              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf,
+              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf, mixBuf,
               100.0 * pCpu / span, 100.0 * aCpu / span, 100.0 * mCpu / span);
   };
   char tag[32];

@@ -8,6 +8,11 @@
 #ifdef WEB_BUILD
 #include <emscripten.h>
 #endif
+#ifdef RGNANO_BUILD
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
+// Weak no-op so host test builds link; the device platform file defines the real one.
+extern "C" __attribute__((weak)) void rgnanoLog(const char*, ...) {}
+#endif
 #include <chipnomad_lib.h>
 #include <fx_profile.h>
 
@@ -336,7 +341,13 @@ int settingsLoad(void) {
 #endif
 
   FILE* file = fopen(settingsPath, "r");
-  if (file == NULL) return 1;
+  if (file == NULL) {
+#ifdef RGNANO_BUILD
+    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d (defaults)", settingsPath,
+              (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+#endif
+    return 1;
+  }
   bool sawMasterLimiter = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
@@ -543,7 +554,11 @@ int settingsLoad(void) {
   // existed (it has no masterLimiter line): the old 100% default becomes the
   // new 50% default. A volume the user lowered on purpose is left alone, and
   // the next save writes masterLimiter so this never runs twice.
-  if (!sawMasterLimiter && appSettings.mixVolume >= 0.99f) appSettings.mixVolume = 0.5f;
+  const bool migrated = !sawMasterLimiter && appSettings.mixVolume >= 0.99f;
+  if (migrated) appSettings.mixVolume = 0.5f;
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
+            migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
+            appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
 #else
   (void)sawMasterLimiter;
 #endif
