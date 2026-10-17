@@ -127,3 +127,55 @@ TEST_CASE("master limiter: platform default, fresh engine state is off, toggle w
   CHECK(chipnomadTakeLimiterStats(s, &minGain, &meanRed, &e, &t) == 1);
   chipnomadDestroy(s);
 }
+
+TEST_CASE("master limiter release decay matches exp(-1/(80 ms * rate)) without libm") {
+  // Regression: the RG Nano SDK's musl returned expf(-0.0004f) == 1.0f, so the
+  // decay was exactly 1 and the gain latched at its deepest reduction forever.
+  const float rates[] = {32000.0f, 44100.0f, 48000.0f};
+  for (float rate : rates) {
+    MasterLimiter lim;
+    lim.init(rate);
+    const double want = exp(-1.0 / (0.080 * (double)rate));
+    CHECK(fabs((double)lim.releaseDecay() - want) < 2e-7);
+    CHECK(lim.releaseDecay() < 1.0f);
+    CHECK(lim.ceiling() == doctest::Approx(0.96605f).epsilon(1e-4));
+  }
+}
+
+TEST_CASE("master limiter recovers after loud material: stop then quiet is bit-exact and not engaged") {
+  MasterLimiter lim;
+  lim.init(32000.0f);
+  const int block = 1024;
+  // Loud pass: sustained overshoot, so the limiter is deep into reduction.
+  for (int b = 0; b < 100; ++b) {
+    std::vector<float> v = sine(block, 1.2f, 1.1f);
+    lim.process(v.data(), block);
+  }
+  MasterLimiter::Stats loud = lim.takeStats();
+  CHECK(loud.minGain < 0.9f);
+  CHECK(loud.engagedFrames > 0);
+  // "Stop": the audio callback keeps running on silence for a moment.
+  for (int b = 0; b < 4; ++b) {
+    std::vector<float> v((size_t)block * 2, 0.0f);
+    lim.process(v.data(), block);
+  }
+  // Quiet pass (-26 dBFS): after a settling second it must pass through
+  // unchanged (delayed), with no frame counted as engaged.
+  const int d = lim.latency();
+  std::vector<float> prevTail;
+  size_t mismatches = 0, checked = 0;
+  for (int b = 0; b < 120; ++b) {
+    std::vector<float> in = sine(block, 0.05f, 0.05f), out = in;
+    lim.process(out.data(), block);
+    if (b == 40) lim.takeStats();   // drop the settling window
+    if (b > 40) {
+      for (int i = d * 2; i < block * 2; ++i) { ++checked; if (out[i] != in[i - (size_t)d * 2]) ++mismatches; }
+    }
+  }
+  MasterLimiter::Stats quiet = lim.takeStats();
+  CHECK(quiet.engagedFrames == 0);
+  CHECK(quiet.minGain == 1.0f);
+  CHECK(quiet.meanReduction == 0.0f);
+  CHECK(checked > 0);
+  CHECK(mismatches == 0);
+}

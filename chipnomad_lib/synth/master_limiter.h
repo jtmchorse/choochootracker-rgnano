@@ -42,8 +42,11 @@ public:
     if (w > kMaxWindow) w = kMaxWindow;
     window_ = w;
     invWindow_ = 1.0 / (double)w;
-    releaseDecay_ = expf(-1.0f / (kReleaseSeconds * sampleRate));
-    ceiling_ = powf(10.0f, kCeilingDb / 20.0f);
+    // No libm exp/pow here: the RG Nano SDK's musl returns expf(-0.0004f) == 1.0f
+    // (and powf(10, -0.015f) off by 1%), which made the release decay exactly 1,
+    // so the gain latched at its deepest reduction and never recovered.
+    releaseDecay_ = (float)expSeries(-1.0 / ((double)kReleaseSeconds * (double)sampleRate));
+    ceiling_ = (float)expSeries((double)kCeilingDb / 20.0 * 2.302585092994046);
     // Aim a hair under the ceiling so float rounding in the gain chain cannot
     // push a peak over it.
     target_ = ceiling_ * 0.9999f;
@@ -65,6 +68,18 @@ public:
     sum_ = (double)window_;
     idle_ = window_;
   }
+
+  // exp(x) from +, * only (halve until small, Taylor, square back). Accurate to
+  // ~1e-15 for the |x| < 10 used here, independent of the platform's libm.
+  static double expSeries(double x) {
+    int k = 0;
+    while ((x > 0.125 || x < -0.125) && k < 60) { x *= 0.5; ++k; }
+    double term = 1.0, sum = 1.0;
+    for (int n = 1; n < 12; ++n) { term *= x / (double)n; sum += term; }
+    while (k-- > 0) sum *= sum;
+    return sum;
+  }
+  float releaseDecay() const { return releaseDecay_; }
 
   // Frames of delay the limiter adds.
   int latency() const { return window_ - 1; }

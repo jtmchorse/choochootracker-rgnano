@@ -41,6 +41,20 @@ XTRA_LIBS = -L$(RGNANO_SDL2_ROOT)/lib -lSDL2 -lasound -Wl,--allow-shlib-undefine
 
 object_for = $(BUILD)/obj/$(subst ../,up/,$(basename $(1))).o
 OBJECTS := $(foreach source,$(SOURCES),$(call object_for,$(source)))
+
+# The SDK libc.so has miscompiled exp/expf/pow/powf (bad argument reduction).
+# Link musl 1.2.1's own sources into the executable so they win at dynamic link
+# time. Plain C, no fast-math, no FMA contraction. See platforms/rgnano_libm/README.txt.
+RGNANO_CC = $(RGNANO_PREFIX)gcc
+LIBM_DIR = platforms/rgnano_libm
+LIBM_SRCS = $(wildcard $(LIBM_DIR)/*.c)
+LIBM_OBJS = $(patsubst $(LIBM_DIR)/%.c,$(BUILD)/obj/rgnano_libm/%.o,$(LIBM_SRCS))
+LIBM_CFLAGS = -O2 -fno-fast-math -ffp-contract=off -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard \
+  -I$(LIBM_DIR) -include $(LIBM_DIR)/fp_arch.h -w
+$(BUILD)/obj/rgnano_libm/%.o: $(LIBM_DIR)/%.c Makefile.rgnano
+	@mkdir -p $(dir $@)
+	@$(RGNANO_CC) $(LIBM_CFLAGS) -c $< -o $@
+OBJECTS += $(LIBM_OBJS)
 DEPS := $(OBJECTS:.o=.d)
 TARGET = $(BUILD)/choochootracker
 

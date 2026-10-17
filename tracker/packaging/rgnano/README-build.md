@@ -28,6 +28,17 @@ Inside the container the equivalent is
 | `choochootracker.funkey-s.desktop`, `choochootracker.png` | GMenu2X entry and 32x32 icon |
 | `qemu-run.sh` | boots the OPK contents under `qemu-arm-static` (run in the container) |
 
+## libm override
+
+The SDK sysroot `libc.so` has miscompiled `exp`, `expf`, `pow`, `powf` (bad
+argument reduction: `expf(-0.0004)` returns exactly 1.0, `expf(-0.1)` returns
+0.897). `platforms/rgnano_libm/` vendors musl 1.2.1's own sources for them
+(plus `exp2`, `exp2f`, data tables, `__math_*` helpers; MIT) and
+`Makefile.rgnano` compiles them with `-O2 -fno-fast-math -ffp-contract=off`
+into the executable, so they win over `libc.so` at dynamic link time. The
+startup `libm sys: ... | override: ...` log line calls the system versions via
+`dlsym(RTLD_NEXT)` to keep measuring the real library.
+
 ## Runtime layout
 
 - OPK mount (read-only): binary, `libs/libSDL2-2.0.so.0`, bundled assets, `title/`, `licenses/`.

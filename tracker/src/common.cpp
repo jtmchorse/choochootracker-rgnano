@@ -1,6 +1,7 @@
 #include "common.h"
 #include "corelib/corelib_file.h"
 #include "corelib/corelib_gfx.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,10 +10,39 @@
 #include <emscripten.h>
 #endif
 #ifdef RGNANO_BUILD
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <dlfcn.h>
 extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
 // Weak no-op so host test builds link; the device platform file defines the real one.
 extern "C" __attribute__((weak)) void rgnanoLog(const char*, ...) {}
 #endif
+
+#ifdef RGNANO_BUILD
+// Logs libm results with inputs the compiler cannot fold. "sys" calls the SDK
+// libc.so through dlsym(RTLD_NEXT), which skips our executable's own vendored
+// musl exp/expf/pow/powf (platforms/rgnano_libm) and so keeps measuring the
+// system library; "override" calls the functions the engine actually uses.
+static void rgnanoLogLibm() {
+  typedef float (*f1_t)(float);
+  typedef float (*f2_t)(float, float);
+  typedef double (*d1_t)(double);
+  f1_t sysExpf = (f1_t)dlsym(RTLD_NEXT, "expf");
+  f2_t sysPowf = (f2_t)dlsym(RTLD_NEXT, "powf");
+  d1_t sysExp = (d1_t)dlsym(RTLD_NEXT, "exp");
+  if (!sysExpf || !sysPowf || !sysExp) {
+    sysExpf = expf; sysPowf = powf; sysExp = exp;  // dlsym failed: log the override twice
+  }
+  volatile float a = -0.0004f, b = -0.1f, c = -0.015f, d = 0.5f;
+  volatile double e = -0.1;
+  rgnanoLog("libm sys: expf(-0.0004)=%.6f expf(-0.1)=%.6f powf(10,-0.015)=%.6f exp(-0.1)=%.6f | "
+            "override: expf(-0.0004)=%.6f expf(-0.1)=%.6f powf(10,-0.015)=%.6f exp(-0.1)=%.6f tanhf(0.5)=%.6f",
+            (double)sysExpf(a), (double)sysExpf(b), (double)sysPowf(10.0f, c), sysExp(e),
+            (double)expf(a), (double)expf(b), (double)powf(10.0f, c), exp(e), (double)tanhf(d));
+}
+#endif
+
 #include <chipnomad_lib.h>
 #include <fx_profile.h>
 
@@ -351,6 +381,7 @@ int settingsLoad(void) {
 #ifdef RGNANO_BUILD
     rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d (defaults)", settingsPath,
               (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+    rgnanoLogLibm();
 #endif
     return 1;
   }
@@ -567,6 +598,7 @@ int settingsLoad(void) {
   rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
             migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
             appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+  rgnanoLogLibm();
 #else
   (void)sawMasterLimiter;
 #endif
