@@ -103,6 +103,11 @@ void initDefaultAppSettings(void) {
   appSettings.fxLite = 0;
 #endif
   fxLiteSet(appSettings.fxLite != 0);
+#ifdef RGNANO_BUILD
+  appSettings.trackView = 1;
+#else
+  appSettings.trackView = 0;
+#endif
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
     visual.mode = TrackVisualMode::detailed;
@@ -248,6 +253,7 @@ int settingsSave(void) {
   fprintf(file, "waveformRefreshHz: %d\n", appSettings.waveformRefreshHz);
   fprintf(file, "playFps: %d\n", appSettings.playFps);
   fprintf(file, "fxLite: %d\n", appSettings.fxLite);
+  fprintf(file, "trackView: %d\n", appSettings.trackView);
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -407,6 +413,8 @@ int settingsLoad(void) {
       sscanf(line + 9, "%d", &appSettings.playFps);
     } else if (strncmp(line, "fxLite: ", 8) == 0) {
       sscanf(line + 8, "%d", &appSettings.fxLite);
+    } else if (strncmp(line, "trackView: ", 11) == 0) {
+      sscanf(line + 11, "%d", &appSettings.trackView);
     } else if (strncmp(line, "stickLiveMode: ", 15) == 0) {
       appSettings.stickLiveMode = strcmp(line + 15, "FREE") == 0 ? StickLiveMode::free :
         strcmp(line + 15, "TOGGLE") == 0 ? StickLiveMode::toggle : StickLiveMode::hold;
@@ -563,6 +571,7 @@ int settingsLoad(void) {
   if (appSettings.playFps != 10 && appSettings.playFps != 15 && appSettings.playFps != 20 && appSettings.playFps != 30)
     appSettings.playFps = 20;
   appSettings.fxLite = appSettings.fxLite ? 1 : 0;
+  appSettings.trackView = appSettings.trackView ? 1 : 0;
   fxLiteSet(appSettings.fxLite != 0);
   for (int i = 0; i < MIDI_CHANNEL_COUNT; i++) {
     if (appSettings.midiChannelInstrument[i] < -1 || appSettings.midiChannelInstrument[i] >= PROJECT_MAX_INSTRUMENTS)

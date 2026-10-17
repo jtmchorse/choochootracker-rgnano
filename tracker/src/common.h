@@ -79,6 +79,9 @@ struct AppSettings {
   // "FX lite" (see chipnomad_lib/fx_profile.h): cheaper effect rendering. 1 on
   // RG Nano by default, 0 elsewhere. 0 renders every effect at full quality.
   int fxLite;
+  // Song screen track layout: 0 = all tracks on one page, 1 = "4x2" (4 tracks
+  // per page, two pages). Default 1 on RG Nano, 0 elsewhere. settings.txt "trackView".
+  int trackView;
   // Port indices are runtime-only (not saved): enumeration order isn't
   // stable across reboots/replugging. -1 = off. What IS saved is each
   // device's name (below); appSetup() resolves it back to a live index on

@@ -27,6 +27,16 @@
 // default raised to 1024 frames (32 ms at 32 kHz).
 #define RGNANO_AUDIO_BUFFER_DEFAULT 1024
 
+// Song-screen page chord: Select (the app's Shift) + L / R. L (KEY_M) is the
+// Motion Live key and R (KEY_N) is unbound, neither is part of the Shift
+// chords the app uses, and neither is an fkgpiod FN combo (those are on MENU).
+// Returns -1 (previous page), +1 (next page) or 0 for a keyboard key code.
+static inline int rgnanoPageChordDirection(int code) {
+  if (code == RGNANO_KEY_L1) return -1;
+  if (code == RGNANO_KEY_R1) return 1;
+  return 0;
+}
+
 // Fallback when the launcher's key map could not be loaded: fkgpiod's stock
 // FN combos arrive as j (Fn+Left), i (Fn+Right), h (Fn+Down). Returns the
 // direction key they stand for (Shift+direction), or 0. Fn+Up is a daemon

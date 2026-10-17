@@ -8,6 +8,7 @@
 #include "audio_manager.h"
 
 #include "copy_paste.h"
+#include "track_paging.h"
 #include <string.h>
 
 // Screen state variables
@@ -26,6 +27,7 @@ typedef enum {
 static MuteSoloState muteSoloState = MUTE_SOLO_EMPTY;
 static int liveMode = 0;
 
+static void fullRedraw(void);
 static int getColumnCount(int row);
 static void drawStatic(void);
 static void drawField(int col, int row, CellState state);
@@ -140,6 +142,58 @@ static void setup(int input) {
 
 ///////////////////////////////////////////////////////////////////////////////
 //
+// Track paging ("4x2" view). Columns are always absolute track indices; the
+// visible page follows the cursor column.
+//
+
+#define SONG_PAGED_PITCH 8  // 4 tracks across 40 columns: 8 per track
+
+static int songPaged(void) {
+  return trackViewPaged(appSettings.trackView, chipnomadState->project.tracksCount);
+}
+
+static int songPage(void) {
+  return songPaged() ? trackPageOf(screen.cursorCol) : 0;
+}
+
+// Screen x of a track's chain cell, or -1 if it is not on the visible page.
+static int songColX(int col) {
+  int paged = songPaged();
+  int slot = trackSlot(col, songPage(), paged);
+  if (slot < 0) return -1;
+  return 3 + slot * (paged ? SONG_PAGED_PITCH : 3);
+}
+
+// Tracks 1-4 / 5-8 label in the header, plus a marker when a track on the
+// other page is playing (its play marker is not on screen).
+static void drawPageIndicator(void) {
+  if (!songPaged()) return;
+  int tracks = chipnomadState->project.tracksCount;
+  int page = songPage();
+  static char label[8];
+  snprintf(label, sizeof(label), "%d-%d", trackPageFirst(page) + 1, trackPageLast(page, tracks) + 1);
+  gfxSetFgColor(appSettings.colorScheme.textTitles);
+  gfxPrint(5, 0, "    ");
+  gfxPrint(5, 0, label);
+  int otherPlaying = 0;
+  const PlaybackStatus* status = chipnomadGetPlaybackStatus(chipnomadState);
+  for (int c = 0; c < tracks; c++)
+    if (trackPageOf(c) != page && status->tracks[c].songRow != EMPTY_VALUE_16) otherPlaying = 1;
+  gfxSetFgColor(appSettings.colorScheme.playMarkers);
+  gfxPrint(9, 0, otherPlaying ? ">" : " ");
+}
+
+// Explicit page move (Shift+L / Shift+R on the RG Nano). dir -1 / +1.
+void songPageMove(int dir) {
+  if (!songPaged()) return;
+  int col = trackPageMove(screen.cursorCol, dir, chipnomadState->project.tracksCount);
+  if (col == screen.cursorCol) return;
+  screen.cursorCol = col;
+  fullRedraw();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//
 // Drawing functions
 //
 
@@ -150,10 +204,13 @@ static int getColumnCount(int row) {
 static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
   gfxPrint(0, 0, liveMode ? "LIVE" : "SONG");
+  drawPageIndicator();
 }
 
 static void drawField(int col, int row, CellState state) {
   if (row < screen.topRow || row >= (screen.topRow + screenVisibleRows())) return; // Don't draw outside of the viewing area
+  int x = songColX(col);
+  if (x < 0) return; // Track is on the other page
 
   int chain = chipnomadState->project.song[row][col];
   int isHighlighted = chipnomadState->project.songHighlight[row][col];
@@ -163,7 +220,7 @@ static void drawField(int col, int row, CellState state) {
   } else {
     setCellColor(state, chain == EMPTY_VALUE_16, chain != EMPTY_VALUE_16 && chainHasNotes(&chipnomadState->project, chain));
   }
-  gfxPrint(3 + col * 3, 3 + row - screen.topRow, chain == EMPTY_VALUE_16 ? "--" : byteToHex(chain));
+  gfxPrint(x, 3 + row - screen.topRow, chain == EMPTY_VALUE_16 ? "--" : byteToHex(chain));
 }
 
 static void drawRowHeader(int row, CellState state) {
@@ -175,21 +232,34 @@ static void drawRowHeader(int row, CellState state) {
 
 static void drawColHeader(int col, CellState state) {
   static char digit[2] = "0";
+  int x = songColX(col);
+  if (x < 0) return;
   const ColorScheme cs = appSettings.colorScheme;
 
   gfxSetFgColor((state == CellState::focus) ? cs.textDefault : cs.textInfo);
   digit[0] = col + 49;
-  gfxPrint(3 + col * 3, 2, digit);
+  gfxPrint(x, 2, digit);
 }
 
 static void drawCursor(int col, int row) {
-  gfxCursor(3 + col * 3, 3 + row - screen.topRow, 2);
+  int x = songColX(col);
+  if (x < 0) return;
+  gfxCursor(x, 3 + row - screen.topRow, 2);
 }
 
 static void drawSelection(int col1, int row1, int col2, int row2) {
-  int x = 3 + col1 * 3;
+  int pitch = songPaged() ? SONG_PAGED_PITCH : 3;
+  if (songPaged()) {
+    // Clip the column span to the visible page.
+    int page = songPage();
+    if (col1 < trackPageFirst(page)) col1 = trackPageFirst(page);
+    int lastShown = trackPageLast(page, chipnomadState->project.tracksCount);
+    if (col2 > lastShown) col2 = lastShown;
+    if (col1 > col2) return;
+  }
+  int x = songColX(col1);
   int y = 3 + row1 - screen.topRow;
-  int w = 3 * (col2 - col1 + 1) - 1;
+  int w = pitch * (col2 - col1 + 1) - (pitch - 2);
   int y2 = y + (row2 - row1);
 
   if (y < 3) y = 3; // Top row of selection is above the screen
@@ -205,14 +275,17 @@ static void fullRedraw(void) {
 }
 
 static void draw(void) {
+  drawPageIndicator();
   for (int c = 0; c < chipnomadState->project.tracksCount; c++) {
-    gfxClearRect(2 + c * 3, 3, 1, screenVisibleRows());
+    int cx = songColX(c);
+    if (cx < 0) continue; // Other page
+    gfxClearRect(cx - 1, 3, 1, screenVisibleRows());
     const PlaybackTrackState* track = &chipnomadGetPlaybackStatus(chipnomadState)->tracks[c];
     if (track->songRow != EMPTY_VALUE_16) {
       int row = track->songRow - screen.topRow;
       if (row >= 0 && row < screenVisibleRows()) {
         gfxSetFgColor(appSettings.colorScheme.playMarkers);
-        gfxPrint(2 + c * 3, 3 + row, ">");
+        gfxPrint(cx - 1, 3 + row, ">");
       }
     }
     if (track->queue.liveAction != LiveQueueAction::none) {
@@ -221,18 +294,18 @@ static void draw(void) {
       int row = (stop ? track->songRow : track->queue.songRow) - screen.topRow;
       if (row >= 0 && row < screenVisibleRows()) {
         gfxSetFgColor(appSettings.colorScheme.playMarkers);
-        gfxPrint(2 + c * 3, 3 + row, stop ? "-" : (urgent ? "!" : "+"));
+        gfxPrint(cx - 1, 3 + row, stop ? "-" : (urgent ? "!" : "+"));
       }
     }
 
     // Draw mute/solo indicator above track number
     gfxSetFgColor(appSettings.colorScheme.textTitles);
     if (audioManager.trackStates[c] == TRACK_MUTED) {
-      gfxPrint(3 + c * 3, 1, "M");
+      gfxPrint(cx, 1, "M");
     } else if (audioManager.trackStates[c] == TRACK_SOLO) {
-      gfxPrint(3 + c * 3, 1, "S");
+      gfxPrint(cx, 1, "S");
     } else {
-      gfxPrint(3 + c * 3, 1, " "); // Clear indicator
+      gfxPrint(cx, 1, " "); // Clear indicator
     }
   }
 
@@ -401,7 +474,7 @@ static int onEdit(int col, int row, CellEditAction action) {
   return 0;
 }
 
-static int onInput(int isKeyDown, int keys, int tapCount) {
+static int onInputInner(int isKeyDown, int keys, int tapCount) {
   int handled = 0;
 
   if (isKeyDown && keys == keyOpt && tapCount == 2) {
@@ -530,6 +603,14 @@ static int onInput(int isKeyDown, int keys, int tapCount) {
     return screenInput(&screen, isKeyDown, keys, tapCount);
   }
 
+  return handled;
+}
+
+// Cursor movement can cross a page edge; redraw the new page when it does.
+static int onInput(int isKeyDown, int keys, int tapCount) {
+  int before = songPage();
+  int handled = onInputInner(isKeyDown, keys, tapCount);
+  if (songPage() != before) fullRedraw();
   return handled;
 }
 

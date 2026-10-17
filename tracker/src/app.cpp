@@ -18,6 +18,9 @@
 #include "monitor_display.h"
 #include "corelib_input.h"
 #include "corelib_keymap.h"
+#ifdef RGNANO_BUILD
+#include "../platforms/shared/rgnano_keymap.h"
+#endif
 #include "screens/screen_quick_help.h"
 #include "screens/screen_instrument.h"
 #include "midi/midi_router.h"
@@ -214,8 +217,19 @@ static int inputCodeToKey(InputCode input) {
   return keyUnmapped;
 }
 
+#ifdef RGNANO_BUILD
+// Shift+L / Shift+R flip the Song screen's track page (see rgnanoPageChordDirection).
+static int pageChordDirection(InputCode input) {
+  if (input.deviceType != InputDeviceType::keyboard) return 0;
+  return rgnanoPageChordDirection(input.code);
+}
+#endif
+
 int appInputWantsKey(InputCode input) {
   if (inputRawCallback) return 1;
+#ifdef RGNANO_BUILD
+  if (pageChordDirection(input)) return 1;
+#endif
   return inputCodeToKey(input) != keyUnmapped || isMotionRecordTrigger(input) ||
          motionLiveInputMask(input) || isMotionEraseTrigger(input);
 }
@@ -633,6 +647,15 @@ void appOnEvent(MainLoopEventData eventData) {
     if (keyJazzTextHandleRawKey(eventData.data.input, 1, currentScreen)) break;
 #endif
 
+#ifdef RGNANO_BUILD
+    if (!rawInputActive && (pressedButtons & keyShift) && currentScreen == &screenSong) {
+      int pageDir = pageChordDirection(eventData.data.input);
+      if (pageDir) {
+        songPageMove(pageDir);
+        break;
+      }
+    }
+#endif
     if (!rawInputActive && (isMotionRecordTrigger(eventData.data.input) ||
         (eventData.data.input.deviceType == InputDeviceType::logical && eventData.data.input.code == keyMotionRecord))) {
       motionRecordHeld = 1;

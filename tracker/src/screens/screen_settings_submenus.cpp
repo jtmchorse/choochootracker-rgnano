@@ -176,8 +176,13 @@ static int mixerEdit(int, int row, CellEditAction action) {
 }
 static ScreenData mixerData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};
 
+#ifdef RGNANO_BUILD
+#define GFX_TRACKVIEW_ROW 8
+#else
+#define GFX_TRACKVIEW_ROW 7
+#endif
 static void graphicsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "GRAPHICS"); }
-static void graphicsCursor(int, int row) { gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 || row == 7 ? 6 : 8); }
+static void graphicsCursor(int, int row) { if (row == GFX_TRACKVIEW_ROW) { gfxCursor(23, 2 + row, 3); return; } gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 || row == 7 ? 6 : 8); }
 static void graphicsField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   if (row == 0) {
@@ -204,6 +209,11 @@ static void graphicsField(int, int row, CellState state) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 9, "Play FPS");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxPrintf(23, 9, "%02d FPS", appSettings.playFps);
+  } else if (row == GFX_TRACKVIEW_ROW) {
+    // Song screen: all tracks on one page, or 4 per page over two pages.
+    gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, "Track view");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
+    gfxPrint(23, 2 + row, appSettings.trackView ? "4x2" : "8  ");
   }
 }
 static void fontLoaded(const char* path) {
@@ -218,6 +228,14 @@ static void fontLoaded(const char* path) {
 }
 static void fontCancelled(void) { screenSetup(&screenGraphicsSettings, 0); }
 static int graphicsEdit(int, int row, CellEditAction action) {
+  if (row == GFX_TRACKVIEW_ROW) {
+    uint8_t value = (uint8_t)appSettings.trackView;
+    if (action == CellEditAction::tap || action == CellEditAction::doubleTap) value ^= 1;
+    else if (!edit8noLast(action, &value, 1, 0, 1)) return 0;
+    appSettings.trackView = value;
+    if (settingsSave() != 0) screenMessage(MESSAGE_TIME, "Could not save track view");
+    return 1;
+  }
   if (row == 7) {
     static const int steps[] = {10, 15, 20, 30};
     int index = 2;
@@ -264,9 +282,9 @@ static int graphicsEdit(int, int row, CellEditAction action) {
 }
 static int graphicsCellValid(int, int) { return 1; }
 #ifdef RGNANO_BUILD
-static ScreenData graphicsData = {8, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
+static ScreenData graphicsData = {9, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
 #else
-static ScreenData graphicsData = {7, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
+static ScreenData graphicsData = {8, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
 #endif
 
 static int menuInput(ScreenData* data, int isKeyDown, int keys, int taps) { if (keys == keyOpt) { screenSetup(&screenSettings, 0); return 1; } return screenInput(data, isKeyDown, keys, taps); }
