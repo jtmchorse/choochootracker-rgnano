@@ -5,6 +5,9 @@
 #include <locale.h>
 #include <ctype.h>
 #include "corelib_keymap.h"
+#ifdef RGNANO_BUILD
+#include "rgnano_platform.h"
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -66,8 +69,46 @@ static KeyboardLayout detectKeyboardLayout(void) {
   return LAYOUT_QWERTY;
 }
 
+#ifdef RGNANO_BUILD
+// Presets for the RG Nano's fixed button set. "lsdj" is the default (Select =
+// Shift); "shift-r1" moves Shift to R1 (the Shift-on-R1 layout) and frees
+// Select. Only keyboard slot 0 changes, so extra slots and the remap screen
+// keep working. Returns 0 on success, 1 for an unknown name.
+int inputApplyKeymapPreset(const char* name) {
+  if (!name) return 1;
+  if (strcmp(name, "lsdj") == 0) {
+    appSettings.keyMapping.keyShift[0] = (InputCode){InputDeviceType::keyboard, BTN_SELECT};
+    return 0;
+  }
+  if (strcmp(name, "shift-r1") == 0) {
+    appSettings.keyMapping.keyShift[0] = (InputCode){InputDeviceType::keyboard, BTN_R1};
+    return 0;
+  }
+  return 1;
+}
+
+// First-launch hook: <data dir>/keymap-preset.txt containing a preset name
+// selects it without any UI (the in-app picker is a later UI task).
+static void applyKeymapPresetFile(void) {
+  char path[600], name[64];
+  snprintf(path, sizeof(path), "%s/keymap-preset.txt", rgnanoDataDir());
+  FILE* file = fopen(path, "r");
+  if (!file) return;
+  name[0] = 0;
+  if (fscanf(file, "%63s", name) == 1) {
+    int bad = inputApplyKeymapPreset(name);
+    rgnanoLog("keymap preset '%s' from %s: %s", name, path, bad ? "unknown name, ignored" : "applied");
+  }
+  fclose(file);
+}
+#endif
+
 void inputInitDefaultKeyMapping(void) {
+#ifdef RGNANO_BUILD
+  KeyboardLayout layout = LAYOUT_QWERTY; // fixed hardware; locale is irrelevant
+#else
   KeyboardLayout layout = detectKeyboardLayout();
+#endif
 
   // Keyboard mappings (all platforms)
   appSettings.keyMapping.keyUp[0] = (InputCode){InputDeviceType::keyboard, BTN_UP};
@@ -78,8 +119,14 @@ void inputInitDefaultKeyMapping(void) {
   appSettings.keyMapping.keyPlay[0] = (InputCode){InputDeviceType::keyboard, BTN_START};
   appSettings.keyMapping.keyShift[0] = (InputCode){InputDeviceType::keyboard, BTN_SELECT};
   appSettings.keyMapping.keyMotionLive[0] = (InputCode){InputDeviceType::keyboard, BTN_L1};
+#ifdef RGNANO_BUILD
+  // No sticks and no L2/R2 on the RG Nano: motion record/erase stay unbound.
+  appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::none, 0};
+  appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::none, 0};
+#else
   appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::keyboard, BTN_L2};
   appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::keyboard, BTN_R2};
+#endif
   appSettings.keyMapping.keyEdit[0] = (InputCode){InputDeviceType::keyboard, BTN_A};
 
 #if defined(DESKTOP_BUILD) || defined(ANDROID_BUILD) || defined(WEB_BUILD) || defined(MIYOOPORTS_BUILD)
@@ -122,6 +169,9 @@ void inputInitDefaultKeyMapping(void) {
   appSettings.keyMapping.keyMotionLive[2] = (InputCode){InputDeviceType::none, 0};
   appSettings.keyMapping.keyMotionRecord[2] = (InputCode){InputDeviceType::none, 0};
   appSettings.keyMapping.keyMotionErase[2] = (InputCode){InputDeviceType::none, 0};
+#ifdef RGNANO_BUILD
+  applyKeymapPresetFile();
+#endif
 }
 
 const char* inputGetKeyName(InputCode input) {
@@ -147,8 +197,8 @@ const char* inputGetKeyName(InputCode input) {
     }
   }
 
-  #if defined(PORTMASTER_BUILD)
-  // PortMaster: use custom names for all keys
+  #if defined(PORTMASTER_BUILD) || defined(RGNANO_BUILD)
+  // PortMaster / RG Nano: use custom names for all keys
   switch (input.code) {
     case BTN_UP: return "Up";
     case BTN_DOWN: return "Down";

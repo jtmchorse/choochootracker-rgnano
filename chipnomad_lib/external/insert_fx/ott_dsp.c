@@ -183,6 +183,11 @@ struct ott_dsp {
     float band_gain_lin[3];
     float slope_down[3];    /* downward slope per band (0..1) */
     float slope_up[3];      /* upward slope per band (0..1) */
+
+    /* Lite path (ott_dsp_process_stereo_lite) control-rate gain state. */
+    float lite_gd_cur[3], lite_gd_tgt[3], lite_gd_inc[3];
+    float lite_gu_cur[3], lite_gu_tgt[3], lite_gu_inc[3];
+    int lite_phase;
 };
 
 /* ----------------------------------------------------------------------- */
@@ -324,7 +329,11 @@ void ott_dsp_reset(ott_dsp_t *ott) {
         ott->band[b].env_up_ac   = 0.0f;
         ott->band[b].env_up_ra   = 0.0f;
         ott->band_net_gr_db[b]   = 0.0f;
+        ott->lite_gd_cur[b] = ott->lite_gd_tgt[b] = 1.0f;
+        ott->lite_gu_cur[b] = ott->lite_gu_tgt[b] = 1.0f;
+        ott->lite_gd_inc[b] = ott->lite_gu_inc[b] = 0.0f;
     }
+    ott->lite_phase = 0;
 }
 
 void ott_dsp_set_params(ott_dsp_t *ott, const ott_params_t *params) {
@@ -669,6 +678,108 @@ void ott_dsp_process_stereo(ott_dsp_t *left, ott_dsp_t *right,
         if (have_r) {
             float oR = inR[i] * (1.0f - depth) + wetR * depth;
             outR[i] = (isnan(oR) || isinf(oR)) ? 0.0f : flush_denormal(oR);
+        }
+    }
+}
+
+
+/* ----------------------------------------------------------------------- */
+/* FX lite: decimated gain computer                                        */
+/* ----------------------------------------------------------------------- */
+
+void ott_dsp_process_stereo_lite(ott_dsp_t *left, ott_dsp_t *right,
+                                 const float *inL, const float *inR,
+                                 float *outL, float *outR, size_t n) {
+    if (!left || !right || !inL || !outL || !inR || !outR) return;
+    const float depth = left->params.depth;
+    const float in_g = left->input_gain_lin;
+    const float out_g = left->output_gain_lin;
+    const float alpha_rms = left->alpha_rms;
+
+    if (left->params.bypass) {
+        for (size_t i = 0; i < n; ++i) { outL[i] = inL[i]; outR[i] = inR[i]; }
+        return;
+    }
+
+    /* N sequential one-pole steps toward a constant target equal one step
+     * with alpha^N, so the ballistics keep their time constants. */
+    const float aaN = powf(left->alpha_a, (float)OTT_LITE_DECIM);
+    const float arN = powf(left->alpha_r, (float)OTT_LITE_DECIM);
+    const float inv_n = 1.0f / (float)OTT_LITE_DECIM;
+    const float k = (float)(M_LN10 / 20.0);
+
+    for (size_t i = 0; i < n; ++i) {
+        float xL = inL[i] * in_g;
+        float lowL = lr4_process(&left->lp_low,  xL);
+        float mhL  = lr4_process(&left->hp_low,  xL);
+        float midL = lr4_process(&left->lp_mid,  mhL);
+        float highL = lr4_process(&left->hp_high, mhL);
+        float xR = inR[i] * in_g;
+        float lowR  = lr4_process(&right->lp_low,  xR);
+        float mhR   = lr4_process(&right->hp_low,  xR);
+        float midR  = lr4_process(&right->lp_mid,  mhR);
+        float highR = lr4_process(&right->hp_high, mhR);
+
+        float bandL[3] = { lowL, midL, highL };
+        float bandR[3] = { lowR, midR, highR };
+        float wetL = 0.0f, wetR = 0.0f;
+        for (int b = 0; b < 3; ++b) {
+            band_state_t *bl = &left->band[b], *br = &right->band[b];
+            float x_l = bandL[b], x_r = bandR[b];
+
+            bl->rms_down_sq = alpha_rms * bl->rms_down_sq + (1.0f - alpha_rms) * (x_l * x_l);
+            br->rms_down_sq = alpha_rms * br->rms_down_sq + (1.0f - alpha_rms) * (x_r * x_r);
+            left->lite_gd_cur[b] += left->lite_gd_inc[b];
+            x_l *= left->lite_gd_cur[b]; x_l = flush_denormal(x_l);
+            x_r *= left->lite_gd_cur[b]; x_r = flush_denormal(x_r);
+
+            bl->rms_up_sq = alpha_rms * bl->rms_up_sq + (1.0f - alpha_rms) * (x_l * x_l);
+            br->rms_up_sq = alpha_rms * br->rms_up_sq + (1.0f - alpha_rms) * (x_r * x_r);
+            left->lite_gu_cur[b] += left->lite_gu_inc[b];
+            x_l *= left->lite_gu_cur[b]; x_l = flush_denormal(x_l);
+            x_r *= left->lite_gu_cur[b]; x_r = flush_denormal(x_r);
+
+            wetL += x_l * left->band_gain_lin[b];
+            wetR += x_r * right->band_gain_lin[b];
+        }
+        wetL *= out_g;
+        wetR *= out_g;
+        float oL = inL[i] * (1.0f - depth) + wetL * depth;
+        float oR = inR[i] * (1.0f - depth) + wetR * depth;
+        outL[i] = (isnan(oL) || isinf(oL)) ? 0.0f : flush_denormal(oL);
+        outR[i] = (isnan(oR) || isinf(oR)) ? 0.0f : flush_denormal(oR);
+
+        if (++left->lite_phase >= OTT_LITE_DECIM) {
+            left->lite_phase = 0;
+            for (int b = 0; b < 3; ++b) {
+                band_state_t *bl = &left->band[b], *br = &right->band[b];
+                /* Land exactly on the previous targets, then plan the next N. */
+                left->lite_gd_cur[b] = left->lite_gd_tgt[b];
+                left->lite_gu_cur[b] = left->lite_gu_tgt[b];
+
+                float lev_l = sqrtf(bl->rms_down_sq), lev_r = sqrtf(br->rms_down_sq);
+                float level_db = 20.0f * log10f(((lev_l > lev_r) ? lev_l : lev_r) + OTT_DB_FLOOR);
+                float gr_raw = gain_computer_down(level_db, left->params.band_thresh[b],
+                                                  left->slope_down[b], OTT_KNEE_DB);
+                float gr_d = ballistics_decoupled(gr_raw, &bl->env_down_ac, &bl->env_down_ra, aaN, arN);
+                br->env_down_ac = bl->env_down_ac;
+                br->env_down_ra = bl->env_down_ra;
+                gr_d = clamp_gr(gr_d);
+                left->lite_gd_tgt[b] = clamp_gain(expf(-gr_d * k));
+                left->lite_gd_inc[b] = (left->lite_gd_tgt[b] - left->lite_gd_cur[b]) * inv_n;
+
+                lev_l = sqrtf(bl->rms_up_sq); lev_r = sqrtf(br->rms_up_sq);
+                level_db = 20.0f * log10f(((lev_l > lev_r) ? lev_l : lev_r) + OTT_DB_FLOOR);
+                gr_raw = gain_computer_up(level_db, left->params.band_thresh[b],
+                                          left->slope_up[b], OTT_KNEE_DB);
+                float gr_u = ballistics_decoupled(gr_raw, &bl->env_up_ac, &bl->env_up_ra, aaN, arN);
+                br->env_up_ac = bl->env_up_ac;
+                br->env_up_ra = bl->env_up_ra;
+                gr_u = clamp_gr(gr_u);
+                left->lite_gu_tgt[b] = clamp_gain(expf(-gr_u * k));
+                left->lite_gu_inc[b] = (left->lite_gu_tgt[b] - left->lite_gu_cur[b]) * inv_n;
+                left->band_net_gr_db[b] = gr_d + gr_u;
+            }
         }
     }
 }

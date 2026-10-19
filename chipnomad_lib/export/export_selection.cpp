@@ -16,8 +16,8 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 ExporterSelectionWAV::ExporterSelectionWAV(const char* path, Project* project, const ExportSelection& selection,
-                                           int sampleRate, int bitDepth, float mixVolume)
-  : ExporterWAV(path, project, 0, sampleRate, bitDepth, mixVolume, false) {
+                                           int sampleRate, int bitDepth, float mixVolume, int masterLimiter)
+  : ExporterWAV(path, project, 0, sampleRate, bitDepth, mixVolume, false, masterLimiter) {
   PlaybackState* playback = &chipnomadState->playbackState;
 
   // Reset the song playback queued by the base Exporter constructor

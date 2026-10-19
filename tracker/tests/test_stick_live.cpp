@@ -384,7 +384,11 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio buffer control ali
   mockAudioCpuLoad = 37;
   screenAudioSettings.fullRedraw();
   screen = mockScreenData;
+#ifdef RGNANO_BUILD
+  CHECK(screen->rows == 3);  // + FX lite
+#else
   CHECK(screen->rows == 2);
+#endif
   screen->drawField(0, 0, CellState::focus);
   CHECK(std::string(mockGfxCells[2], 11) == "Buffer size");
   CHECK(std::string(mockGfxCells[2] + 23, 3) == "512");
@@ -543,13 +547,66 @@ TEST_CASE_FIXTURE(StickLiveFixture, "midiChannelInstrument round-trips through s
 
 }
 
+#ifdef RGNANO_BUILD
+TEST_CASE_FIXTURE(StickLiveFixture, "Play FPS steps through 10/15/20/30 and persists") {
+  screenGraphicsSettings.fullRedraw();
+  REQUIRE(mockScreenData != nullptr);
+  auto* screen = mockScreenData;
+  appSettings.playFps = 20;
+  screen->drawField(0, 7, CellState::focus);
+  CHECK(std::string(mockGfxCells[9], 8) == "Play FPS");
+  CHECK(std::string(mockGfxCells[9] + 23, 6) == "20 FPS");
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::increase) == 1);
+  CHECK(appSettings.playFps == 30);
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::increase) == 1);
+  CHECK(appSettings.playFps == 30);
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::decrease) == 1);
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::decrease) == 1);
+  CHECK(appSettings.playFps == 15);
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::decrease) == 1);
+  CHECK(appSettings.playFps == 10);
+  screen->drawField(0, 7, CellState::focus);
+  CHECK(std::string(mockGfxCells[9] + 23, 6) == "10 FPS");
+  appSettings.playFps = 20;
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.playFps == 10);
+  REQUIRE(screen->onEdit(0, 7, CellEditAction::clear) == 1);
+  CHECK(appSettings.playFps == 20);
+}
+#endif
+
+TEST_CASE_FIXTURE(StickLiveFixture, "Track view setting toggles between 8 and 4x2 and persists") {
+#ifdef RGNANO_BUILD
+  const int row = 8;
+  CHECK(appSettings.trackView == 1);
+#else
+  const int row = 7;
+  CHECK(appSettings.trackView == 0);
+#endif
+  screenGraphicsSettings.fullRedraw();
+  REQUIRE(mockScreenData != nullptr);
+  auto* screen = mockScreenData;
+  int before = appSettings.trackView;
+  REQUIRE(screen->onEdit(0, row, CellEditAction::tap) == 1);
+  CHECK(appSettings.trackView == !before);
+  appSettings.trackView = before;
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.trackView == !before);
+  screen->drawField(0, row, CellState::normal);
+  CHECK(std::string(mockGfxCells[2 + row] + 23, 3) == (appSettings.trackView ? "4x2" : "8  "));
+}
+
 TEST_CASE_FIXTURE(StickLiveFixture, "Persistent waveform is opt-in and its Settings toggle persists") {
   CHECK(appSettings.persistentWaveform == 0);
   screenGraphicsSettings.fullRedraw();
   REQUIRE(mockScreenData != nullptr);
   auto* screen = mockScreenData;
   int modified = projectModified;
-  CHECK(screen->rows == 7);
+#ifdef RGNANO_BUILD
+  CHECK(screen->rows == 9);  // + Play FPS, Track view
+#else
+  CHECK(screen->rows == 8);  // + Track view
+#endif
   screen->drawField(0, 2, CellState::focus);
   CHECK(std::string(mockGfxCells[4] + 23, 3) == "OFF");
   REQUIRE(screen->onEdit(0, 2, CellEditAction::tap) == 1);

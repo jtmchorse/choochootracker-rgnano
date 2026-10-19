@@ -15,7 +15,12 @@ class Exporter {
 
   public:
     Exporter(Project* project, int startRow) {
-      this->chipnomadState = chipnomadCreate();
+      // Offline render on this thread. Where the engine defaults to lazy
+      // voices (RGNANO_BUILD) the exporter builds them on demand on its own
+      // thread instead of allocating the eager 110 MB set next to the app's.
+      this->chipnomadState = chipnomadCreateEx(
+        chipnomadDefaultVoiceMode() == ChipNomadVoiceMode::eager ? ChipNomadVoiceMode::eager
+                                                                 : ChipNomadVoiceMode::lazyOffline);
       this->chipnomadState->project = *project;
       this->chipnomadState->ownsProjectResources = 0;
       this->renderedSeconds = 0;
@@ -50,11 +55,13 @@ class ExporterWAV : public Exporter {
     bool stems;           // false = single mixed file, true = one file per track
     char basePath[1024]; // Base path for file naming
     float* renderBuffer;
+    bool limiterOn;      // master limiter in the export path (single mixed file only)
+    int limiterSkip;     // lookahead frames still to drop from the start of the output
 
     void writeSamples(FILE* f, float* buffer, int samples);
 
   public:
-    ExporterWAV(const char* path, Project* project, int startRow, int sampleRate, int bitDepth, float mixVolume, bool stems = false);
+    ExporterWAV(const char* path, Project* project, int startRow, int sampleRate, int bitDepth, float mixVolume, bool stems = false, int masterLimiter = -1);
     ~ExporterWAV() override { cancel(); }
     int next() override;
     int finish() override;
@@ -78,7 +85,7 @@ struct ExportSelection {
 class ExporterSelectionWAV : public ExporterWAV {
   public:
     ExporterSelectionWAV(const char* path, Project* project, const ExportSelection& selection,
-                         int sampleRate, int bitDepth, float mixVolume);
+                         int sampleRate, int bitDepth, float mixVolume, int masterLimiter = -1);
 };
 
 // Length of the audio a selection bounce will render, measured in phrase

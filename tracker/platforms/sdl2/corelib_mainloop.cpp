@@ -6,9 +6,15 @@
 #include "corelib_keymap.h"
 #include "corelib_input.h"
 #include "../../src/corelib/corelib_assets.h"
+#ifdef RGNANO_BUILD
+#include "app.h"
+#include "common.h"
+#include "rgnano_platform.h"
+#include "rgnano_keymap.h"
+#endif
 
-#ifdef MIYOOPORTS_BUILD
-// MMIYOO is a software framebuffer backend. The tracker state and audio run
+#if defined(MIYOOPORTS_BUILD) || defined(RGNANO_BUILD)
+// MMIYOO (and the RG Nano) is a software framebuffer backend. The tracker state and audio run
 // independently, while 30 UI frames per second keeps the tiny display
 // responsive without spending most of the console CPU on redraws.
 #define FPS 30
@@ -236,6 +242,9 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
   initGamepad();
 #endif
 
+#ifdef RGNANO_BUILD
+  uint32_t nextTickAt = SDL_GetTicks(), nextDrawAt = nextTickAt;
+#endif
   while (1) {
     start = SDL_GetTicks();
 
@@ -247,7 +256,8 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
       // silently quit the app instead of doing nothing (or saving, in key
       // jazz mode) - keep the combo off there and use the in-app Quit menu.
       if (event.type == SDL_QUIT ||
-#ifndef DESKTOP_BUILD
+#if !defined(DESKTOP_BUILD) && !defined(RGNANO_BUILD)
+          // RG Nano: no quit chord at all (Settings > Quit ChooChooTracker only).
           (event.type == SDL_KEYDOWN && (menu && event.key.keysym.sym == BTN_X))
 #else
           0
@@ -348,9 +358,42 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
           continue;
         }
 #endif
-        if (event.key.keysym.sym == BTN_MENU) {
-          menu = event.type == SDL_KEYDOWN;
-        } else {
+#ifdef RGNANO_BUILD
+        int swallowKey = 0;  // Select (K) is also Shift; only the fallback chords are swallowed
+#else
+        int swallowKey = event.key.keysym.sym == BTN_MENU;
+        if (swallowKey) menu = event.type == SDL_KEYDOWN;
+#endif
+#ifdef RGNANO_BUILD
+        {
+          InputCode code = (InputCode){InputDeviceType::keyboard, event.key.keysym.sym};
+          // Select (K) is a normal key: it is Shift. There is no quit chord.
+          // Fallback for a failed launcher key map load: the stock Fn chords
+          // j/i/h arrive instead of Select+direction; turn them back into
+          // Shift+direction unless the user mapped those keys.
+          int chordDir = rgnanoFnChordDirection(event.key.keysym.sym);
+          if (chordDir && !appInputWantsKey(code)) {
+            int down = event.type == SDL_KEYDOWN;
+            InputCode shift = appSettings.keyMapping.keyShift[0];
+            InputCode dir = (InputCode){InputDeviceType::keyboard, chordDir};
+            eventData.type = down ? MainLoopEvent::keyDown : MainLoopEvent::keyUp;
+            if (down) { eventData.data.input = shift; onEvent(eventData); }
+            eventData.data.input = dir; onEvent(eventData);
+            if (!down) { eventData.data.input = shift; onEvent(eventData); }
+            swallowKey = 1;
+          }
+          // The first 400 key events are logged (sym, scancode, mapped or not):
+          // enough for a device log to show exactly what each button delivered.
+          static int keyLogCount = 0;
+          if (keyLogCount < 400) {
+            keyLogCount++;
+            rgnanoLog("key %s sym=%d scancode=%d mod=0x%x -> %s", event.type == SDL_KEYDOWN ? "down" : "up  ",
+              (int)event.key.keysym.sym, (int)event.key.keysym.scancode, (unsigned)event.key.keysym.mod,
+              swallowKey ? "fallback Fn chord -> Shift+dir" : (appInputWantsKey(code) ? "mapped" : "unmapped"));
+          }
+        }
+#endif
+        if (!swallowKey) {
           eventData.type = event.type == SDL_KEYDOWN ? MainLoopEvent::keyDown : MainLoopEvent::keyUp;
           eventData.data.input = (InputCode){InputDeviceType::keyboard, event.key.keysym.sym};
           onEvent(eventData);
@@ -589,6 +632,55 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
     }
 #endif
 
+#ifdef RGNANO_BUILD
+    // One Cortex-A7 shared with the audio thread. Input is dispatched above on
+    // every pass; the UI tick (key repeat, autosave, MIDI poll) and the screen
+    // present run on their own clocks:
+    //   stopped: tick 30, draw 30
+    //   playing: tick max(20, Play FPS), draw = Play FPS (Settings > Graphics)
+    // so a 10 fps present cap saves CPU without slowing key repeat, and the
+    // wait below ends as soon as an input event arrives.
+    {
+      const int playing = appIsPlaying();
+      const int drawFps = playing ? appSettings.playFps : FPS;
+      const int tickFps = playing ? (appSettings.playFps > 20 ? appSettings.playFps : 20) : FPS;
+      uint32_t now = SDL_GetTicks();
+      if ((int32_t)(now - nextTickAt) >= 0) {
+        eventData.type = MainLoopEvent::tick;
+        eventData.data.value = 0;
+        onEvent(eventData);
+        const uint32_t period = 1000u / (uint32_t)tickFps;
+        // Anchored to the schedule so SDL_Delay rounding does not slow the tick;
+        // resynchronised if a long stall left it more than a period behind.
+        nextTickAt += period;
+        if ((int32_t)(now - nextTickAt) > (int32_t)period) nextTickAt = now + period;
+      }
+      if ((int32_t)(now - nextDrawAt) >= 0) {
+        draw();
+        gfxUpdateScreen();
+        uint32_t done = SDL_GetTicks();
+        busytime = done - now;
+        frameTimeUs = (int)(busytime * 1000);
+        {
+          float lim = 1.0f, mean = 0.0f; unsigned eng = 0, tot = 0;
+          if (appTakeLimiterStats(&lim, &mean, &eng, &tot)) rgnanoStatsAddLimiter(lim, mean, eng, tot);
+        }
+        rgnanoStatsTick(playing);
+        const uint32_t period = 1000u / (uint32_t)drawFps;
+        nextDrawAt += period;
+        if ((int32_t)(done - nextDrawAt) > 0) nextDrawAt = done;  // a slow frame never queues extra ones
+      }
+      const uint32_t wake = (int32_t)(nextTickAt - nextDrawAt) < 0 ? nextTickAt : nextDrawAt;
+      for (;;) {
+        const uint32_t t = SDL_GetTicks();
+        if ((int32_t)(wake - t) <= 0) break;
+        SDL_PumpEvents();
+        if (SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) break;
+        const uint32_t slice = wake - t;
+        SDL_Delay(slice > 4 ? 4 : slice);
+      }
+    }
+#else
     eventData.type = MainLoopEvent::tick;
     eventData.data.value = 0;
     onEvent(eventData);
@@ -607,6 +699,7 @@ void mainLoopRun(void (*draw)(void), void (*onEvent)(MainLoopEventData eventData
     if (delay > busytime) {
       SDL_Delay(delay - busytime);
     }
+#endif
   }
 }
 

@@ -7,9 +7,23 @@
 #include "corelib_mainloop.h"
 #include "app.h"
 #include "common.h"
+#ifdef RGNANO_BUILD
+#include "rgnano_platform.h"
+#include "rgnano_keymap.h"
+#endif
 
 int main(int argv, char** args) {
+#ifdef RGNANO_BUILD
+  // Data dir, log, first-run asset seeding and the audio open all happen
+  // before settings, video or evdev are touched.
+  rgnanoPlatformEarlyInit();
+#endif
   settingsLoad();
+#ifdef RGNANO_BUILD
+  if (rgnanoMigrateKeymap(&appSettings))
+    rgnanoLog("keymap: saved key map migrated to the RG Nano layout (keymapVersion %d)", appSettings.keymapVersion);
+  rgnanoLog("audio: buffer setting %d frames", appSettings.audioBufferSize);
+#endif
 
   // Load custom font before gfxSetup so it uses the correct font
   if (appSettings.fontPath[0] != '\0') {
@@ -30,6 +44,9 @@ int main(int argv, char** args) {
   appCleanup();
   gfxCleanup();
   mainLoopQuit();
+#ifdef RGNANO_BUILD
+  rgnanoPlatformShutdown();
+#endif
 #endif
 
   return 0;

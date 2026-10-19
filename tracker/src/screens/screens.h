@@ -225,6 +225,9 @@ inline int fxEditInput(int keys, int taps, uint8_t* fx, uint8_t* last) {
 #endif
 void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable);
 
+// Song screen "4x2" track view: move to the previous (-1) / next (+1) page.
+void songPageMove(int dir);
+
 // Key jazz (desktop): lets screen_phrase.cpp own its toggle/note-entry state
 // while app.cpp only needs to route raw keyboard events to it. Returns 1 if
 // the key was consumed by key jazz, 0 to let normal input processing continue.

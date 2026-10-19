@@ -15,6 +15,9 @@ struct Project;
 class MasterEffects {
  public:
   void init(float sampleRate);
+  // Pre-size the reverb scratch frames so process() never allocates on the
+  // audio thread. Call from the UI thread with the largest render chunk.
+  void reserve(size_t frames);
   void reset();
   bool tailActive() const;
   void process(float* reverbBus, float* delayBus, float* output,

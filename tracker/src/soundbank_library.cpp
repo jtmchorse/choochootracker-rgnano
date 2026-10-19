@@ -36,12 +36,17 @@ std::string pendingBank, pendingPreset, pendingExpectedBank, pendingExpectedPres
 uint32_t pendingExpectedHandle=0;
 bool refreshPending = false;
 uint32_t expectedHandle = 0;
+#ifdef RGNANO_BUILD
+constexpr size_t kDefaultCacheBytes = 8 * 1024 * 1024;  // RG Nano: ~47 MB usable RAM
+#else
+constexpr size_t kDefaultCacheBytes = 64 * 1024 * 1024;
+#endif
 size_t cacheLimit() {
   const char* value = getenv("CHOOCHOO_SOUNDBANK_CACHE_MB");
-  if (!value) return 64 * 1024 * 1024;
+  if (!value) return kDefaultCacheBytes;
   char* end = nullptr;
   long n = strtol(value, &end, 10);
-  return n >= 8 && n <= 1024 && end && !*end ? size_t(n) * 1024 * 1024 : 64 * 1024 * 1024;
+  return n >= 8 && n <= 1024 && end && !*end ? size_t(n) * 1024 * 1024 : kDefaultCacheBytes;
 }
 soundbank::SampleCache cache(cacheLimit());
 std::map<std::string, std::string> failed;

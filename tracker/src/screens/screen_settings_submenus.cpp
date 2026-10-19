@@ -8,14 +8,24 @@
 #include "file_browser.h"
 #include "screens.h"
 #include "waveform_display.h"
+#include <fx_profile.h>
 #include <string.h>
+#ifdef RGNANO_BUILD
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
+#else
+#define rgnanoLog(...) ((void)0)
+#endif
 
 static int columnCount(int) { return 1; }
 static void noHeader(int, CellState) {}
 static void setup(int) {}
 static void draw(void) {}
 
+#ifdef RGNANO_BUILD
+static const int audioBufferSizes[] = {32, 64, 128, 256, 512, 1024, 2048};
+#else
 static const int audioBufferSizes[] = {32, 64, 128, 256, 512, 1024};
+#endif
 static int displayedCpuLoad = -1;
 
 static void drawAudioCpuLoad(void) {
@@ -29,7 +39,13 @@ static void drawAudioCpuLoad(void) {
 }
 
 static void audioStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "AUDIO"); }
-static void audioCursor(int, int) { gfxCursor(23, 2, appSettings.audioBufferSize == 1024 ? 4 : 3); }
+static void audioCursor(int, int row) {
+#ifdef RGNANO_BUILD
+  if (row == 2) { gfxCursor(23, 4, 3); return; }
+#endif
+  (void)row;
+  gfxCursor(23, 2, appSettings.audioBufferSize >= 1024 ? 4 : 3);
+}
 static void audioField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   if (row == 0) {
@@ -37,9 +53,14 @@ static void audioField(int, int row, CellState state) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxClearRect(23, 2, 4, 1);
     gfxPrintf(23, 2, "%d", appSettings.audioBufferSize);
-  } else {
+  } else if (row == 1) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 3, "CPU load");
     drawAudioCpuLoad();
+  } else {
+    // RG Nano: cheaper effects (silence bypass, lighter Beads and OTT).
+    gfxSetFgColor(cs.textDefault); gfxPrint(0, 4, "FX lite");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
+    gfxPrint(23, 4, appSettings.fxLite ? "ON " : "OFF");
   }
 }
 static int audioBufferIndex(int value) {
@@ -48,6 +69,18 @@ static int audioBufferIndex(int value) {
   return 0;
 }
 static int audioEdit(int, int row, CellEditAction action) {
+#ifdef RGNANO_BUILD
+  if (row == 2) {
+    uint8_t value = (uint8_t)appSettings.fxLite;
+    if (action == CellEditAction::tap || action == CellEditAction::doubleTap) value ^= 1;
+    else if (!edit8noLast(action, &value, 1, 0, 1)) return 0;
+    appSettings.fxLite = value;
+    fxLiteSet(value != 0);
+    screenMessage(MESSAGE_TIME, "Beads engine changes on next play");
+    if (settingsSave() != 0) screenMessage(MESSAGE_TIME_ERROR, "Could not save FX setting");
+    return 1;
+  }
+#endif
   if (row != 0) return 0;
   int direction = 0;
   if (action == CellEditAction::clear) direction = -99;
@@ -71,8 +104,13 @@ static int audioEdit(int, int row, CellEditAction action) {
   if (settingsSave() != 0) screenMessage(MESSAGE_TIME_ERROR, "Could not save audio setting");
   return 1;
 }
+#ifdef RGNANO_BUILD
+static int audioCellValid(int, int row) { return row == 0 || row == 2; }
+static ScreenData audioData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, audioStatic, audioCursor, NULL, noHeader, noHeader, audioField, audioEdit, NULL, NULL, audioCellValid, NULL};
+#else
 static int audioCellValid(int, int row) { return row == 0; }
 static ScreenData audioData = {2, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, audioStatic, audioCursor, NULL, noHeader, noHeader, audioField, audioEdit, NULL, NULL, audioCellValid, NULL};
+#endif
 
 static void controlsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "CONTROLS"); }
 static void controlsCursor(int, int row) { gfxCursor(row < 2 ? 23 : row == 2 ? 23 : 0, 2 + row, row < 2 ? 3 : row == 2 ? 6 : 11); }
@@ -130,18 +168,26 @@ static void mixerStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles
 static void mixerCursor(int, int row) { gfxCursor(23, 2 + row, 4); }
 static void mixerField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
-  gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, row == 0 ? "Mix volume" : "Tilt pivot");
+  gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, row == 0 ? "Mix volume" : row == 1 ? "Tilt pivot" : "Master limiter");
   gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-  if (row == 0) gfxPrintf(23, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f)); else gfxPrintf(23, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
+  if (row == 0) gfxPrintf(23, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f));
+  else if (row == 1) gfxPrintf(23, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
+  else gfxPrint(23, 4, appSettings.masterLimiter ? "ON " : "OFF");
 }
 static int mixerEdit(int, int row, CellEditAction action) {
-  if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; } return handled; }
+  if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; rgnanoLog("mixer: mixVolume now %d%%", (int)value); } return handled; }
+  if (row == 2) { int handled = edit8noLast(action, (uint8_t*)&appSettings.masterLimiter, 1, 0, 1); if (handled && chipnomadState) chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter); if (handled) rgnanoLog("mixer: masterLimiter now %s", appSettings.masterLimiter ? "on" : "off"); return handled; }
   int handled = edit16withMinMax(action, &chipnomadState->project.tiltPivotHz, 250, 250, 4000); if (handled) projectModified = 1; return handled;
 }
-static ScreenData mixerData = {2, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};
+static ScreenData mixerData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, mixerStatic, mixerCursor, NULL, noHeader, noHeader, mixerField, mixerEdit, NULL, NULL, NULL, NULL};
 
+#ifdef RGNANO_BUILD
+#define GFX_TRACKVIEW_ROW 8
+#else
+#define GFX_TRACKVIEW_ROW 7
+#endif
 static void graphicsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "GRAPHICS"); }
-static void graphicsCursor(int, int row) { gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 ? 6 : 8); }
+static void graphicsCursor(int, int row) { if (row == GFX_TRACKVIEW_ROW) { gfxCursor(23, 2 + row, 3); return; } gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 || row == 7 ? 6 : 8); }
 static void graphicsField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   if (row == 0) {
@@ -163,6 +209,16 @@ static void graphicsField(int, int row, CellState state) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 8, "Boot screen");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxPrint(23, 8, appSettings.bootScreenNight ? "Night   " : "Original");
+  } else if (row == 7) {
+    // RG Nano: how often the screen is presented while the song plays.
+    gfxSetFgColor(cs.textDefault); gfxPrint(0, 9, "Play FPS");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
+    gfxPrintf(23, 9, "%02d FPS", appSettings.playFps);
+  } else if (row == GFX_TRACKVIEW_ROW) {
+    // Song screen: all tracks on one page, or 4 per page over two pages.
+    gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, "Track view");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
+    gfxPrint(23, 2 + row, appSettings.trackView ? "4x2" : "8  ");
   }
 }
 static void fontLoaded(const char* path) {
@@ -177,6 +233,29 @@ static void fontLoaded(const char* path) {
 }
 static void fontCancelled(void) { screenSetup(&screenGraphicsSettings, 0); }
 static int graphicsEdit(int, int row, CellEditAction action) {
+  if (row == GFX_TRACKVIEW_ROW) {
+    uint8_t value = (uint8_t)appSettings.trackView;
+    if (action == CellEditAction::tap || action == CellEditAction::doubleTap) value ^= 1;
+    else if (!edit8noLast(action, &value, 1, 0, 1)) return 0;
+    appSettings.trackView = value;
+    if (settingsSave() != 0) screenMessage(MESSAGE_TIME, "Could not save track view");
+    return 1;
+  }
+  if (row == 7) {
+    static const int steps[] = {10, 15, 20, 30};
+    int index = 2;
+    for (int i = 0; i < 4; ++i) if (steps[i] == appSettings.playFps) index = i;
+    if (action == CellEditAction::tap || action == CellEditAction::doubleTap) index = (index + 1) & 3;
+    else if (action == CellEditAction::increase || action == CellEditAction::increaseBig ||
+             action == CellEditAction::multiIncrease || action == CellEditAction::multiIncreaseBig) { if (index < 3) ++index; }
+    else if (action == CellEditAction::decrease || action == CellEditAction::decreaseBig ||
+             action == CellEditAction::multiDecrease || action == CellEditAction::multiDecreaseBig) { if (index > 0) --index; }
+    else if (action == CellEditAction::clear) index = 2;
+    else return 0;
+    appSettings.playFps = steps[index];
+    if (settingsSave() != 0) screenMessage(MESSAGE_TIME, "Could not save FPS setting");
+    return 1;
+  }
   if (row == 6) {
     uint8_t value = appSettings.bootScreenNight;
     if (action == CellEditAction::tap || action == CellEditAction::doubleTap) value ^= 1;
@@ -207,7 +286,11 @@ static int graphicsEdit(int, int row, CellEditAction action) {
   return 0;
 }
 static int graphicsCellValid(int, int) { return 1; }
-static ScreenData graphicsData = {7, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
+#ifdef RGNANO_BUILD
+static ScreenData graphicsData = {9, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
+#else
+static ScreenData graphicsData = {8, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, graphicsStatic, graphicsCursor, NULL, noHeader, noHeader, graphicsField, graphicsEdit, NULL, NULL, graphicsCellValid, NULL};
+#endif
 
 static int menuInput(ScreenData* data, int isKeyDown, int keys, int taps) { if (keys == keyOpt) { screenSetup(&screenSettings, 0); return 1; } return screenInput(data, isKeyDown, keys, taps); }
 static void audioRedraw(void) { displayedCpuLoad = -1; screenFullRedraw(&audioData); }

@@ -42,11 +42,18 @@ using namespace stmlib;
 
 void Processor::Init(
     uint8_t* buffers[],
-    uint16_t* reverb_buffer) {
-  processor_digital_.Init(48000.0f, buffers);
-  processor_vintage_digital_.Init(32000.0f, buffers);
-  processor_clean_tape_.Init(24000.0f, buffers);
-  processor_dirty_tape_.Init(24000.0f, buffers);
+    uint16_t* reverb_buffer,
+    Media media,
+    int lite_grain_limit) {
+  // The five engines share the recording banks. Attaching them must not wipe
+  // the banks five times; Configure() clears them once for the chosen engine.
+  processor_digital_.Init(48000.0f, buffers, false);
+  processor_vintage_digital_.Init(32000.0f, buffers, false);
+  processor_clean_tape_.Init(24000.0f, buffers, false);
+  processor_dirty_tape_.Init(24000.0f, buffers, false);
+  processor_digital_lite_.Init(kLiteSampleRate, buffers, false);
+  reverb_used_ = false;
+  lite_grain_limit_ = lite_grain_limit < 8 ? 8 : (lite_grain_limit > 32 ? 32 : lite_grain_limit);
   
   dry_ = 0.0f;
   wet_ = 0.0f;
@@ -60,7 +67,7 @@ void Processor::Init(
   wow_and_flutter_.set_lp(0.6f);
 #endif  // ENABLE_HARDWARE_24K
 
-  Configure(MEDIA_DIGITAL, false);
+  Configure(media, false);
   
   // Used for the timing of the delay to granular transition.
   delay_mode_transition_ = -kDelayModeTransitionTime;
@@ -74,8 +81,13 @@ void Processor::Configure(Media media, bool mono) {
 
   switch (media_) {
     case MEDIA_DIGITAL:
-      processor_digital_.Reset();
+      processor_digital_.Reset(mono);
       max_delay = processor_digital_.max_delay_times_ratio();
+      break;
+    case MEDIA_DIGITAL_LITE:
+      processor_digital_lite_.set_grain_limit(lite_grain_limit_);
+      processor_digital_lite_.Reset(mono);
+      max_delay = processor_digital_lite_.max_delay_times_ratio();
       break;
     case MEDIA_VINTAGE_DIGITAL:
       processor_vintage_digital_.Reset();
@@ -97,6 +109,7 @@ void Processor::Configure(Media media, bool mono) {
   trigger_generator_.Init(sr);
   delay_controller_.Init(sr, max_delay * (mono ? 2 : 1));
   reverb_.Reset(sr);
+  reverb_used_ = false;
 }
 
 void Processor::Process(
@@ -170,6 +183,12 @@ void Processor::Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
       copy(&in[0], &in[size], &dry_signal[0]);
       break;
+
+    case MEDIA_DIGITAL_LITE:
+      processor_digital_lite_.Process(
+          triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
+      copy(&in[0], &in[size], &dry_signal[0]);
+      break;
     
     case MEDIA_VINTAGE_DIGITAL:
       processor_vintage_digital_.Process(
@@ -230,10 +249,25 @@ void Processor::Process(
   pre_reverb_limiter_.Process(out, size);
   
   // Reverb.
-  const bool caveman = media_ != MEDIA_DIGITAL;
+  const bool caveman = media_ != MEDIA_DIGITAL && media_ != MEDIA_DIGITAL_LITE;
   const float reverb = mix_parameters.reverb_amount;
   const float reverb_mix = reverb * reverb * 0.9f;
   const float reverb_time = reverb * reverb * reverb;
+  if (reverb_mix == 0.0f && !reverb_used_) {
+    // Never fed, mix 0: the engine's wet path is exactly zero, so only the dry
+    // gain ramp of Reverb::Process remains. Bit-identical, minus ~10 reads and
+    // writes of the 64 KB reverb memory per sample.
+    reverb_.ProcessDryOnly(out, size);
+    output_limiter_.Process(out, size);
+    if (mix_parameters.output_gate) {
+      for (size_t i = 0; i < size; ++i) {
+        out[i].l = (out[i].l + out[i].r) * 0.5f;
+        out[i].r = gate_out[i] ? -0.8f : 0.0f;
+      }
+    }
+    return;
+  }
+  reverb_used_ = true;
   reverb_.set_mix(reverb_mix);
   reverb_.set_time(caveman
       ? (0.45f + 0.5f * reverb_time)

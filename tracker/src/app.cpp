@@ -1,5 +1,6 @@
 #include "soundbank_library.h"
 #include <string.h>
+#include <stdlib.h>
 #include "corelib_gfx.h"
 #include "corelib_font.h"
 #include "corelib_file.h"
@@ -9,12 +10,17 @@
 #include "screens.h"
 #include "screens/selection_popup.h"
 #include "chipnomad_lib.h"
+#include "fx_profile.h"
+#include "insert_fx.h"
 #include "project_utils.h"
 #include "waveform_display.h"
 #include "piano_display.h"
 #include "monitor_display.h"
 #include "corelib_input.h"
 #include "corelib_keymap.h"
+#ifdef RGNANO_BUILD
+#include "../platforms/shared/rgnano_keymap.h"
+#endif
 #include "screens/screen_quick_help.h"
 #include "screens/screen_instrument.h"
 #include "midi/midi_router.h"
@@ -211,6 +217,23 @@ static int inputCodeToKey(InputCode input) {
   return keyUnmapped;
 }
 
+#ifdef RGNANO_BUILD
+// Shift+L / Shift+R flip the Song screen's track page (see rgnanoPageChordDirection).
+static int pageChordDirection(InputCode input) {
+  if (input.deviceType != InputDeviceType::keyboard) return 0;
+  return rgnanoPageChordDirection(input.code);
+}
+#endif
+
+int appInputWantsKey(InputCode input) {
+  if (inputRawCallback) return 1;
+#ifdef RGNANO_BUILD
+  if (pageChordDirection(input)) return 1;
+#endif
+  return inputCodeToKey(input) != keyUnmapped || isMotionRecordTrigger(input) ||
+         motionLiveInputMask(input) || isMotionEraseTrigger(input);
+}
+
 static void applyLoopRange(void) {
   LoopRange range = screenGetLoopRange(currentScreen);
   if (range.enabled) {
@@ -361,6 +384,18 @@ void appResetInputState(void) {
 /**
 * @brief Initialize the application: setup audio system, load auto-saved project, show the first screen
 */
+int appIsPlaying(void) {
+  const PlaybackStatus* status = chipnomadState ? chipnomadGetPlaybackStatus(chipnomadState) : NULL;
+  return status && status->isPlaying;
+}
+
+int appTakeLimiterStats(float* minGain, float* meanReduction, unsigned* engagedFrames, unsigned* totalFrames) {
+  uint32_t engaged = 0, total = 0;
+  if (!chipnomadTakeLimiterStats(chipnomadState, minGain, meanReduction, &engaged, &total)) return 0;
+  *engagedFrames = engaged; *totalFrames = total;
+  return 1;
+}
+
 void appSetup(void) {
   // Registered before anything else touches MIDI: chipnomad_lib's engine
   // path (applyVoiceEvents/chipnomadMidiPanic) now goes through the router,
@@ -380,11 +415,13 @@ void appSetup(void) {
   }
   if (appSettings.keyMapping.keyMotionLive[0].deviceType == InputDeviceType::none) {
     appSettings.keyMapping.keyMotionLive[0] = (InputCode){InputDeviceType::keyboard, BTN_L1};
+#ifndef RGNANO_BUILD  // RG Nano: motion record/erase stay unbound (no L2/R2)
     if (appSettings.keyMapping.keyMotionRecord[0].deviceType == InputDeviceType::none ||
         (appSettings.keyMapping.keyMotionRecord[0].code == BTN_R2 && appSettings.keyMapping.keyMotionErase[0].code == BTN_L2)) {
       appSettings.keyMapping.keyMotionRecord[0] = (InputCode){InputDeviceType::keyboard, BTN_L2};
       appSettings.keyMapping.keyMotionErase[0] = (InputCode){InputDeviceType::keyboard, BTN_R2};
     }
+#endif
   }
 
   // Keyboard input reset
@@ -441,6 +478,7 @@ void appSetup(void) {
 
   // Set mix volume from settings
   chipnomadState->mixVolume = appSettings.mixVolume;
+  chipnomadSetMasterLimiter(chipnomadState, appSettings.masterLimiter);
   chipnomadState->aySampleDithering = appSettings.aySampleDithering;
 
   // Initialize audio system
@@ -451,6 +489,11 @@ void appSetup(void) {
     appSettings.braidsSignatureSeed);
   audioManager.start(appSettings.audioSampleRate, appSettings.audioBufferSize);
   audioManager.resume();
+#ifdef RGNANO_BUILD
+  // Debug only: start the loaded song right away so a headless qemu boot
+  // exercises the audio callback and the instrumentation without input.
+  if (getenv("RGNANO_AUTOPLAY")) chipnomadQueuePlaybackStartSong(chipnomadState, 0, 0, 1);
+#endif
 
   int savedInputPort = findMidiPortByName(1, appSettings.midiInputDeviceName);
   if (savedInputPort >= 0 && midiRouterOpenInput(savedInputPort) == 0) appSettings.midiInputDevice = savedInputPort;
@@ -604,6 +647,15 @@ void appOnEvent(MainLoopEventData eventData) {
     if (keyJazzTextHandleRawKey(eventData.data.input, 1, currentScreen)) break;
 #endif
 
+#ifdef RGNANO_BUILD
+    if (!rawInputActive && (pressedButtons & keyShift) && currentScreen == &screenSong) {
+      int pageDir = pageChordDirection(eventData.data.input);
+      if (pageDir) {
+        songPageMove(pageDir);
+        break;
+      }
+    }
+#endif
     if (!rawInputActive && (isMotionRecordTrigger(eventData.data.input) ||
         (eventData.data.input.deviceType == InputDeviceType::logical && eventData.data.input.code == keyMotionRecord))) {
       motionRecordHeld = 1;
@@ -744,6 +796,15 @@ void appOnEvent(MainLoopEventData eventData) {
     break;
   case MainLoopEvent::tick: {
     soundbankPoll();
+    {
+      // Overload governor (live engines): tell the user why an insert went quiet.
+      static uint32_t shedSeen = 0;
+      const uint32_t shed = fxShedEvents();
+      if (shed != shedSeen) {
+        shedSeen = shed;
+        screenMessage(MESSAGE_TIME_ERROR, "CPU overload: %s bypassed", insertDescriptor((int)fxShedModule()).name);
+      }
+    }
     int motionRecordChanged = 0;
     MotionRecordEvent motionRecordEvent;
     while (chipnomadConsumeMotionRecordEvent(&motionRecordEvent))

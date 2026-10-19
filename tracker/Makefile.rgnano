@@ -1,0 +1,95 @@
+# Anbernic RG Nano (Allwinner V3s, 1x Cortex-A7, 64 MB) on DrUm78 FunKey-OS.
+# Cross-built with the FunKey SDK (musl, GCC 10) and the bundled, patched SDL2
+# (16-byte evdev struct fix). See packaging/rgnano/README-build.md for the
+# one-command build inside the rgnano-build container.
+PLATFORM = rgnano
+include Makefile.common
+
+LIBS = $(COMMON_LIBS) platforms/sdl2
+RGNANO_SDK ?= /opt/funkey-sdk/FunKey-sdk-2.3.0
+# Install prefix of the patched SDL2 2.30.12 (bin/lib/include), see
+# packaging/rgnano/build-sdl2.sh. Must contain lib/libSDL2-2.0.so.0.
+RGNANO_SDL2_ROOT ?= /root/work/stage-r3
+RGNANO_PREFIX = $(RGNANO_SDK)/bin/arm-funkey-linux-musleabihf-
+CXX = $(RGNANO_PREFIX)g++
+STRIP = $(RGNANO_PREFIX)strip
+
+ifeq ($(wildcard $(RGNANO_SDL2_ROOT)/lib/libSDL2-2.0.so.0),)
+$(error RGNANO_SDL2_ROOT=$(RGNANO_SDL2_ROOT) has no lib/libSDL2-2.0.so.0 (run packaging/rgnano/build-sdl2.sh))
+endif
+ifeq ($(wildcard $(CXX)),)
+$(error FunKey SDK compiler not found at $(CXX); set RGNANO_SDK)
+endif
+
+# -O2, not -Os: the engine budget report measured -Os at 1.4x to 2.8x slower
+# on the stretch, FM and PCM cores. LTO is off by default (slow and memory
+# hungry in the 4 GB container, and unmeasured on this target); try it with
+# RGNANO_LTO=1.
+RGNANO_LTO ?= 0
+ifeq ($(RGNANO_LTO),1)
+RGNANO_OPT = -O2 -flto=4
+else
+RGNANO_OPT = -O2
+endif
+CFLAGS = $(filter-out -flto -Os -g,$(COMMON_CFLAGS)) $(RGNANO_OPT) $(INCLUDES) \
+  -I$(RGNANO_SDL2_ROOT)/include -DRGNANO_BUILD \
+  -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
+# No MIDI backend (DESKTOP_BUILD/PORTMASTER_BUILD off) and no GAMEPAD_SUPPORT:
+# the buttons arrive as key events from SDL's evdev backend.
+XTRA_LIBS = -L$(RGNANO_SDL2_ROOT)/lib -lSDL2 -lasound -Wl,--allow-shlib-undefined \
+  -static-libstdc++ -static-libgcc -ldl -lpthread -lm
+
+object_for = $(BUILD)/obj/$(subst ../,up/,$(basename $(1))).o
+OBJECTS := $(foreach source,$(SOURCES),$(call object_for,$(source)))
+
+# The SDK libc.so has miscompiled exp/expf/pow/powf (bad argument reduction).
+# Link musl 1.2.1's own sources into the executable so they win at dynamic link
+# time. Plain C, no fast-math, no FMA contraction. See platforms/rgnano_libm/README.txt.
+RGNANO_CC = $(RGNANO_PREFIX)gcc
+LIBM_DIR = platforms/rgnano_libm
+LIBM_SRCS = $(wildcard $(LIBM_DIR)/*.c)
+LIBM_OBJS = $(patsubst $(LIBM_DIR)/%.c,$(BUILD)/obj/rgnano_libm/%.o,$(LIBM_SRCS))
+LIBM_CFLAGS = -O2 -fno-fast-math -ffp-contract=off -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard \
+  -I$(LIBM_DIR) -include $(LIBM_DIR)/fp_arch.h -w
+$(BUILD)/obj/rgnano_libm/%.o: $(LIBM_DIR)/%.c Makefile.rgnano
+	@mkdir -p $(dir $@)
+	@$(RGNANO_CC) $(LIBM_CFLAGS) -c $< -o $@
+OBJECTS += $(LIBM_OBJS)
+DEPS := $(OBJECTS:.o=.d)
+TARGET = $(BUILD)/choochootracker
+
+define compile_source
+$(call object_for,$(1)): $(1) Makefile.rgnano Makefile.common
+	@mkdir -p $$(dir $$@)
+	@$(CXX) $(CFLAGS) -MMD -MP -c $$< -o $$@
+endef
+
+$(foreach source,$(SOURCES),$(eval $(call compile_source,$(source))))
+-include $(DEPS)
+
+.PHONY: RGNano RGNano-deploy
+RGNano: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	mkdir -p $(BUILD)
+	$(CXX) $(CFLAGS) $(OBJECTS) $(XTRA_LIBS) -o $@
+	$(STRIP) $@
+
+# OPK = squashfs of the app directory, mounted read-only by GMenu2X.
+PACKAGE_ROOT = $(BUILD)/package
+OPK = $(abspath ../releases)/choochootracker-rgnano.opk
+
+RGNano-deploy: RGNano
+	rm -rf $(PACKAGE_ROOT)
+	mkdir -p $(PACKAGE_ROOT)/libs ../releases
+	cp $(TARGET) $(PACKAGE_ROOT)/choochootracker
+	cp -L $(RGNANO_SDL2_ROOT)/lib/libSDL2-2.0.so.0 $(PACKAGE_ROOT)/libs/libSDL2-2.0.so.0
+	$(STRIP) $(PACKAGE_ROOT)/libs/libSDL2-2.0.so.0
+	cp -r packaging/common/. $(PACKAGE_ROOT)/
+	cp packaging/rgnano/choochootracker.sh packaging/rgnano/choochootracker.key packaging/rgnano/choochootracker.funkey-s.desktop \
+	   packaging/rgnano/choochootracker.png $(PACKAGE_ROOT)/
+	chmod 755 $(PACKAGE_ROOT)/choochootracker $(PACKAGE_ROOT)/choochootracker.sh
+	rm -f $(OPK)
+	mksquashfs $(PACKAGE_ROOT) $(OPK) -all-root -noappend -no-exports -no-xattrs > /dev/null
+	@ls -l $(OPK)
+	@echo "RG Nano OPK created: $(OPK)"

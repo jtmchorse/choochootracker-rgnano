@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=RG Nano Bench 2
+Comment=CPU cost battery, results to /mnt/ChooChooTracker/bench.txt
+Exec=rgnano-bench2.sh
+Icon=rgnano-bench2
+Categories=applications

@@ -1,5 +1,6 @@
 #include "insert_fx.h"
 #include "beads_insert.h"
+#include "fx_profile.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -301,9 +302,48 @@ struct InsertChain::Impl {
     int delayWrite = 0, holdCounter = 0;
     float toneCoefficient = 1;
     bool eqNeutral = true;
+    int skippedFrames = 0;
+    unsigned profileTick = 0;
+    // Overload governor bookkeeping (see Governor below).
+    bool shed = false;
+    unsigned windowEpoch = 0;
+    uint64_t windowNs = 0;
+    float peakIn = 0, peakOut = 0;  // diagnostics, see InsertChain::peaks
+    float mapped[8]{};
+    uint8_t mappedValues[8]{};
+    int mappedModule = -1;
+    // Frames for which input and output have both stayed below the -90 dBFS
+    // quiet thresholds; drives the FX lite silence bypass.
+    int quiet = 0;
   } slots[2];
+  static constexpr float quietInput = 1e-5f;   // -100 dBFS
+  static constexpr float quietOutput = 3.2e-5f;  // -90 dBFS
+  // How long a slot must stay quiet before it is bypassed. Beads keeps four
+  // seconds of audio and can replay any of it, so it waits for the buffer to
+  // have been overwritten with silence (exactly what full processing would
+  // have done); the others only need their feedback and envelope tails gone.
+  int quietHold(int module) const {
+    return (int)(rate * (module == insertBeads ? 4.2f : 0.5f));
+  }
+  // Keeps free-running modulators in step while a quiet slot is bypassed, so
+  // it wakes in the same place in its cycle as if it had kept running.
+  void skipAdvance(Slot& s, const uint8_t* values, int n) {
+    switch (s.module) {
+      case insertChorus:
+      case insertFlanger:
+      case insertRotary:
+      case insertPhaser:
+        s.phase = fmod(s.phase + 6.28318530718 * insertMap(s.module, 0, values[0]) * n / rate,
+                       6.28318530718);
+        break;
+      case insertTranceGate:
+        s.gateFrames += n;
+        break;
+    }
+  }
   float rate;
   float tickRate = 50;
+  bool realtime = false;
   explicit Impl(float sr) : rate(sr) {
     for (auto& s : slots) {
       s.ott[0] = ott_dsp_new(sr);
@@ -354,6 +394,8 @@ struct InsertChain::Impl {
     s.gateFrames = 0;
     s.gateLevel = 0;
     s.delayWrite = s.holdCounter = 0;
+    s.quiet = 0;
+    s.shed = false;
   }
   float readDelay(const Slot& s, int channel, float samples) const {
     samples = std::max(1.0f, std::min(samples, (float)delaySize - 2));
@@ -515,13 +557,14 @@ struct InsertChain::Impl {
     s.dirty = false;
   }
   void process(Slot& s, float* data, int frames, const uint8_t* values) {
+    const bool lite = fxLiteEnabled();
     float increment = 1.0f / std::max(1.0f, rate * 0.005f);
     for (int offset = 0; offset < frames;) {
       if (s.switching && s.wet <= 0) {
         resetDSP(s, s.pending);
         s.switching = false;
       }
-      float target = s.switching || s.config.bypass || s.module == insertOff ? 0 : 1;
+      float target = s.switching || s.config.bypass || s.shed || s.module == insertOff ? 0 : 1;
       if (s.module == insertOff || (target == 0 && s.wet == 0)) {
         offset = frames;
         continue;
@@ -529,6 +572,7 @@ struct InsertChain::Impl {
       int n = std::min(block, frames - offset);
       if (s.switching) n = std::min(n, std::max(1, (int)ceilf(s.wet / increment)));
       float l[block], r[block];
+      float inputPeak = 0;
       for (int i = 0; i < n; ++i) {
         l[i] = data[2 * (offset + i)];
         r[i] = data[2 * (offset + i) + 1];
@@ -536,11 +580,27 @@ struct InsertChain::Impl {
         if (!std::isfinite(r[i])) r[i] = data[2 * (offset + i) + 1] = 0;
         l[i] = std::max(-32.0f, std::min(32.0f, l[i]));
         r[i] = std::max(-32.0f, std::min(32.0f, r[i]));
+        inputPeak = std::max(inputPeak, std::max(fabsf(l[i]), fabsf(r[i])));
+      }
+      if (lite && !s.switching && target == 1 && s.wet >= 1.0f && s.quiet >= quietHold(s.module) &&
+          inputPeak < quietInput && !(s.module == insertBeads && (values[6] & 128))) {
+        // FX lite silence bypass: nothing in, nothing left ringing out.
+        skipAdvance(s, values, n);
+        s.skippedFrames += n;
+        offset += n;
+        continue;
       }
       parameters(s, s.switching ? s.previous : values);
+      // The mapped values only change when the knobs do (insertMap runs a powf
+      // per exponential parameter), which matters most for 1-frame blocks.
+      const uint8_t* mappedSource = s.switching ? s.previous : values;
+      if (s.mappedModule != s.module || memcmp(mappedSource, s.mappedValues, 8)) {
+        for (int i = 0; i < 8; ++i) s.mapped[i] = insertMap(s.module, i, mappedSource[i]);
+        memcpy(s.mappedValues, mappedSource, 8);
+        s.mappedModule = s.module;
+      }
       float p[8];
-      for (int i = 0; i < 8; ++i)
-        p[i] = insertMap(s.module, i, s.switching ? s.previous[i] : values[i]);
+      memcpy(p, s.mapped, sizeof p);
       float* channels[] = {l, r};
       switch (s.module) {
         case insertBeads:
@@ -559,7 +619,8 @@ struct InsertChain::Impl {
           insert_tape::process(&s.tape, l, r, n);
           break;
         case insertOTT:
-          ott_dsp_process_stereo(s.ott[0], s.ott[1], l, r, l, r, n);
+          if (lite) ott_dsp_process_stereo_lite(s.ott[0], s.ott[1], l, r, l, r, n);
+          else ott_dsp_process_stereo(s.ott[0], s.ott[1], l, r, l, r, n);
           break;
         case insertChorus:
         case insertFlanger:
@@ -609,16 +670,27 @@ struct InsertChain::Impl {
           static const float stageScale[8] = {0.45f, 0.65f, 0.85f, 1.05f,
                                               1.3f, 1.6f, 1.95f, 2.35f};
           int stages = 4 + (int)p[4];
+          // FX lite: the sweep is at most 15 Hz, so the allpass coefficients are
+          // refreshed every 8 samples (4 kHz at 32 kHz) instead of per sample;
+          // the filters themselves still run every sample.
+          float held[2][8];
           for (int i = 0; i < n; ++i) {
             float dryL = l[i], dryR = r[i];
+            const bool refresh = !lite || (i & 7) == 0;
             for (int ch = 0; ch < 2; ++ch) {
               float x = (ch ? r[i] : l[i]) + s.phaserFeedback[ch] * p[2];
               float sidePhase = s.phase + (ch ? 3.14159265359f : 0.0f);
               for (int stage = 0; stage < stages; ++stage) {
-                float sweep = 0.5f + 0.5f * sinf(sidePhase + stage * 0.7f);
-                float cutoff = 120.0f + sweep * p[1] * 4200.0f * stageScale[stage];
-                float normalized = std::min(0.95f, cutoff / rate);
-                float a = (1.0f - normalized) / (1.0f + normalized);
+                float a;
+                if (refresh) {
+                  float sweep = 0.5f + 0.5f * sinf(sidePhase + stage * 0.7f);
+                  float cutoff = 120.0f + sweep * p[1] * 4200.0f * stageScale[stage];
+                  float normalized = std::min(0.95f, cutoff / rate);
+                  a = (1.0f - normalized) / (1.0f + normalized);
+                  held[ch][stage] = a;
+                } else {
+                  a = held[ch][stage];
+                }
                 float y = a * x + s.allpassX[ch][stage] - a * s.allpassY[ch][stage];
                 s.allpassX[ch][stage] = x;
                 s.allpassY[ch][stage] = y;
@@ -720,6 +792,7 @@ struct InsertChain::Impl {
           break;
         }
       }
+      float outputPeak = 0;
       for (int i = 0; i < n; ++i) {
         s.wet = target > s.wet ? std::min(target, s.wet + increment)
                                : std::max(target, s.wet - increment);
@@ -727,16 +800,77 @@ struct InsertChain::Impl {
           float v = c ? r[i] : l[i];
           if (!std::isfinite(v)) v = 0;
           v = std::max(-32.0f, std::min(32.0f, v));
+          outputPeak = std::max(outputPeak, fabsf(v));
           float& dry = data[2 * (offset + i) + c];
           dry += s.wet * (v - dry);
         }
       }
+      s.peakIn = std::max(s.peakIn, inputPeak);
+      s.peakOut = std::max(s.peakOut, outputPeak);
+      if (inputPeak < quietInput && outputPeak < quietOutput) s.quiet = std::min(s.quiet + n, 1 << 28);
+      else s.quiet = 0;
       offset += n;
     }
   }
 };
+namespace {
+// Overload governor. The audio thread is SCHED_FIFO on the single-core RG Nano,
+// so effects that need more than the whole core starve the UI thread and the
+// device looks dead. Every 500 ms of wall time it compares the effects' cost
+// with real time; above 70% it bypasses the slot that cost the most in that
+// window (it fades out, and comes back when the user edits the slot or restarts
+// playback). Only chains marked realtime take part, so offline export, which
+// always runs flat out, is never touched.
+struct Governor {
+  uint64_t windowStart = 0, windowNs = 0, bestNs = 0;
+  unsigned epoch = 1;
+  const void* bestOwner = nullptr;
+  bool* bestShed = nullptr;
+  int bestModule = 0;
+  static constexpr uint64_t windowLength = 500000000ull;
+  double limit = 0.70;
+  void forget(const void* owner) {
+    if (bestOwner == owner) { bestOwner = nullptr; bestShed = nullptr; bestNs = 0; }
+  }
+  void account(const void* owner, unsigned& slotEpoch, uint64_t& slotNs, bool* shed, int module, uint64_t cost,
+               uint64_t now) {
+    if (!windowStart) windowStart = now;
+    if (slotEpoch != epoch) { slotEpoch = epoch; slotNs = 0; }
+    slotNs += cost;
+    windowNs += cost;
+    if (slotNs > bestNs) { bestNs = slotNs; bestOwner = owner; bestShed = shed; bestModule = module; }
+    if (now - windowStart < windowLength) return;
+    if (bestShed && (double)windowNs > limit * (double)(now - windowStart)) {
+      *bestShed = true;
+      fxProfileShed(bestModule);
+    }
+    windowStart = now;
+    windowNs = 0;
+    bestNs = 0;
+    bestOwner = nullptr;
+    bestShed = nullptr;
+    ++epoch;
+  }
+} governor;
+}  // namespace
+
+void fxGovernorSetLimit(double fractionOfRealTime) { governor.limit = fractionOfRealTime; }
+
 InsertChain::InsertChain(float rate) : impl_(new (std::nothrow) Impl(rate)) {}
-InsertChain::~InsertChain() { delete impl_; }
+InsertChain::~InsertChain() {
+  if (impl_) governor.forget(impl_);
+  delete impl_;
+}
+void InsertChain::peaks(int slot, float* input, float* output, bool reset) {
+  if (!impl_ || slot < 0 || slot > 1) return;
+  auto& s = impl_->slots[slot];
+  if (input) *input = s.peakIn;
+  if (output) *output = s.peakOut;
+  if (reset) s.peakIn = s.peakOut = 0;
+}
+void InsertChain::setRealtime(bool on) {
+  if (impl_) impl_->realtime = on;
+}
 bool InsertChain::ready() const {
   return impl_ && impl_->slots[0].ott[0] && impl_->slots[0].ott[1] && impl_->slots[1].ott[0] &&
          impl_->slots[1].ott[1];
@@ -780,7 +914,10 @@ uint16_t InsertChain::sync(const InsertConfig c[2], InsertAutomation* a, bool re
       if (c[slot].values[i] != s.config.values[i] || c[slot].edits[i] != s.config.edits[i]) {
         a->valid[slot] &= ~(1 << i);
         cleared |= 1u << (slot * 8 + i);
+        s.shed = false;  // the user touched it: give it another chance
       }
+    if (c[slot].module != s.config.module || c[slot].selection != s.config.selection) s.shed = false;
+    if (c[slot].bypass != s.config.bypass) s.shed = false;
     s.config = c[slot];
   }
   return cleared;
@@ -793,5 +930,22 @@ bool InsertChain::active() const {
 }
 void InsertChain::process(float* data, int frames, const uint8_t v[2][8]) {
   if (!ready()) return;
-  for (int slot = 0; slot < 2; ++slot) impl_->process(impl_->slots[slot], data, frames, v[slot]);
+  for (int slot = 0; slot < 2; ++slot) {
+    auto& s = impl_->slots[slot];
+    if (s.module == insertOff && !s.switching) continue;
+    const int module = s.module;
+    s.skippedFrames = 0;
+    // Per-sample rendering (fast-LFO projects) would pay two clock reads per
+    // slot per sample, so such calls are timed one in 64 and scaled up.
+    const unsigned weight = frames >= 32 ? 1u : ((++s.profileTick & 63u) == 0 ? 64u : 0u);
+    const uint64_t started = weight ? fxProfileNowNs() : 0;
+    impl_->process(s, data, frames, v[slot]);
+    const uint64_t finished = weight ? fxProfileNowNs() : 0;
+    const uint64_t cost = weight ? (finished - started) * weight : 0;
+    fxProfileInsert(module, cost, frames - s.skippedFrames, s.skippedFrames);
+#ifdef RGNANO_BUILD
+    if (impl_->realtime && weight)
+      governor.account(impl_, s.windowEpoch, s.windowNs, &s.shed, module, cost, finished);
+#endif
+  }
 }

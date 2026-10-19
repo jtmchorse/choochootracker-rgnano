@@ -1,6 +1,7 @@
 #include "common.h"
 #include "corelib/corelib_file.h"
 #include "corelib/corelib_gfx.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,16 +9,59 @@
 #ifdef WEB_BUILD
 #include <emscripten.h>
 #endif
+#ifdef RGNANO_BUILD
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <dlfcn.h>
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
+// Weak no-op so host test builds link; the device platform file defines the real one.
+extern "C" __attribute__((weak)) void rgnanoLog(const char*, ...) {}
+#endif
+
+#ifdef RGNANO_BUILD
+// Logs libm results with inputs the compiler cannot fold. "sys" calls the SDK
+// libc.so through dlsym(RTLD_NEXT), which skips our executable's own vendored
+// musl exp/expf/pow/powf (platforms/rgnano_libm) and so keeps measuring the
+// system library; "override" calls the functions the engine actually uses.
+static void rgnanoLogLibm() {
+  typedef float (*f1_t)(float);
+  typedef float (*f2_t)(float, float);
+  typedef double (*d1_t)(double);
+  f1_t sysExpf = (f1_t)dlsym(RTLD_NEXT, "expf");
+  f2_t sysPowf = (f2_t)dlsym(RTLD_NEXT, "powf");
+  d1_t sysExp = (d1_t)dlsym(RTLD_NEXT, "exp");
+  if (!sysExpf || !sysPowf || !sysExp) {
+    sysExpf = expf; sysPowf = powf; sysExp = exp;  // dlsym failed: log the override twice
+  }
+  volatile float a = -0.0004f, b = -0.1f, c = -0.015f, d = 0.5f;
+  volatile double e = -0.1;
+  rgnanoLog("libm sys: expf(-0.0004)=%.6f expf(-0.1)=%.6f powf(10,-0.015)=%.6f exp(-0.1)=%.6f | "
+            "override: expf(-0.0004)=%.6f expf(-0.1)=%.6f powf(10,-0.015)=%.6f exp(-0.1)=%.6f tanhf(0.5)=%.6f",
+            (double)sysExpf(a), (double)sysExpf(b), (double)sysPowf(10.0f, c), sysExp(e),
+            (double)expf(a), (double)expf(b), (double)powf(10.0f, c), exp(e), (double)tanhf(d));
+}
+#endif
+
 #include <chipnomad_lib.h>
+#include <fx_profile.h>
 
 static char settingsPath[PATH_LENGTH + 32];
 static char autosavePath[PATH_LENGTH + 32];
 static char lineBuffer[1024];
+#ifdef RGNANO_BUILD
+// RG Nano: one Cortex-A7. 32 kHz is what the speaker/USB DAC path was proven
+// at, and every engine renders correctly at it.
+static const int kAudioSampleRate = 32000;
+#else
 static const int kAudioSampleRate = 48000;
+#endif
 
 static int defaultAudioBufferSize(void) {
 #ifdef WEB_BUILD
   return 1024;
+#elif defined(RGNANO_BUILD)
+  return 1024;  // 32 ms at 32 kHz: 512 (16 ms) crackled on the single Cortex-A7 core
 #elif defined(PORTMASTER_BUILD)
   return 512;
 #elif defined(ANDROID_BUILD) || defined(DESKTOP_BUILD)
@@ -28,7 +72,11 @@ static int defaultAudioBufferSize(void) {
 }
 
 static int normalizeAudioBufferSize(int size) {
+#ifdef RGNANO_BUILD
+  static const int sizes[] = {32, 64, 128, 256, 512, 1024, 2048};
+#else
   static const int sizes[] = {32, 64, 128, 256, 512, 1024};
+#endif
   int closest = sizes[0];
   long long closestDistance = llabs((long long)closest - size);
   for (int candidate : sizes) {
@@ -44,6 +92,7 @@ static int normalizeAudioBufferSize(int size) {
 AppSettings appSettings;
 
 void initDefaultAppSettings(void) {
+  appSettings.keymapVersion = 0;
   appSettings.screenWidth = 0; // 0 to auto-detect resolution
   appSettings.screenHeight = 0;
   appSettings.audioSampleRate = kAudioSampleRate;
@@ -57,7 +106,16 @@ void initDefaultAppSettings(void) {
 #else
   appSettings.keyRepeatSpeed = 2;
 #endif
+#ifdef RGNANO_BUILD
+  // RG Nano: 50% (-6 dB) of headroom ahead of the master limiter. Summed
+  // 8-track material (a sliced break plus synths) peaks 6 to 8 dB over full
+  // scale; at -6 dB the limiter is nearly transparent instead of pumping.
+  // The Mixer screen raises it back up to 100%.
+  appSettings.mixVolume = 0.5f;
+#else
   appSettings.mixVolume = 1.0f;
+#endif
+  appSettings.masterLimiter = chipnomadDefaultMasterLimiter();  // on for RG Nano, off elsewhere
   appSettings.quality = (int)ChipNomadQuality::medium;
   appSettings.braidsBits = 6;
   appSettings.braidsDrift = 0;
@@ -72,6 +130,18 @@ void initDefaultAppSettings(void) {
   appSettings.waveformRefreshHz = 60;
 #else
   appSettings.waveformRefreshHz = 30;
+#endif
+  appSettings.playFps = 20;
+#ifdef RGNANO_BUILD
+  appSettings.fxLite = 1;
+#else
+  appSettings.fxLite = 0;
+#endif
+  fxLiteSet(appSettings.fxLite != 0);
+#ifdef RGNANO_BUILD
+  appSettings.trackView = 1;
+#else
+  appSettings.trackView = 0;
 #endif
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
@@ -109,7 +179,9 @@ void initDefaultAppSettings(void) {
   strncpy(appSettings.ayWavetablePath, "/AY_wavetables", PATH_LENGTH);
   strncpy(appSettings.scwfPath, "/waveforms", PATH_LENGTH);
   strncpy(appSettings.srWavetablePath, "/SR_wavetables", PATH_LENGTH);
-#elif defined(ANDROID_BUILD)
+#elif defined(ANDROID_BUILD) || defined(RGNANO_BUILD)
+  // RG Nano: the OPK mount is read-only, so every user-writable directory
+  // lives in the seeded /mnt/ChooChooTracker workspace (see rgnano_platform.cpp).
   char workspace[PATH_LENGTH];
   if (fileGetDefaultDirectory(workspace, sizeof(workspace)) != 0) strncpy(workspace, ".", sizeof(workspace));
   snprintf(appSettings.projectPath, sizeof(appSettings.projectPath), "%s/projects", workspace);
@@ -147,7 +219,7 @@ void initDefaultAppSettings(void) {
   appSettings.ayWavetablePath[PATH_LENGTH] = '\0';
   appSettings.scwfPath[PATH_LENGTH] = '\0';
   appSettings.srWavetablePath[PATH_LENGTH] = '\0';
-#ifdef ANDROID_BUILD
+#if defined(ANDROID_BUILD) || defined(RGNANO_BUILD)
   snprintf(appSettings.pitchTablePath, sizeof(appSettings.pitchTablePath), "%s/pitch-tables", workspace);
   snprintf(appSettings.instrumentPath, sizeof(appSettings.instrumentPath), "%s/instruments", workspace);
   snprintf(appSettings.themePath, sizeof(appSettings.themePath), "%s/themes", workspace);
@@ -194,6 +266,7 @@ int settingsSave(void) {
   FILE* file = fopen(settingsPath, "w");
   if (file == NULL) return 1;
 
+  fprintf(file, "keymapVersion: %d\n", appSettings.keymapVersion);
   fprintf(file, "screenWidth: %d\n", appSettings.screenWidth);
   fprintf(file, "screenHeight: %d\n", appSettings.screenHeight);
   fprintf(file, "audioSampleRate: %d\n", appSettings.audioSampleRate);
@@ -203,6 +276,7 @@ int settingsSave(void) {
   fprintf(file, "keyRepeatDelay: %d\n", appSettings.keyRepeatDelay);
   fprintf(file, "keyRepeatSpeed: %d\n", appSettings.keyRepeatSpeed);
   fprintf(file, "mixVolume: %f\n", appSettings.mixVolume);
+  fprintf(file, "masterLimiter: %d\n", appSettings.masterLimiter);
   fprintf(file, "quality: %d\n", appSettings.quality);
   fprintf(file, "braidsBits: %d\n", appSettings.braidsBits);
   fprintf(file, "braidsDrift: %d\n", appSettings.braidsDrift);
@@ -212,6 +286,9 @@ int settingsSave(void) {
   fprintf(file, "quickHelpReleaseSeen: %d\n", appSettings.quickHelpReleaseSeen);
   fprintf(file, "ayWavetableLfoView: %d\n", appSettings.ayWavetableLfoView);
   fprintf(file, "waveformRefreshHz: %d\n", appSettings.waveformRefreshHz);
+  fprintf(file, "playFps: %d\n", appSettings.playFps);
+  fprintf(file, "fxLite: %d\n", appSettings.fxLite);
+  fprintf(file, "trackView: %d\n", appSettings.trackView);
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -300,7 +377,15 @@ int settingsLoad(void) {
 #endif
 
   FILE* file = fopen(settingsPath, "r");
-  if (file == NULL) return 1;
+  if (file == NULL) {
+#ifdef RGNANO_BUILD
+    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d (defaults)", settingsPath,
+              (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+    rgnanoLogLibm();
+#endif
+    return 1;
+  }
+  bool sawMasterLimiter = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
     char* line = lineBuffer;
@@ -311,7 +396,9 @@ int settingsLoad(void) {
       len--;
     }
 
-    if (strncmp(line, "bootScreenNight: ", 17) == 0) {
+    if (strncmp(line, "keymapVersion: ", 15) == 0) {
+      sscanf(line + 15, "%d", &appSettings.keymapVersion);
+    } else if (strncmp(line, "bootScreenNight: ", 17) == 0) {
       int enabled;
       if (sscanf(line + 17, "%d", &enabled) == 1 && (enabled == 0 || enabled == 1))
         appSettings.bootScreenNight = (uint8_t)enabled;
@@ -342,6 +429,10 @@ int settingsLoad(void) {
       sscanf(line + 16, "%d", &appSettings.keyRepeatSpeed);
     } else if (strncmp(line, "mixVolume: ", 11) == 0) {
       sscanf(line + 11, "%f", &appSettings.mixVolume);
+    } else if (strncmp(line, "masterLimiter: ", 15) == 0) {
+      int v = 0;
+      sawMasterLimiter = true;
+      if (sscanf(line + 15, "%d", &v) == 1) appSettings.masterLimiter = v ? 1 : 0;
     } else if (strncmp(line, "quality: ", 9) == 0) {
       sscanf(line + 9, "%d", &appSettings.quality);
     } else if (strncmp(line, "braidsBits: ", 12) == 0) {
@@ -360,6 +451,12 @@ int settingsLoad(void) {
       sscanf(line + 20, "%d", &appSettings.ayWavetableLfoView);
     } else if (strncmp(line, "waveformRefreshHz: ", 19) == 0) {
       sscanf(line + 19, "%d", &appSettings.waveformRefreshHz);
+    } else if (strncmp(line, "playFps: ", 9) == 0) {
+      sscanf(line + 9, "%d", &appSettings.playFps);
+    } else if (strncmp(line, "fxLite: ", 8) == 0) {
+      sscanf(line + 8, "%d", &appSettings.fxLite);
+    } else if (strncmp(line, "trackView: ", 11) == 0) {
+      sscanf(line + 11, "%d", &appSettings.trackView);
     } else if (strncmp(line, "stickLiveMode: ", 15) == 0) {
       appSettings.stickLiveMode = strcmp(line + 15, "FREE") == 0 ? StickLiveMode::free :
         strcmp(line + 15, "TOGGLE") == 0 ? StickLiveMode::toggle : StickLiveMode::hold;
@@ -491,6 +588,20 @@ int settingsLoad(void) {
   }
 
   fclose(file);
+#ifdef RGNANO_BUILD
+  // One-time migration for a settings.txt written before the master limiter
+  // existed (it has no masterLimiter line): the old 100% default becomes the
+  // new 50% default. A volume the user lowered on purpose is left alone, and
+  // the next save writes masterLimiter so this never runs twice.
+  const bool migrated = !sawMasterLimiter && appSettings.mixVolume >= 0.99f;
+  if (migrated) appSettings.mixVolume = 0.5f;
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
+            migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
+            appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+  rgnanoLogLibm();
+#else
+  (void)sawMasterLimiter;
+#endif
   appSettings.audioSampleRate = kAudioSampleRate;
   // 4,906 was the legacy platform default; other values are rounded to the
   // nearest choice exposed by the audio settings screen.
@@ -504,6 +615,11 @@ int settingsLoad(void) {
   if (appSettings.braidsDrift < 0 || appSettings.braidsDrift > 4) appSettings.braidsDrift = 0;
   if (appSettings.braidsSignature < 0 || appSettings.braidsSignature > 4) appSettings.braidsSignature = 0;
   if (appSettings.waveformRefreshHz < 1 || appSettings.waveformRefreshHz > 60) appSettings.waveformRefreshHz = 30;
+  if (appSettings.playFps != 10 && appSettings.playFps != 15 && appSettings.playFps != 20 && appSettings.playFps != 30)
+    appSettings.playFps = 20;
+  appSettings.fxLite = appSettings.fxLite ? 1 : 0;
+  appSettings.trackView = appSettings.trackView ? 1 : 0;
+  fxLiteSet(appSettings.fxLite != 0);
   for (int i = 0; i < MIDI_CHANNEL_COUNT; i++) {
     if (appSettings.midiChannelInstrument[i] < -1 || appSettings.midiChannelInstrument[i] >= PROJECT_MAX_INSTRUMENTS)
       appSettings.midiChannelInstrument[i] = -1;

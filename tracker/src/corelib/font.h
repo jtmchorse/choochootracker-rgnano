@@ -9,6 +9,7 @@ extern "C" {
 
 extern "C" {
 
+extern const uint8_t font8x12[];
 extern const uint8_t font12x16[];
 extern const uint8_t font16x24[];
 extern const uint8_t font24x36[];

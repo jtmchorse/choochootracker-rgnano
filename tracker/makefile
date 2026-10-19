@@ -61,6 +61,11 @@ PortMaster PortMaster-deploy:
 MiyooPorts MiyooPorts-deploy:
 	$(MAKE) -f Makefile.miyooports $@
 
+# Anbernic RG Nano (FunKey-OS OPK); build in the rgnano-build container
+.PHONY: RGNano RGNano-deploy
+RGNano RGNano-deploy:
+	$(MAKE) -f Makefile.rgnano $@
+
 # RG35xx
 .PHONY: RG35xx RG35xx-deploy
 RG35xx RG35xx-deploy:

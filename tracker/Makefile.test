@@ -11,8 +11,15 @@ endif
 LDFLAGS = -lm -pthread
 include Makefile.native-chip-flags
 
+# RG Nano memory caps (RGNANO_BUILD) get their own object directory so both
+# variants can be built side by side: make -f Makefile.test heap-probe RGNANO=1
+ifdef RGNANO
+override CFLAGS += -DRGNANO_BUILD
+BUILD_DIR = build/tests-rgnano
+else
 # Build directory
 BUILD_DIR = build/tests
+endif
 .DEFAULT_GOAL := all
 
 # Include paths
@@ -117,7 +124,7 @@ ALL_SOURCES = $(TEST_SOURCES) $(COMMON_SOURCES) $(MOCK_SOURCES)
 MEASURE_SOURCES = tests/render_engine_measurements.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES)
 BENCHMARK_SOURCES = tests/benchmark_song.cpp $(COMMON_SOURCES) $(MOCK_SOURCES)
 ALL_COMPILE_SOURCES = $(sort $(ALL_SOURCES) $(MEASURE_SOURCES) $(BENCHMARK_SOURCES))
-ALL_COMPILE_SOURCES += tests/beads_lifetime.cpp
+ALL_COMPILE_SOURCES += tests/beads_lifetime.cpp tests/heap_probe.cpp tests/voice_alloc_check.cpp tests/master_measure.cpp
 
 # Compile each translation unit separately so -j can use every core and
 # unchanged files stay cached between test runs.
@@ -237,3 +244,55 @@ chip-auditions: $(BUILD_DIR)/chip_auditions
 # Host tools own voice objects too; their header dependencies must participate
 # in incremental rebuilds when a native adapter's layout changes.
 -include $(FACTORY_OBJECTS:.o=.d) $(CHIP_BENCH_OBJECTS:.o=.d) $(CHIP_AUDITION_OBJECTS:.o=.d)
+
+# Heap probe and lazy-voice allocation checks (P2 "B Memory"). The probe
+# replaces malloc with a counting allocator, so it never joins the main suite.
+HEAP_PROBE_EXECUTABLE = $(BUILD_DIR)/heap_probe
+HEAP_PROBE_OBJECTS = $(foreach source,tests/heap_probe.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(HEAP_PROBE_EXECUTABLE): $(HEAP_PROBE_OBJECTS)
+	@$(CXX) $(HEAP_PROBE_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: heap-probe
+heap-probe: $(HEAP_PROBE_EXECUTABLE)
+
+# Lazy-voice checks: bit-exact render vs eager, and an allocator trap that
+# aborts if anything allocates inside chipnomadRender() in realtime mode.
+VOICE_ALLOC_EXECUTABLE = $(BUILD_DIR)/voice_alloc_check
+VOICE_ALLOC_OBJECTS = $(foreach source,tests/voice_alloc_check.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(VOICE_ALLOC_EXECUTABLE): $(VOICE_ALLOC_OBJECTS)
+	@$(CXX) $(VOICE_ALLOC_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: voice-alloc-check
+voice-alloc-check: $(VOICE_ALLOC_EXECUTABLE)
+	@$(VOICE_ALLOC_EXECUTABLE)
+-include $(HEAP_PROBE_OBJECTS:.o=.d) $(VOICE_ALLOC_OBJECTS:.o=.d)
+
+# Offline master-bus measurement / bounce (RG Nano clipping work):
+#   make -f Makefile.test master-measure [RGNANO=1]
+#   $(BUILD_DIR)/master_measure "packaging/common/projects/psy.cct" 32000 60 1 out.wav
+MEASURE_MASTER_EXECUTABLE = $(BUILD_DIR)/master_measure
+MEASURE_MASTER_OBJECTS = $(foreach source,tests/master_measure.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(MEASURE_MASTER_EXECUTABLE): $(MEASURE_MASTER_OBJECTS)
+	@$(CXX) $(MEASURE_MASTER_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: master-measure
+master-measure: $(MEASURE_MASTER_EXECUTABLE)
+-include $(MEASURE_MASTER_OBJECTS:.o=.d)
+
+# RG Nano FX CPU profiler / offline renderer (tests/fx_profile.cpp). Build
+# optimised: make -f Makefile.test fx-profile BUILD_DIR=build/fxprof \
+#   CFLAGS='-std=c++17 -O2 -w -DNDEBUG -DTEST -DTEST_PORTMASTER_INPUT'
+FXPROF_OBJECTS = $(foreach source,tests/fx_profile.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(eval $(call compile_source,tests/fx_profile.cpp))
+$(BUILD_DIR)/fx_profile: $(FXPROF_OBJECTS)
+	@$(CXX) $(FXPROF_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: fx-profile
+fx-profile: $(BUILD_DIR)/fx_profile
+-include $(FXPROF_OBJECTS:.o=.d)
+
+# On-device cost battery (tests/bench_device.cpp), built for the RG Nano by
+# packaging/rgnano/make-bench-opk.sh, or on a PC to produce the x86 estimate table.
+BENCHDEV_OBJECTS = $(foreach source,tests/bench_device.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))
+$(eval $(call compile_source,tests/bench_device.cpp))
+$(BUILD_DIR)/bench_device: $(BENCHDEV_OBJECTS)
+	@$(CXX) $(BENCHDEV_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: bench-device
+bench-device: $(BUILD_DIR)/bench_device
+-include $(BENCHDEV_OBJECTS:.o=.d)

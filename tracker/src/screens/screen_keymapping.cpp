@@ -24,6 +24,13 @@ static InputCode captureIgnore = {InputDeviceType::none, 0};
 static void fullRedraw(void);
 static void applyPendingCapture(void);
 
+// RG Nano has no sticks or L2/R2: the remap screen offers no motion record/erase.
+#ifdef RGNANO_BUILD
+#define KEYMAP_ROWS 9
+#else
+#define KEYMAP_ROWS 11
+#endif
+
 static const char* buttonNames[] = {
   "Up", "Down", "Left", "Right", "Edit (A)", "Opt (B)", "Play", "Shift", "Stick live", "Motion rec", "Motion del"
 };
@@ -127,7 +134,7 @@ static void onRawInput(InputCode input, int isDown) {
 }
 
 static int getColumnCount(int row) {
-  if (row < 11) return 3;
+  if (row < KEYMAP_ROWS) return 3;
   return 1;
 }
 
@@ -136,7 +143,7 @@ static void drawStatic(void) {
   gfxPrint(0, 0, "Key Mapping");
 
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  for (int i = 0; i < 11; i++) {
+  for (int i = 0; i < KEYMAP_ROWS; i++) {
     gfxPrint(0, i + 2, buttonNames[i]);
   }
 
@@ -151,17 +158,17 @@ static void drawStatic(void) {
 }
 
 static void drawCursor(int col, int row) {
-  if (row < 11) {
+  if (row < KEYMAP_ROWS) {
     InputCode* slot = getKeySlot(row, col);
     int width = slot ? strlen(inputGetKeyName(*slot)) : 3;
     gfxCursor(11 + col * 8, row + 2, width);
-  } else if (row == 11) {
+  } else if (row == KEYMAP_ROWS) {
     gfxCursor(0, 14, 4);
   }
 }
 
 static void drawField(int col, int row, CellState state) {
-  if (row < 11) {
+  if (row < KEYMAP_ROWS) {
     gfxClearRect(11 + col * 8, row + 2, 7, 1);
     InputCode* slot = getKeySlot(row, col);
     if (slot) {
@@ -179,7 +186,7 @@ static void drawField(int col, int row, CellState state) {
       trimmed[7] = '\0';
       gfxPrint(11 + col * 8, row + 2, trimmed);
     }
-  } else if (row == 11) {
+  } else if (row == KEYMAP_ROWS) {
     gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
     gfxPrint(0, 13, "Done");
   }
@@ -192,7 +199,7 @@ static void drawColHeader(int col, CellState state) {
 }
 
 static int onEdit(int col, int row, CellEditAction action) {
-  if (row < 11) {
+  if (row < KEYMAP_ROWS) {
     if (action == CellEditAction::tap) {
       captureRow = row;
       captureCol = col;
@@ -211,7 +218,7 @@ static int onEdit(int col, int row, CellEditAction action) {
       }
       return 1;
     }
-  } else if (row == 11 && action == CellEditAction::tap) {
+  } else if (row == KEYMAP_ROWS && action == CellEditAction::tap) {
     settingsSave();
     // The key that confirms Done can have just been remapped. Do not carry
     // its old logical state into Settings: on gptokeyb/PortMaster the release
@@ -225,7 +232,7 @@ static int onEdit(int col, int row, CellEditAction action) {
 }
 
 static ScreenData screenKeyMappingData = {
-  .rows = 12,
+  .rows = KEYMAP_ROWS + 1,
   .cursorRow = 0,
   .cursorCol = 0,
   .topRow = 0,
@@ -271,7 +278,7 @@ static void applyPendingCapture(void) {
     InputCode previous = *slot;
 
     // Find conflicting slot and swap
-    for (int row = 0; row < 11; row++) {
+    for (int row = 0; row < KEYMAP_ROWS; row++) {
       for (int col = 0; col < 3; col++) {
         if (row == captureRow && col == captureCol) continue;
         InputCode* other = getKeySlot(row, col);
@@ -296,9 +303,9 @@ static int onInput(int isKeyDown, int keys, int tapCount) {
   // Keep a reliable exit after remapping Edit and Opt. This is especially
   // useful with PortMaster's keyboard bridge, where a just-swapped pair can
   // otherwise make the expected confirmation button ambiguous.
-  if (isKeyDown && screenKeyMappingData.cursorRow == 11 &&
+  if (isKeyDown && screenKeyMappingData.cursorRow == KEYMAP_ROWS &&
       (keys == keyEdit || keys == keyOpt)) {
-    return onEdit(0, 11, CellEditAction::tap);
+    return onEdit(0, KEYMAP_ROWS, CellEditAction::tap);
   }
 
   // 5 taps on any unmapped key resets to defaults

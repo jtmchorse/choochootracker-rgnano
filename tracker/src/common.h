@@ -53,6 +53,7 @@ enum class TrackVisualMode : uint8_t { detailed, audio };
 struct TrackVisualSettings { TrackVisualMode mode = TrackVisualMode::detailed; };
 
 struct AppSettings {
+  int keymapVersion;  // settings.txt "keymapVersion": one-time key map migrations (RG Nano)
   int screenWidth;
   int screenHeight;
   int audioSampleRate;
@@ -62,6 +63,7 @@ struct AppSettings {
   int keyRepeatDelay;
   int keyRepeatSpeed;
   float mixVolume;
+  int masterLimiter;  // settings.txt "masterLimiter": 1 = peak limiter on the master bus
   int quality;
   int braidsBits;
   int braidsDrift;
@@ -71,6 +73,15 @@ struct AppSettings {
   int quickHelpReleaseSeen;
   int ayWavetableLfoView;
   int waveformRefreshHz;
+  // RG Nano: screen presents per second while the song plays (10/15/20/30).
+  // The sequencer tick and input polling do not depend on it. Stopped is 30.
+  int playFps;
+  // "FX lite" (see chipnomad_lib/fx_profile.h): cheaper effect rendering. 1 on
+  // RG Nano by default, 0 elsewhere. 0 renders every effect at full quality.
+  int fxLite;
+  // Song screen track layout: 0 = all tracks on one page, 1 = "4x2" (4 tracks
+  // per page, two pages). Default 1 on RG Nano, 0 elsewhere. settings.txt "trackView".
+  int trackView;
   // Port indices are runtime-only (not saved): enumeration order isn't
   // stable across reboots/replugging. -1 = off. What IS saved is each
   // device's name (below); appSetup() resolves it back to a live index on

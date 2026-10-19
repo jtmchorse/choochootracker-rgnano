@@ -52,9 +52,30 @@ struct PlaybackStatus {
   uint8_t isPlaying;
 };
 class MasterEffects;
+class MasterLimiter;
 
 #define AUDIO_OVERLOAD_COOLDOWN_FRAMES 5
 #define PITCH_CONFLICT_COOLDOWN_FRAMES 5
+
+/**
+* Voice allocation policy (RG Nano memory work).
+*
+* eager         every voice type for every track/chord slot is built in
+*               chipnomadCreate(), as upstream always did. About 110 MB.
+* lazyOffline   voices are built on first use. A render call that meets a
+*               missing voice builds it on the calling thread (tests, export,
+*               headless render). Never use with a live audio callback.
+* lazyRealtime  voices are built on first use by the UI thread only (project
+*               refresh, playback/preview commands, InitChips). The render
+*               call never allocates: a voice that is still missing renders
+*               silence and sets state->voiceMissing for the UI thread.
+*
+* chipnomadDefaultVoiceMode() is lazyRealtime under RGNANO_BUILD and eager on
+* every other platform, so existing platforms are unchanged.
+*/
+#define CHIPNOMAD_HAS_VOICE_MODE 1
+enum class ChipNomadVoiceMode : uint8_t { eager = 0, lazyOffline = 1, lazyRealtime = 2 };
+ChipNomadVoiceMode chipnomadDefaultVoiceMode(void);
 
 /**
 * Chip factory function type
@@ -118,6 +139,22 @@ struct ChipNomadState {
   int opllPreviewTrack;
   OPLLVoice* opllVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   SinteredVoice* sinteredVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
+  // Lazy voice allocation. The voice arrays above stay plain pointers; in the
+  // lazy modes a (track, family) set of CHORD_MAX_VOICES objects is published
+  // by one seq_cst store to slot 0 (slots 1..3 are written first), and the
+  // audio thread treats slot 0 == NULL as "not built". voiceMask,
+  // voiceExtra, previewReady and the retire list belong to the UI thread.
+  ChipNomadVoiceMode voiceMode;
+  uint32_t voiceMask[PROJECT_MAX_TRACKS];   // families currently built per track
+  uint32_t voiceExtra[PROJECT_MAX_TRACKS];  // families pinned by direct commands
+  uint32_t voiceMissing[PROJECT_MAX_TRACKS]; // audio -> UI: families met missing, per track (atomic)
+  uint32_t renderSeq;                       // odd while chipnomadRender runs (atomic)
+  uint32_t voiceAllocFailures;
+  uint8_t braidsSettingsValid;
+  uint8_t braidsBits, braidsDrift, braidsSignature;
+  uint32_t braidsSeed;
+  struct VoiceRetired { void* object; void (*destroy)(void*); uint32_t seq; } voiceRetired[96];
+  int voiceRetiredCount;
   // MIDI-Out active-note tracking, Program/Bank cache, and MIDI-In routing
   // state now live behind the generic MIDI router (see midi/midi_router.h) -
   // one instance per ChipNomadState, so independent engine states (e.g. one
@@ -125,6 +162,12 @@ struct ChipNomadState {
   MidiRouterState* midiRouter;
   VoiceMonitor voiceMonitors[PROJECT_MAX_TRACKS];
   MasterEffects* masterEffects;
+  // Master bus limiter (synth/master_limiter.h). masterLimiterEnabled is
+  // written by the UI thread, read once per chunk by the audio thread, which
+  // resets the limiter on the off->on edge itself (masterLimiterActive).
+  MasterLimiter* masterLimiter;
+  int masterLimiterEnabled;
+  int masterLimiterActive;
   AudioCommandQueue* audioCommands;
   AudioMonitor* audioMonitor;
   int benchmarkBypassPan;
@@ -136,6 +179,19 @@ struct ChipNomadState {
 * @return Pointer to initialized state, or NULL on failure
 */
 ChipNomadState* chipnomadCreate(void);
+ChipNomadState* chipnomadCreateEx(ChipNomadVoiceMode voiceMode);
+
+/**
+* UI-thread voice management for the lazy modes (no-ops in eager mode).
+* chipnomadPrepareVoices builds every voice that state->project can reach from
+* its song (and prunes idle voices of types no track uses any more). It is
+* called by chipnomadInitChips, chipnomadQueueProjectRefresh and the playback
+* and preview queue functions, and by chipnomadGetPlaybackStatus when the
+* audio thread reported a missing voice. Call it directly after editing
+* state->project when not using the queue API (tests, headless tools).
+* Returns the number of voice sets that could not be built (out of memory).
+*/
+int chipnomadPrepareVoices(ChipNomadState* state);
 
 /**
 * Destroy ChipNomad state and cleanup resources
@@ -208,6 +264,25 @@ int chipnomadRender(ChipNomadState* state, float* buffer, int samples);
 * @param quality Quality level
 */
 void chipnomadSetQuality(ChipNomadState* state, ChipNomadQuality quality);
+
+/**
+* Master limiter on the final stereo bus (after mixVolume and the master
+* effects, before the host converts to integer). Off keeps the render
+* bit-identical to a build without it. A fresh state has it off (tests are
+* unaffected); the WAV exporter (ExporterWAV, non-stem) applies the same
+* limiter, gated on appSettings.masterLimiter, so an export does not clip
+* where the device output did not; stems stay unlimited. The app applies appSettings.masterLimiter,
+* whose default is chipnomadDefaultMasterLimiter(): on for RGNANO_BUILD, off
+* elsewhere.
+*
+* state->audioOverload keeps its meaning with the limiter on or off: the bus
+* exceeded full scale before limiting, i.e. it WOULD have clipped.
+*/
+int chipnomadDefaultMasterLimiter(void);
+void chipnomadSetMasterLimiter(ChipNomadState* state, int enabled);
+/** Reads and clears the gain-reduction counters. Returns 0 if unavailable. */
+/** meanReduction = average of (1 - gain) over all frames. */
+int chipnomadTakeLimiterStats(ChipNomadState* state, float* minGain, float* meanReduction, uint32_t* engagedFrames, uint32_t* totalFrames);
 void chipnomadSetBraidsSettings(ChipNomadState* state, uint8_t bits,
                                uint8_t drift, uint8_t signature,
                                uint32_t signatureSeed);

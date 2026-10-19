@@ -22,6 +22,12 @@ InputCode appCurrentInput(void);
 
 // Raw input callback for key mapping screen
 extern void (*inputRawCallback)(InputCode input, int isDown);
+// True if the app wants this keyboard key: the key mapping screen is capturing, or the key is mapped.
+int appInputWantsKey(InputCode input);
+// Nonzero while the sequencer is playing (UI frame cap, RG Nano audio stats).
+int appIsPlaying(void);
+// Master limiter gain-reduction counters since the last call (RG Nano audio stats).
+int appTakeLimiterStats(float* minGain, float* meanReduction, unsigned* engagedFrames, unsigned* totalFrames);
 
 
 #ifdef __cplusplus

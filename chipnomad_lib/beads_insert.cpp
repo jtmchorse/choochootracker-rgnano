@@ -1,4 +1,5 @@
 #include "beads_insert.h"
+#include "fx_profile.h"
 #include "external/mutable/beads/dsp/processor.h"
 #include "external/mutable/beads/dsp/host_random.h"
 #include <algorithm>
@@ -60,7 +61,15 @@ struct BeadsInsert::Impl {
   bool frozen[quantum]{};
   int fill = 0, read = 0, write = 0, available = 0;
   float hostRate, mix = 0;
+  // FX lite on a 32 kHz host: the 16-bit digital engine runs at 32 kHz and the
+  // 48 kHz rate converters drop out. Re-evaluated on every reset().
+  bool direct = false;
   uint32_t random = 0x42656164;
+  static constexpr int liteGrains = 16;
+  // The 16-grain cap raises each grain's share (amplitude is 1/sqrt(active)),
+  // so the lite wet signal measures 0.1 to 2 dB hotter (median 0.9 dB) than the
+  // full engine on identical input. This trims it back.
+  static constexpr float liteWetGain = 0.9f;
   explicit Impl(float sr) : hostRate(std::clamp(sr, 8000.0f, 192000.0f)) {
     input.init(hostRate, 48000);
     output.init(48000, hostRate);
@@ -73,7 +82,9 @@ struct BeadsInsert::Impl {
     std::memset(&processor, 0, sizeof(processor));
     new (&processor) beads::Processor;
     uint8_t* banks[] = {recording[0], recording[1], recording[2]};
-    processor.Init(banks, reverb);
+    direct = fxLiteEnabled() && std::fabs(hostRate - beads::Processor::kLiteSampleRate) < 1.0f;
+    processor.Init(banks, reverb,
+        direct ? beads::Processor::MEDIA_DIGITAL_LITE : beads::Processor::MEDIA_DIGITAL, liteGrains);
     input.reset();
     output.reset();
     std::memset(queue, 0, sizeof(queue));
@@ -99,22 +110,33 @@ struct BeadsInsert::Impl {
     beads::HostRandom::Scope randomScope(random);
     processor.Process(beads::SEED_BUTTON_STATE_LOCKED, nullptr,
         frozen, density, controls, balance, in, out, quantum);
-    for (const auto& frame : out) output.push(frame, [this](beads::FloatFrame f) {
+    auto emit = [this](beads::FloatFrame f) {
       queue[write] = f;
       write = (write + 1) & 255;
       ++available;
-    });
+    };
+    if (direct) {
+      for (auto frame : out) {
+        frame.l *= liteWetGain;
+        frame.r *= liteWetGain;
+        emit(frame);
+      }
+    } else {
+      for (const auto& frame : out) output.push(frame, emit);
+    }
     fill = 0;
   }
   void process(float* l, float* r, int frames, const float* p) {
     float step = 1.0f / (hostRate * .005f);
     for (int i = 0; i < frames; ++i) {
       beads::FloatFrame source{std::clamp(l[i], -1.0f, 1.0f), std::clamp(r[i], -1.0f, 1.0f)};
-      input.push(source, [this, p](beads::FloatFrame f) {
+      auto feed = [this, p](beads::FloatFrame f) {
         in[fill] = f;
         frozen[fill] = (int(p[6]) & 128) != 0;
         if (++fill == quantum) render(p);
-      });
+      };
+      if (direct) feed(source);
+      else input.push(source, feed);
       beads::FloatFrame wet{};
       if (available) {
         wet = queue[read];

@@ -485,7 +485,7 @@ int exportCommonOnEdit(int col, int row, CellEditAction action) {
     char exportPath[1024];
     generateExportPath(exportPath, sizeof(exportPath), "wav");
 
-    currentExporter = new ExporterWAV(exportPath, &chipnomadState->project, startRow, sampleRates[currentSampleRateIndex], bitDepths[currentBitDepthIndex], appSettings.mixVolume);
+    currentExporter = new ExporterWAV(exportPath, &chipnomadState->project, startRow, sampleRates[currentSampleRateIndex], bitDepths[currentBitDepthIndex], appSettings.mixVolume, false, appSettings.masterLimiter);
     if (currentExporter) {
       strncpy(currentExportPath, exportPath, sizeof(currentExportPath) - 1);
       currentExportPath[sizeof(currentExportPath) - 1] = 0;
@@ -509,7 +509,7 @@ int exportCommonOnEdit(int col, int row, CellEditAction action) {
     char basePath[512];
     generateStemsExportPath(basePath, sizeof(basePath));
 
-    currentExporter = new ExporterWAV(basePath, &chipnomadState->project, startRow, sampleRates[currentSampleRateIndex], bitDepths[currentBitDepthIndex], appSettings.mixVolume, true);
+    currentExporter = new ExporterWAV(basePath, &chipnomadState->project, startRow, sampleRates[currentSampleRateIndex], bitDepths[currentBitDepthIndex], appSettings.mixVolume, true, appSettings.masterLimiter);
     if (currentExporter) {
       int trackCount = chipnomadState->project.tracksCount;
       strncpy(currentExportPath, basePath, sizeof(currentExportPath) - 1);
@@ -636,7 +636,7 @@ static int exportStartBounceNamed(const ExportSelection& selection, const char* 
 
   ExporterSelectionWAV* exporter = new ExporterSelectionWAV(bouncePath, &chipnomadState->project, selection,
                                                             sampleRate, bitDepth,
-                                                            appSettings.mixVolume);
+                                                            appSettings.mixVolume, appSettings.masterLimiter);
   if (!exporter) return 0;
 
   currentExporter = exporter;
