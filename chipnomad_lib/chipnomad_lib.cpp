@@ -77,6 +77,28 @@ template <typename T> static inline T* gateLoad(T* const* slot) {
   return __atomic_load_n(const_cast<T**>(slot), __ATOMIC_SEQ_CST);
 }
 
+// Audio thread: acquire a whole (track, family) set. Slot 0 is BOTH the gate
+// and voice 0, and the UI thread may null it at any moment (prune), so a
+// per-track `gateLoad(&voices[0])` test followed by `voices[0]->...` re-reads
+// a pointer that can have become NULL in between (voice_alloc_check [6]
+// segfault). Read slot 0 exactly once into a local, then take slots 1..3,
+// which keep their (retired, not yet freed while a render runs) pointers.
+// There is deliberately no `state->xVoices[0][0]` early return in the
+// update*Voices functions: lazy allocation only builds a family on the tracks
+// that use it, so testing track 0 skipped every other track (a held drone).
+// The per-track snapshot below must come before ANY dereference of the set.
+template <typename T> static inline bool gateSnap(T* const* slots, T* out[CHORD_MAX_VOICES]) {
+  T* gate = gateLoad(slots);
+  if (!gate) return false;
+  out[0] = gate;
+  for (int v = 1; v < CHORD_MAX_VOICES; ++v) out[v] = slots[v];
+  return true;
+}
+#define LAZY_SNAPSHOT(voices) \
+  std::remove_pointer_t<std::remove_pointer_t<decltype(voices)>>* voices##Snap_[CHORD_MAX_VOICES]; \
+  if (!gateSnap(voices, voices##Snap_)) continue; \
+  voices = voices##Snap_
+
 class AudioCommandQueue {
  public:
   bool hasSoundbank(uint32_t handle) const {
@@ -1910,9 +1932,11 @@ static int chipnomadRenderImpl(ChipNomadState* state, float* buffer, int samples
       state->frameSampleCounter = 0;
       // No more voice rendering follows this boundary. The common output
       // fade replaces SoundFont's per-voice tails and releases their activity.
-      for (int t = 0; t < PROJECT_MAX_TRACKS; ++t)
-        for (int v = 0; v < CHORD_MAX_VOICES; ++v)
-          if (state->soundbankVoices[t][v]) state->soundbankVoices[t][v]->stopImmediately();
+      for (int t = 0; t < PROJECT_MAX_TRACKS; ++t) {
+        SoundbankVoice* sbSet[CHORD_MAX_VOICES];
+        if (gateSnap(state->soundbankVoices[t], sbSet))
+          for (int v = 0; v < CHORD_MAX_VOICES; ++v) sbSet[v]->stopImmediately();
+      }
       auto& transition = state->stopTransition;
       if (!transition.pending && !transition.remaining &&
           (transition.last[0] != 0 || transition.last[1] != 0) &&
@@ -1977,7 +2001,9 @@ static int chipnomadRenderImpl(ChipNomadState* state, float* buffer, int samples
     renderMonoVoiceTracks(state,state->simpleChipVoices,output,frames);
     SIDVoice* sidPool[PROJECT_MAX_TRACKS*CHORD_MAX_VOICES];int sidCount=0;
     // Order roots first across tracks; deterministic stealing retains new roots.
-    for(int slot=0;slot<CHORD_MAX_VOICES;++slot)for(int t=0;t<PROJECT_MAX_TRACKS;++t)if(gateLoad(&state->sidVoices[t][0]))sidPool[sidCount++]=state->sidVoices[t][slot];
+    {SIDVoice* sidSet[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];bool sidLive[PROJECT_MAX_TRACKS];
+    for(int t=0;t<PROJECT_MAX_TRACKS;++t)sidLive[t]=gateSnap(state->sidVoices[t],sidSet[t]);
+    for(int slot=0;slot<CHORD_MAX_VOICES;++slot)for(int t=0;t<PROJECT_MAX_TRACKS;++t)if(sidLive[t])sidPool[sidCount++]=sidSet[t][slot];}
     limitSIDVoices(sidPool,sidCount,4);
     renderMonoVoiceTracks(state,state->sidVoices,output,frames);
     if (state->opllPreviewTrack >= 0 && state->playbackState.trackEnabled[state->opllPreviewTrack]) {
@@ -2057,7 +2083,9 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
         continue;
       }
     }
-    auto applyEvent = [&](auto* voices) {
+    auto applyEvent = [&](auto* const* slots) {
+      std::remove_pointer_t<std::remove_pointer_t<decltype(slots)>>* voices[CHORD_MAX_VOICES];
+      if (!gateSnap(slots, voices)) return;
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) {
         if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount))
           voices[slot]->kill();
@@ -2068,11 +2096,16 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
     switch (project->instruments[track->note.instrument].type) {
       case InstrumentType::SoundFont:
         if (track->note.noteTriggered)
-          for (int incoming = 0; incoming < track->chordVoiceCount; ++incoming)
-            for (int t = 0; t < project->tracksCount; ++t)
-              for (int v = 0; v < CHORD_MAX_VOICES && gateLoad(&state->soundbankVoices[t][0]); ++v)
-                state->soundbankVoices[t][v]->chokeFrom(
-                    *state->soundbankVoices[trackIdx][incoming]);
+        {
+          SoundbankVoice* own[CHORD_MAX_VOICES];
+          if (gateSnap(state->soundbankVoices[trackIdx], own))
+            for (int incoming = 0; incoming < track->chordVoiceCount; ++incoming)
+              for (int t = 0; t < project->tracksCount; ++t) {
+                SoundbankVoice* other[CHORD_MAX_VOICES];
+                if (!gateSnap(state->soundbankVoices[t], other)) continue;
+                for (int v = 0; v < CHORD_MAX_VOICES; ++v) other[v]->chokeFrom(*own[incoming]);
+              }
+        }
         applyEvent(state->soundbankVoices[trackIdx]);
         break;
       case InstrumentType::Sample:
@@ -2091,9 +2124,11 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
       case InstrumentType::PlaitsAlt:
         applyEvent(state->plaitsAltVoices[trackIdx]);
         break;
-      case InstrumentType::AChChid:
+      case InstrumentType::AChChid: {
+        AChChidVoice* achchidSet[CHORD_MAX_VOICES];
+        if (!gateSnap(state->achchidVoices[trackIdx], achchidSet)) break;
         for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) {
-          AChChidVoice* voice = state->achchidVoices[trackIdx][slot];
+          AChChidVoice* voice = achchidSet[slot];
           if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount)) voice->kill();
           else if (track->note.noteTriggered) {
             PlaybackFXState* slide = &track->note.fx[fxASL];
@@ -2101,11 +2136,15 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
           } else voice->noteOff();
         }
         break;
-      case InstrumentType::DrumSynth:
+      }
+      case InstrumentType::DrumSynth: {
+        DrumSynthVoice* set[CHORD_MAX_VOICES];
+        if (!gateSnap(state->drumSynthVoices[trackIdx], set)) break;
         for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot)
-          if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount)) state->drumSynthVoices[trackIdx][slot]->kill();
-          else if (track->note.noteTriggered) state->drumSynthVoices[trackIdx][slot]->noteOn();
+          if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount)) set[slot]->kill();
+          else if (track->note.noteTriggered) set[slot]->noteOn();
         break;
+      }
       case InstrumentType::SID:
         applyEvent(state->sidVoices[trackIdx]);break;
       case InstrumentType::SegaPSG:
@@ -2130,11 +2169,14 @@ static void applyVoiceEvents(ChipNomadState* state, uint64_t dueMicros) {
       case InstrumentType::MME:
         applyEvent(state->mmeVoices[trackIdx]);
         break;
-      case InstrumentType::Sintered:
+      case InstrumentType::Sintered: {
+        SinteredVoice* set[CHORD_MAX_VOICES];
+        if (!gateSnap(state->sinteredVoices[trackIdx], set)) break;
         for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot)
-          if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount)) state->sinteredVoices[trackIdx][slot]->kill();
-          else if (track->note.noteTriggered) state->sinteredVoices[trackIdx][slot]->noteOn();
+          if (track->note.noteKilled || (track->note.noteTriggered && slot >= track->chordVoiceCount)) set[slot]->kill();
+          else if (track->note.noteTriggered) set[slot]->noteOn();
         break;
+      }
       case InstrumentType::Midi: {
         // No voice object: send real MIDI Note On/Off instead, through the
         // router (see midi/midi_router.h), which tracks the active note per
@@ -2205,7 +2247,7 @@ static void updateSoundbankVoices(ChipNomadState* state) {
   for (int t = 0; t < project->tracksCount; ++t) {
     auto* track = &playback->tracks[t];
     auto voices = state->soundbankVoices[t];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::SoundFont) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
@@ -2245,7 +2287,7 @@ static void updateSampleVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; trackIdx++) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SampleVoice** voices = state->sampleVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Sample) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2398,7 +2440,7 @@ static void updateSCWFVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SCWFVoice** voices = state->scwfVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         (project->instruments[track->note.instrument].type != InstrumentType::SCWF &&
          project->instruments[track->note.instrument].type != InstrumentType::BYOWTBL)) {
@@ -2484,7 +2526,7 @@ static void updateAChChidVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     AChChidVoice** voices = state->achchidVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::AChChid) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2532,7 +2574,7 @@ static void updateDrumSynthVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     DrumSynthVoice** voices = state->drumSynthVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::DrumSynth) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2584,7 +2626,7 @@ static void updateMMEVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     MMEVoice** voices = state->mmeVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::MME) { for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill(); continue; }
     InstrumentMME* m = &project->instruments[track->note.instrument].chip.mme;
@@ -2644,7 +2686,7 @@ static void updateMonkVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     MonkSynthVoice** voices = state->monkVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built yet
+    LAZY_SNAPSHOT(voices);  // lazy: set not built yet
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Monk) { for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill(); continue; }
     InstrumentMonk* m = &project->instruments[track->note.instrument].chip.monk;
@@ -2701,7 +2743,7 @@ static void updateSinteredVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     SinteredVoice** voices = state->sinteredVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Sintered) { for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill(); continue; }
     InstrumentSintered* s = &project->instruments[track->note.instrument].chip.sintered;
@@ -2750,7 +2792,7 @@ static void updateBraidsVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; trackIdx++) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     BraidsVoice** voices = state->braidsVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
 
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Braids) {
@@ -2840,7 +2882,7 @@ static void updatePlaitsVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     PlaitsVoice** voices = state->plaitsVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::Plaits) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -2926,7 +2968,7 @@ static void updatePlaitsAltVoices(ChipNomadState* state) {
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
     PlaybackTrackState* track = &playback->tracks[trackIdx];
     PlaitsAltVoice** voices = state->plaitsAltVoices[trackIdx];
-    if (!gateLoad(&voices[0])) continue;  // lazy: set not built
+    LAZY_SNAPSHOT(voices);  // lazy: set not built
     if (track->note.instrument == EMPTY_VALUE_8 ||
         project->instruments[track->note.instrument].type != InstrumentType::PlaitsAlt) {
       for (int slot = 0; slot < CHORD_MAX_VOICES; ++slot) voices[slot]->kill();
@@ -3095,7 +3137,7 @@ static void updateOPLLVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->opllVoices[t]; if (!gateLoad(&voices[0])) continue;
+    auto* track = &playback->tracks[t]; auto* voices = state->opllVoices[t]; LAZY_SNAPSHOT(voices);
     if (track->note.instrument == EMPTY_VALUE_8 || !isOPLL(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -3131,7 +3173,7 @@ static void updateOPLVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->oplVoices[t]; if (!gateLoad(&voices[0])) continue;
+    auto* track = &playback->tracks[t]; auto* voices = state->oplVoices[t]; LAZY_SNAPSHOT(voices);
     if (track->note.instrument == EMPTY_VALUE_8 || !isOPL(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -3167,7 +3209,7 @@ static void updateFourOpVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->fourOpVoices[t]; if (!gateLoad(&voices[0])) continue;
+    auto* track = &playback->tracks[t]; auto* voices = state->fourOpVoices[t]; LAZY_SNAPSHOT(voices);
     if (track->note.instrument == EMPTY_VALUE_8 || !isFourOp(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -3203,7 +3245,7 @@ static void updateSimpleChipVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->simpleChipVoices[t]; if (!gateLoad(&voices[0])) continue;
+    auto* track = &playback->tracks[t]; auto* voices = state->simpleChipVoices[t]; LAZY_SNAPSHOT(voices);
     if (track->note.instrument == EMPTY_VALUE_8 || !isSimpleChip(project->instruments[track->note.instrument].type)) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;
@@ -3288,7 +3330,7 @@ static void updateSIDVoices(ChipNomadState* state) {
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
-    auto* track = &playback->tracks[t]; auto* voices = state->sidVoices[t]; if (!gateLoad(&voices[0])) continue;
+    auto* track = &playback->tracks[t]; auto* voices = state->sidVoices[t]; LAZY_SNAPSHOT(voices);
     if (track->note.instrument == EMPTY_VALUE_8 || project->instruments[track->note.instrument].type!=InstrumentType::SID) {
       for (int v = 0; v < CHORD_MAX_VOICES; ++v) voices[v]->kill();
       continue;

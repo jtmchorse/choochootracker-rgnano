@@ -9,6 +9,11 @@ ifeq ($(OS),Windows_NT)
 CFLAGS += -D_USE_MATH_DEFINES
 endif
 LDFLAGS = -lm -pthread
+# Host-only sanitizer hook: make -f Makefile.test SANITIZE=address,undefined BUILD_DIR=build/san-asan ...
+ifdef SANITIZE
+override CFLAGS += -fsanitize=$(SANITIZE) -fno-omit-frame-pointer -O1
+override LDFLAGS += -fsanitize=$(SANITIZE)
+endif
 include Makefile.native-chip-flags
 
 # RG Nano memory caps (RGNANO_BUILD) get their own object directory so both
