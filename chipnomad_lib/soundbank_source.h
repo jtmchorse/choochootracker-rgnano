@@ -9,6 +9,25 @@ namespace soundbank {
 // Cooperative browser preparation; native builds do their work on a worker.
 // Never call this, or any Source API, from a realtime callback.
 void offlineYield();
+enum class LoadStage { reading, locating, unzipping, checking, loading };
+using LoadProgressCallback = void (*)(LoadStage);
+// Worker-local observers; never used by the audio callback.
+class LoadProgressScope {
+ public:
+  explicit LoadProgressScope(LoadProgressCallback callback);
+  ~LoadProgressScope();
+  LoadProgressScope(const LoadProgressScope&) = delete;
+ private:
+  LoadProgressCallback previous_;
+};
+class LoadStageScope {
+ public:
+  explicit LoadStageScope(LoadStage stage);
+  ~LoadStageScope();
+  LoadStageScope(const LoadStageScope&) = delete;
+ private:
+  LoadStage previous_;
+};
 // All APIs in this file are offline only. Source is random access; large audio
 // payloads never need to be read merely to enumerate a bank.
 class Source {

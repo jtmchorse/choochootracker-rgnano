@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <functional>
 
 #include "chipnomad_lib.h"
 #include "doctest.h"
@@ -559,4 +560,27 @@ TEST_CASE("SoundFont collection popup opens on the active preset without an extr
   screenSelectionPopup.onInput(1,keyDown,0);
   screenSelectionPopup.onInput(1,keyEdit,0);screenSelectionPopup.onInput(0,0,0);CHECK(selected==10);
   chipnomadDestroy(chipnomadState);chipnomadState=prior;
+}
+
+TEST_CASE("SoundFont cycling follows nested browser folders instead of interleaving their names") {
+  using namespace soundbank;
+  std::vector<BankEntry> banks(4);
+  banks[0].id="open-sharable/Korean/Flutes.sf2";banks[0].format="sf2";banks[0].presets={{"0:0","A flute"},{"0:1","Z flute"}};
+  banks[1].id="open-sharable/Akai/Bass.exs";banks[1].format="exs";banks[1].presets={{"exs","Middle bass"}};
+  banks[2].id="open-sharable/Korean/Strings.sf2";banks[2].format="sf2";banks[2].presets={{"0:0","B strings"}};
+  banks[3].id="reddit/Drums.sf2";banks[3].format="sf2";banks[3].presets={{"0:0","A drum"}};
+  auto order=presetSequence(banks);
+  const std::vector<std::pair<int,int>> expected={{1,0},{0,0},{2,0},{0,1},{3,0}};
+  CHECK(order==expected);
+  CHECK(cyclePreset(banks,banks[0].id,"0:0",1)==std::make_pair(2,0));
+  CHECK(cyclePreset(banks,banks[0].id,"0:1",-1)==std::make_pair(2,0));
+  // Compare the flat sequence with an actual recursive browser walk.
+  std::vector<std::pair<int,int>> visible;
+  std::function<void(std::string)> visit=[&](std::string path){
+    for(const auto& c:browseCollections(banks,path)) {
+      if(c.hasFolders)visit(c.path);
+      else for(const auto& p:c.presets)visible.emplace_back(p.bank,p.preset);
+    }
+  };
+  visit("");CHECK(order==visible);
 }

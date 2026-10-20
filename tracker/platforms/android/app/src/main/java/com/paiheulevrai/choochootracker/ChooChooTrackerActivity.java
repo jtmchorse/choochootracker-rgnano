@@ -1,5 +1,6 @@
 package com.paiheulevrai.choochootracker;
 
+import android.Manifest;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -20,13 +21,17 @@ import android.media.midi.MidiManager;
 import android.media.midi.MidiOutputPort;
 import android.media.midi.MidiReceiver;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -36,18 +41,24 @@ import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Locale;
+import android.view.KeyEvent;
+import android.view.HapticFeedbackConstants;
 import org.libsdl.app.SDLActivity;
 
 public final class ChooChooTrackerActivity extends SDLActivity {
     private static final int OPEN_DOCUMENT = 4101;
     private static final int CREATE_DOCUMENT = 4102;
+    private static final int REQUEST_RECORD_AUDIO = 4103;
+    private static boolean recordAudioPermissionRequested = false;
     private static final String ACTION_USB_PERMISSION =
             "com.paiheulevrai.choochootracker.USB_PERMISSION";
     private static final String PREFS_NAME = "choochootracker_prefs";
     private static final String PREF_TREE_URI = "workspace_tree_uri";
     private static final int PICK_FOLDER = 4103;
     private static final String PREF_FOLDER_DECLINED = "workspace_folder_declined";
+    private static final String PREF_TOUCH_HAPTICS = "touch_haptics";
     private boolean waitingForFolder;
+    private boolean requestedSharedStorage;
     private String importDirectory;
     private String exportPath;
 
@@ -75,6 +86,53 @@ public final class ChooChooTrackerActivity extends SDLActivity {
     private UsbEndpointRecord pendingUsbOutput;
     private int pendingUsbInputGeneration;
     private int pendingUsbOutputGeneration;
+
+    private WifiManager.MulticastLock linkMulticastLock;
+
+    // Called from the SDL thread for an on-screen control press.
+    public void performTouchHaptic() {
+        if (!getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_TOUCH_HAPTICS, true)) return;
+        Vibrator vibrator = getSystemService(Vibrator.class);
+        if (vibrator != null && vibrator.hasVibrator()) {
+            vibrator.vibrate(VibrationEffect.createOneShot(12,
+                    VibrationEffect.DEFAULT_AMPLITUDE));
+        }
+    }
+
+    public void setTouchHaptics(boolean enabled) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(PREF_TOUCH_HAPTICS, enabled).apply();
+    }
+
+    /** Called by the native Link backend before Link opens its sockets. */
+    public synchronized boolean acquireLinkMulticastLock() {
+        if (linkMulticastLock == null) {
+            WifiManager wifi = (WifiManager)getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            if (wifi == null) return false;
+            linkMulticastLock = wifi.createMulticastLock("choochootracker-link");
+            linkMulticastLock.setReferenceCounted(false);
+        }
+        try {
+            if (!linkMulticastLock.isHeld()) linkMulticastLock.acquire();
+            Log.i("ChooChooTracker", "MulticastLock acquired choochootracker-link");
+            return true;
+        } catch (Exception e) {
+            Log.w("ChooChooTracker", "MulticastLock acquire failed: " + e);
+            return false;
+        }
+    }
+
+    /** Called by the native Link backend after Link closes its sockets. */
+    public synchronized void releaseLinkMulticastLock() {
+        if (linkMulticastLock == null) return;
+        try {
+            if (linkMulticastLock.isHeld()) linkMulticastLock.release();
+            Log.i("ChooChooTracker", "MulticastLock released");
+        } catch (Exception e) {
+            Log.w("ChooChooTracker", "MulticastLock release failed: " + e);
+        }
+    }
 
     private static final class MidiEndpoint {
         final MidiDeviceInfo device;
@@ -159,6 +217,23 @@ public final class ChooChooTrackerActivity extends SDLActivity {
 
     public static native void nativeMidiMessage(byte[] data, long timestamp);
 
+    // Pads in "extra buttons" mode report KEYCODE_BUTTON_1..16, which SDL
+    // does not turn into usable controller buttons. Hand them to the native
+    // side ourselves.
+    public static native void nativeExtraButton(int keyCode, boolean down);
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (keyCode >= KeyEvent.KEYCODE_BUTTON_1 && keyCode <= KeyEvent.KEYCODE_BUTTON_16) {
+            if (event.getRepeatCount() == 0) {
+                nativeExtraButton(keyCode, event.getAction() == KeyEvent.ACTION_DOWN);
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override protected String[] getLibraries() {
         return new String[] { "SDL2", "chipnomad" };
     }
@@ -182,15 +257,13 @@ public final class ChooChooTrackerActivity extends SDLActivity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         // Before SDL starts the native side, which reads the workspace path once.
-        if (isDirectStorageBuild()) initSafWorkspace();
+        if (isDirectStorageBuild()) initDirectWorkspace();
+        else initSafWorkspace();
+        // Complete the private, non-destructive asset seed before SDL starts.
+        // Native code only selects this ready workspace as its current directory.
+        seedWorkspace("choochootracker_data", getPrivateWorkspacePath());
         super.onCreate(savedInstanceState);
         hideSystemBars();
-        if (isDirectStorageBuild() && safWorkspace == null
-                && !getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_FOLDER_DECLINED, false))
-            requestWorkspaceFolder();
-        // AssetManager lists nested directories reliably, unlike the native
-        // asset API on a few Android builds. Never overwrite user files.
-        seedWorkspace("choochootracker_data", getPrivateWorkspacePath());
     }
 
     // Called by the native backend after SDL has loaded the application.
@@ -536,7 +609,9 @@ public final class ChooChooTrackerActivity extends SDLActivity {
                 byte[] buffer = new byte[32768];
                 for (int read; (read = input.read(buffer)) != -1;) output.write(buffer, 0, read);
             }
-        } catch (Exception ignored) { }
+        } catch (Exception error) {
+            Log.e("ChooChooTracker", "Could not seed asset " + assetPath, error);
+        }
     }
 
     private void hideSystemBars() {
@@ -556,6 +631,14 @@ public final class ChooChooTrackerActivity extends SDLActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (requestedSharedStorage && hasSharedStorage()) {
+            requestedSharedStorage = false;
+            initDirectWorkspace();
+            // SDL cached the private workspace before Android showed its
+            // all-files access panel; restart into the newly available root.
+            restartApp();
+            return;
+        }
         if (midiManager != null) rebuildMidiEndpoints();
     }
 
@@ -563,6 +646,7 @@ public final class ChooChooTrackerActivity extends SDLActivity {
         synchronized (this) {
             closeMidiInput();
             closeMidiOutput();
+            releaseLinkMulticastLock();
             if (midiManager != null && midiDeviceCallback != null)
                 midiManager.unregisterDeviceCallback(midiDeviceCallback);
             try { unregisterReceiver(usbReceiver); } catch (IllegalArgumentException ignored) { }
@@ -581,12 +665,33 @@ public final class ChooChooTrackerActivity extends SDLActivity {
         });
     }
 
-    // "direct" flavor (F-Droid / direct APK): the user picks one folder with the
-    // system folder picker (no broad storage permission) and the workspace lives
-    // there, reached through SafWorkspace and the native wrappers in
-    // saf_storage.cpp. The "store" flavor keeps it private to the app.
+    // Direct uses a conventional shared folder; Store uses a user-granted SAF
+    // document tree and never asks for broad storage access.
     private boolean isDirectStorageBuild() {
         return getResources().getBoolean(R.bool.direct_storage);
+    }
+
+    private boolean hasSharedStorage() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager();
+    }
+
+    private File directWorkspace() {
+        return new File(Environment.getExternalStorageDirectory(), "ChooChooTracker");
+    }
+
+    private void initDirectWorkspace() {
+        if (!hasSharedStorage()) return;
+        File workspace = directWorkspace();
+        workspace.mkdirs();
+        seedWorkspace("choochootracker_data", workspace.getAbsolutePath());
+    }
+
+    private void requestSharedStorage() {
+        if (hasSharedStorage()) return;
+        requestedSharedStorage = true;
+        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
     }
 
     // The virtual root native code sees for the picked folder (see saf_storage.cpp).
@@ -632,7 +737,7 @@ public final class ChooChooTrackerActivity extends SDLActivity {
 
     // Called by the native settings screen.
     public String getWorkingFolderStatus() {
-        if (!isDirectStorageBuild()) return "Unavailable";
+        if (isDirectStorageBuild()) return hasSharedStorage() ? "Shared storage" : "Permission needed";
         if (safWorkspace == null) return "Private (app storage)";
         String id = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_TREE_URI, "");
         String name = Uri.parse(id).getLastPathSegment();
@@ -643,6 +748,10 @@ public final class ChooChooTrackerActivity extends SDLActivity {
     // Called by the native settings screen.
     public void pickWorkingFolder() {
         runOnUiThread(() -> {
+            if (isDirectStorageBuild()) {
+                requestSharedStorage();
+                return;
+            }
             if (safWorkspace != null) {
                 // A folder is active: let the user either change it or leave it.
                 new android.app.AlertDialog.Builder(this)
@@ -672,6 +781,7 @@ public final class ChooChooTrackerActivity extends SDLActivity {
     // Called by the native settings screen: back to the app's private storage.
     public void clearWorkingFolder() {
         runOnUiThread(() -> {
+            if (isDirectStorageBuild()) return;
             if (safWorkspace == null) return;
             new android.app.AlertDialog.Builder(this)
                 .setTitle("Use private storage?")
@@ -818,6 +928,7 @@ public final class ChooChooTrackerActivity extends SDLActivity {
 
     // Called by the native layer.
     public String getWorkspacePath() {
+        if (isDirectStorageBuild() && hasSharedStorage()) return directWorkspace().getAbsolutePath();
         return safWorkspace != null ? SAF_ROOT : getPrivateWorkspacePath();
     }
 
@@ -927,5 +1038,36 @@ public final class ChooChooTrackerActivity extends SDLActivity {
             byte[] buffer = new byte[32768];
             for (int read; input != null && (read = input.read(buffer)) != -1;) output.write(buffer, 0, read);
         } catch (Exception ignored) { }
+    }
+
+    // Audio input recording (opt-in): SDL2's capture backend needs the
+    // RECORD_AUDIO runtime permission. Called from native code via SDL
+    // before the first audioInputSetup(); if the user denies, capture
+    // device enumeration simply returns no devices.
+    @SuppressWarnings("unused")
+    public static boolean ensureRecordAudioPermission() {
+        ChooChooTrackerActivity activity = (ChooChooTrackerActivity)mSingleton;
+        if (activity == null) return false;
+        if (Build.VERSION.SDK_INT >= 23
+                && activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (!recordAudioPermissionRequested) {
+                recordAudioPermissionRequested = true;
+                activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},
+                        REQUEST_RECORD_AUDIO);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_RECORD_AUDIO) return;
+        // Granted or denied: either way the user can retry from the Audio
+        // Input settings screen, which calls ensureRecordAudioPermission()
+        // again (recordAudioPermissionRequested only gates repeat prompts
+        // within one attempt).
+        recordAudioPermissionRequested = false;
     }
 }

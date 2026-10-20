@@ -43,21 +43,52 @@ inline std::set<std::string> mappedCollections(const std::vector<BankEntry>& ban
   for (const auto& bank:banks) if (!rawSample(bank)) result.insert(bankFolders(bank.id).front());
   return result;
 }
+struct SupportingSamples {
+  std::set<std::string> archives, directories;
+  explicit SupportingSamples(const std::vector<BankEntry>& banks) {
+    for(const auto& bank:banks) {
+      if(rawSample(bank) || !bank.error.empty())continue;
+      const auto split=bank.id.find("::");
+      if(split!=std::string::npos)archives.insert(bank.id.substr(0,split));
+      else if(bank.format=="sfz" || bank.format=="exs") {
+        const auto slash=bank.id.rfind('/');
+        directories.insert(slash==std::string::npos?std::string():bank.id.substr(0,slash));
+      }
+    }
+  }
+  bool hides(const BankEntry& bank) const {
+    if(!rawSample(bank))return false;
+    const auto split=bank.id.find("::");
+    if(split!=std::string::npos)return archives.count(bank.id.substr(0,split));
+    auto path=bank.id;
+    for(;;) {
+      const auto slash=path.rfind('/');
+      path=slash==std::string::npos?std::string():path.substr(0,slash);
+      if(directories.count(path))return true;
+      if(path.empty())return false;
+    }
+  }
+};
 struct PresetReference { int bank, preset; std::string label; };
-struct Collection { std::string name; std::vector<PresetReference> presets; };
+struct Collection {
+  std::string name;
+  std::vector<PresetReference> presets;
+  std::string path;
+  bool hasFolders = false;
+};
 inline std::string sortLabel(std::string value) {
   for(auto& c:value)c=char(std::tolower(static_cast<unsigned char>(c)));
   return value;
 }
 inline std::vector<Collection> collections(const std::vector<BankEntry>& banks) {
   std::map<std::string,std::set<std::string>> formats;
-  const auto mapped=mappedCollections(banks);
+  const SupportingSamples supporting(banks);
   for(const auto& b:banks) if(!rawSample(b)) formats[bankFolders(b.id).front()].insert(b.format);
   std::map<std::string,Collection> groups;
   for(size_t n=0;n<banks.size();++n) {
     const auto& b=banks[n]; if(!b.error.empty())continue;
     auto parts=bankFolders(b.id); auto top=parts.front();
-    if(rawSample(b) && mapped.count(top)) continue; // Supporting recordings stay with their mapped preset.
+    if(supporting.hides(b)) continue;
     auto name=parts.size()>1 || !rawSample(b)?browserLabel(top):std::string("Loose samples");
     if(formats[top].size()>1 && !rawSample(b))name+=" ("+b.format+")";
     auto& group=groups[sortLabel(name)];group.name=name;
@@ -75,16 +106,96 @@ inline std::vector<Collection> collections(const std::vector<BankEntry>& banks) 
   }
   return result;
 }
+// Navigate physical folders while preserving the publisher's ZIP as a single
+// collection. Internal ZIP sample trees are dependencies, not user categories.
+inline std::vector<Collection> browseCollections(const std::vector<BankEntry>& banks,
+                                                const std::string& parent) {
+  const SupportingSamples supporting(banks);
+  std::map<std::string, Collection> folders;
+  const auto prefix = parent.empty() ? std::string() : parent + "/";
+  for (size_t n = 0; n < banks.size(); ++n) {
+    const auto& bank = banks[n];
+    if (!bank.error.empty() || supporting.hides(bank)) continue;
+    const auto disk = bank.id.substr(0, bank.id.find("::"));
+    const auto slash = disk.rfind('/');
+    const auto directory = slash == std::string::npos ? std::string() : disk.substr(0, slash);
+    if (directory != parent && directory.rfind(prefix, 0) != 0) continue;
+    const auto relative = directory == parent ? std::string() : directory.substr(prefix.size());
+    const auto separator = relative.find('/');
+    const auto child = relative.substr(0, separator);
+    const auto path = child.empty() ? parent : prefix + child;
+    auto& group = folders[path];
+    group.name = child.empty() ? "Presets here" : browserLabel(child);
+    group.path = path;
+    if (separator != std::string::npos) { group.hasFolders = true; continue; }
+    for (size_t p = 0; p < bank.presets.size(); ++p)
+      group.presets.push_back({int(n), int(p), browserLabel(bank.presets[p].second)});
+  }
+  std::vector<Collection> result;
+  for (auto& pair : folders) {
+    auto& group = pair.second;
+    std::map<std::string,std::set<std::string>> duplicateFormats;
+    for (const auto& preset : group.presets)
+      duplicateFormats[sortLabel(preset.label)].insert(banks[preset.bank].format);
+    for (auto& preset : group.presets)
+      if (duplicateFormats[sortLabel(preset.label)].size()>1)
+        preset.label+=" ("+banks[preset.bank].format+")";
+    std::sort(group.presets.begin(), group.presets.end(), [](const auto& a, const auto& b) {
+      return std::make_tuple(sortLabel(a.label), a.bank, a.preset) <
+             std::make_tuple(sortLabel(b.label), b.bank, b.preset);
+    });
+    result.push_back(std::move(group));
+  }
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+    return std::make_tuple(sortLabel(a.name), a.path) < std::make_tuple(sortLabel(b.name), b.path);
+  });
+  return result;
+}
+// Walk physical collection folders in the same order as the browser. ZIP
+// members stay together within their containing folder, not alphabetized
+// across unrelated collections under the USER root.
+inline std::vector<std::pair<int,int>> presetSequence(const std::vector<BankEntry>& banks) {
+  using PathKey = std::vector<std::pair<std::string,std::string>>;
+  std::map<PathKey,Collection> groups;
+  const SupportingSamples supporting(banks);
+  for(size_t b=0;b<banks.size();++b) {
+    const auto& bank=banks[b];
+    if(!bank.error.empty() || supporting.hides(bank))continue;
+    auto disk=bank.id.substr(0,bank.id.find("::"));
+    auto parts=bankFolders(disk);parts.pop_back();
+    PathKey key;
+    for(const auto& part:parts)key.emplace_back(sortLabel(browserLabel(part)),part);
+    key.emplace_back(sortLabel("Presets here"),"");
+    for(size_t p=0;p<bank.presets.size();++p)
+      groups[key].presets.push_back({int(b),int(p),browserLabel(bank.presets[p].second)});
+  }
+  std::vector<std::pair<int,int>> result;
+  for(auto& entry:groups) {
+    auto& presets=entry.second.presets;
+    std::map<std::string,std::set<std::string>> formats;
+    for(const auto& p:presets)formats[sortLabel(p.label)].insert(banks[p.bank].format);
+    for(auto& p:presets)if(formats[sortLabel(p.label)].size()>1)p.label+=" ("+banks[p.bank].format+")";
+    std::sort(presets.begin(),presets.end(),[](const auto& a,const auto& b){
+      return std::make_tuple(sortLabel(a.label),a.bank,a.preset)<std::make_tuple(sortLabel(b.label),b.bank,b.preset);
+    });
+    for(const auto& p:presets)result.emplace_back(p.bank,p.preset);
+  }
+  return result;
+}
 inline std::pair<int,int> cyclePreset(const std::vector<BankEntry>& banks,
+    const std::vector<std::pair<int,int>>& sequence,
     const std::string& bank, const std::string& preset, int direction) {
-  std::vector<std::pair<int,int>> sequence; int current=-1;
-  for(const auto& group:collections(banks)) for(const auto& ref:group.presets) {
-    if(banks[ref.bank].id==bank && banks[ref.bank].presets[ref.preset].first==preset)
-      current=int(sequence.size());
-    sequence.emplace_back(ref.bank,ref.preset);
+  int current=-1;
+  for(size_t n=0;n<sequence.size();++n) {
+    const auto& ref=sequence[n];
+    if(banks[ref.first].id==bank && banks[ref.first].presets[ref.second].first==preset)current=int(n);
   }
   if(sequence.empty())return {-1,-1};
-  int n=int(sequence.size());
+  const int n=int(sequence.size());
   return sequence[current<0?(direction>0?0:n-1):(current+(direction>0?1:n-1))%n];
+}
+inline std::pair<int,int> cyclePreset(const std::vector<BankEntry>& banks,
+    const std::string& bank, const std::string& preset, int direction) {
+  return cyclePreset(banks,presetSequence(banks),bank,preset,direction);
 }
 } // namespace soundbank

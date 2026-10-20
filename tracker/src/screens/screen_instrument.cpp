@@ -6,12 +6,15 @@
 #include "chipnomad_lib.h"
 #include "project_utils.h"
 #include "screen_instrument.h"
+#include "user_presets.h"
+#include "user_preset_browser.h"
 #include "waveform_display.h"
 #include "copy_paste.h"
 #include "file_browser.h"
 #include "import_vts.h"
 #include "selection_popup.h"
 #include "simple_chip_presets.h"
+#include "audio_manager.h"
 #include <string.h>
 #include <stdio.h>
 #include <strings.h>
@@ -28,6 +31,18 @@ static Bitmap* envelopePreviewBitmap = NULL;
 static Bitmap* livePreviewBitmap = NULL;
 static int livePreviewWasActive = 0;
 static std::chrono::steady_clock::time_point livePreviewRefresh;
+static std::chrono::steady_clock::time_point livePreviewLastActivity;
+static int livePreviewInstrument = -1;
+static InstrumentType livePreviewType = InstrumentType::none;
+static int livePreviewTrack = -1;
+
+static void resetLivePreview() {
+  livePreviewWasActive = 0;
+  livePreviewRefresh = {};
+  livePreviewLastActivity = {};
+  livePreviewInstrument = -1;
+  livePreviewTrack = -1;
+}
 
 static SelectionItem instrumentTypeChip[] = {
   {"SID / C64", (int)InstrumentType::SID, NULL, 0},
@@ -39,6 +54,7 @@ static SelectionItem instrumentTypeChip[] = {
   {NULL, (int)InstrumentType::GBNoise, NULL, 0},
 };
 static SelectionItem instrumentTypeSynth[] = {
+  {NULL, (int)InstrumentType::Monk, NULL, 0},
   {NULL, (int)InstrumentType::AChChid, NULL, 0},
   {NULL, (int)InstrumentType::Braids, NULL, 0},
   {NULL, (int)InstrumentType::Plaits, NULL, 0},
@@ -71,7 +87,7 @@ static const SelectionItem instrumentTypeCategories[] = {
   {"CHIP", -1, instrumentTypeChip, 7},
   {"DRUMS", -1, instrumentTypeDrums, 2},
   {"SAMPLE", -1, instrumentTypeSample, 4},
-  {"SYNTH", -1, instrumentTypeSynth, 5},
+  {"SYNTH", -1, instrumentTypeSynth, sizeof(instrumentTypeSynth) / sizeof(instrumentTypeSynth[0])},
   {"MIDI", -1, instrumentTypeMidi, 1},
   {"FM", -1, instrumentTypeFM, sizeof(instrumentTypeFM) / sizeof(instrumentTypeFM[0])},
 };
@@ -82,7 +98,7 @@ static const InstrumentType instrumentTypesQuickCycle[] = {
   InstrumentType::SCWF, InstrumentType::BYOWTBL, InstrumentType::Sample, InstrumentType::SoundFont,
   InstrumentType::AChChid, InstrumentType::Braids,
   InstrumentType::Plaits, InstrumentType::PlaitsAlt,
-  InstrumentType::MME,
+  InstrumentType::MME, InstrumentType::Monk,
   InstrumentType::SegaPSG, InstrumentType::GBPulse, InstrumentType::GBNoise,
   InstrumentType::GenesisFM, InstrumentType::ArcadeFM, InstrumentType::DX7, InstrumentType::Midi, InstrumentType::OPLL, InstrumentType::VRC7, InstrumentType::OPL2, InstrumentType::OPL3,
   InstrumentType::SID,
@@ -124,6 +140,18 @@ static const InstrumentFormat importFormats[] = {
   { ".vts", instrumentLoadVTS, "VTS sample imported", "Failed to import VTS" },
 };
 
+struct InstrumentLoad {
+  const char* path;
+  int instrument;
+  ImportHandler handler;
+};
+
+static int loadInstrument(void* userdata) {
+  auto* load = static_cast<InstrumentLoad*>(userdata);
+  return load->handler ? load->handler(load->path, load->instrument) :
+    instrumentLoad(&chipnomadState->project, load->path, load->instrument);
+}
+
 static void onInstrumentLoaded(const char* path) {
   int result = 1;
   const char* ext = strrchr(path, '.');
@@ -133,7 +161,8 @@ static void onInstrumentLoaded(const char* path) {
   if (ext != NULL) {
     for (size_t i = 0; i < sizeof(importFormats) / sizeof(importFormats[0]); i++) {
       if (strcasecmp(ext, importFormats[i].extension) == 0) {
-        result = importFormats[i].handler(path, cInstrument);
+        InstrumentLoad load{path, cInstrument, importFormats[i].handler};
+        result = audioManager.mutateProject(loadInstrument, &load);
         if (result == 0) {
           screenMessage(MESSAGE_TIME, importFormats[i].successMsg);
         } else {
@@ -146,7 +175,8 @@ static void onInstrumentLoaded(const char* path) {
   }
 
   if (!formatHandled) {
-    result = instrumentLoad(&chipnomadState->project, path, cInstrument);
+    InstrumentLoad load{path, cInstrument, nullptr};
+    result = audioManager.mutateProject(loadInstrument, &load);
     if (result == 0) {
       screenMessage(MESSAGE_TIME, "Instrument loaded");
     } else {
@@ -176,10 +206,15 @@ static void onInstrumentSaved(const char* folderPath) {
   getInstrumentFilename(filename, sizeof(filename));
   snprintf(fullPath, sizeof(fullPath), "%s%s%s.cni", folderPath, PATH_SEPARATOR_STR, filename);
 
+  auto& instrument = chipnomadState->project.instruments[cInstrument];
+  const bool monk = instrument.type == InstrumentType::Monk;
+  const uint8_t previousBank = monk ? instrument.chip.monk.factory : 0;
+  if (monk) instrument.chip.monk.factory = 0;
   if (instrumentSave(&chipnomadState->project, fullPath, cInstrument) == 0) {
+    if (monk) projectModified = 1;
     strncpy(appSettings.instrumentPath, folderPath, PATH_LENGTH);
     appSettings.instrumentPath[PATH_LENGTH - 1] = 0;
-  }
+  } else if (monk) instrument.chip.monk.factory = previousBank;
   screenSetup(&screenInstrument, cInstrument);
 }
 
@@ -218,6 +253,8 @@ static void setInstrumentType(InstrumentType newType) {
       post->envelopeShape = savedEnvelope.envelopeShape;
     }
   }
+  if (audioManager.reinitializeChips)
+    audioManager.reinitializeChips();
   ScreenData* screen = instrumentScreen();
   screen->cursorRow = screen->cursorCol = screen->topRow = 0;
   projectModified = 1;
@@ -289,7 +326,7 @@ static ScreenData* instrumentScreen(void) {
     &screenInstrumentSCWF, &screenInstrumentBYOWTBL, &screenInstrumentPlaits, &screenInstrumentAChChid,
     &screenInstrumentDrumSynth, &screenInstrumentMME,
     &screenInstrumentSintered,
-    &screenInstrumentMidi, &screenInstrumentOPLL, &screenInstrumentOPL, &screenInstrumentSimpleChip, &screenInstrumentOPL, &screenInstrumentSoundFont,
+    &screenInstrumentMidi, &screenInstrumentOPLL, &screenInstrumentOPL, &screenInstrumentSimpleChip, &screenInstrumentOPL, &screenInstrumentSoundFont, &screenInstrumentMonk,
   };
   InstrumentScreenKind kind = getInstrumentDefinition(chipnomadState->project.instruments[cInstrument].type)->screen;
   ScreenData* data = screens[(int)kind];
@@ -304,7 +341,7 @@ static void init(void) {
   screenInstrumentNone.cursorRow = 0;
   screenInstrumentNone.cursorCol = 0;
   SelectionItem* groups[] = {instrumentTypeChip, instrumentTypeSample, instrumentTypeSynth, instrumentTypeDrums, instrumentTypeMidi};
-  const int counts[] = {7, 4, 5, 2, 1};
+  const int counts[] = {7, 4, sizeof(instrumentTypeSynth) / sizeof(instrumentTypeSynth[0]), 2, 1};
   for (int group = 0; group < 5; ++group)
     for (int item = 0; item < counts[group]; ++item)
       groups[group][item].label = getInstrumentDefinition((InstrumentType)groups[group][item].value)->uiName;
@@ -316,6 +353,7 @@ static void keyJazzReleaseAll(void);
 
 static void setup(int input) {
   isCharEdit = 0;
+  resetLivePreview();
 #ifdef DESKTOP_BUILD
   keyJazzReleaseAll(); // a key held while leaving the screen never sends its release here
 #endif
@@ -330,13 +368,16 @@ static void fullRedraw(void) {
 }
 
 static void draw(void) {
-  instrumentCommonDrawLivePreview();
   if (chipnomadState->project.instruments[cInstrument].type==InstrumentType::SoundFont) {
     auto& d=screenInstrumentSoundFont;
     for (int row : {3,4}) for (int col=0; col<d.getColumnCount(row); ++col)
       d.drawField(col,row,d.cursorRow==row && d.cursorCol==col ? CellState::focus : CellState::normal);
     d.drawCursor(d.cursorCol,d.cursorRow);
   }
+  instrumentSIDDrawHints();
+  // Field redraws may paint their static preview. The live scope owns this
+  // region for the frame, including frames between waveform refreshes.
+  instrumentCommonDrawLivePreview();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -577,7 +618,14 @@ void instrumentCommonDrawEnvelopePreview(uint8_t attack, uint8_t decay, uint8_t 
 }
 
 void instrumentCommonDrawLivePreview(void) {
+  const auto type = chipnomadState->project.instruments[cInstrument].type;
+  if (livePreviewInstrument != cInstrument || livePreviewType != type) {
+    resetLivePreview();
+    livePreviewInstrument = cInstrument;
+    livePreviewType = type;
+  }
   const PlaybackStatus* playback = chipnomadGetPlaybackStatus(chipnomadState);
+  const auto now = std::chrono::steady_clock::now();
   int track = -1;
   for (int i = 0; i < chipnomadState->project.tracksCount; ++i) {
     if (playback->tracks[i].note.instrument == cInstrument &&
@@ -585,22 +633,39 @@ void instrumentCommonDrawLivePreview(void) {
         (track < 0 || i == *pSongTrack)) track = i;
   }
   if (track < 0) {
-    if (livePreviewWasActive) currentScreen->fullRedraw();
-    livePreviewWasActive = 0;
-    livePreviewRefresh = {};
-    return;
+    if (!livePreviewWasActive) return;
+    // Audio monitors are briefly inactive while a render chunk is assembled.
+    // Hold through those gaps and short note gaps instead of flashing static.
+    const bool quiet = now - livePreviewLastActivity >= std::chrono::milliseconds(250);
+    if (quiet && !playback->isPlaying) {
+      resetLivePreview();
+      currentScreen->fullRedraw();
+      return;
+    }
+    if (quiet) {
+      // Stay in live mode across song rests, showing silence rather than an
+      // indefinitely frozen note. Resume immediately when a voice returns.
+      const float silence = 0.0f;
+      renderFloatPreview(livePreviewBitmap, &silence, 1);
+      livePreviewRefresh = {};
+    }
+  } else {
+    if (!livePreviewBitmap) livePreviewBitmap = gfxBitmapCreate(32, 3);
+    if (!livePreviewBitmap) return;
+    livePreviewLastActivity = now;
+    int hz = appSettings.waveformRefreshHz;
+    if (hz < 1 || hz > 60) hz = 30;
+    if (track != livePreviewTrack || livePreviewRefresh == std::chrono::steady_clock::time_point() ||
+        std::chrono::duration<float>(now - livePreviewRefresh).count() >= 1.0f / hz) {
+      renderFloatPreview(livePreviewBitmap, chipnomadState->voiceMonitors[track].samples,
+                         VOICE_MONITOR_SAMPLES);
+      livePreviewRefresh = now;
+      livePreviewTrack = track;
+    }
   }
-  if (!livePreviewBitmap) livePreviewBitmap = gfxBitmapCreate(32, 3);
-  const auto now = std::chrono::steady_clock::now();
-  int hz = appSettings.waveformRefreshHz;
-  if (hz < 1 || hz > 60) hz = 30;
-  if (livePreviewRefresh == std::chrono::steady_clock::time_point() ||
-      std::chrono::duration<float>(now - livePreviewRefresh).count() >= 1.0f / hz) {
-    gfxClearRect(0, 16, 32, 3);
-    renderFloatPreview(livePreviewBitmap, chipnomadState->voiceMonitors[track].samples,
-                       VOICE_MONITOR_SAMPLES);
-    livePreviewRefresh = now;
-  }
+  // Cached bitmap pixels are transparent; clear on every draw, not only when
+  // resampling, so a control's static preview cannot show through underneath.
+  gfxClearRect(0, 16, 32, 3);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(livePreviewBitmap, 0, 16);
   Instrument* instrument = &chipnomadState->project.instruments[cInstrument];
@@ -643,7 +708,14 @@ int instrumentCommonOnEdit(int col, int row, enum CellEditAction action) {
     } else {
       char filename[32];
       getInstrumentFilename(filename, sizeof(filename));
-      fileBrowserSetupFolderMode("SAVE INSTRUMENT", appSettings.instrumentPath, filename, ".cni", onInstrumentSaved, onInstrumentCancelled);
+      UserPresets destination;
+      const char* folder = appSettings.instrumentPath;
+      if (chipnomadState->project.instruments[cInstrument].type == InstrumentType::Monk &&
+          setupUserPresetLibrary(destination, InstrumentType::Monk, false)) {
+        fileCreateDirectoryRecursive(destination.rootPath().c_str());
+        folder = destination.rootPath().c_str();
+      }
+      fileBrowserSetupFolderMode("SAVE INSTRUMENT", folder, filename, ".cni", onInstrumentSaved, onInstrumentCancelled);
       screenSetup(&screenFileBrowser, 0);
     }
   } else if (row == 1) {
@@ -788,7 +860,7 @@ int instrumentKeyJazzTextField(KeyJazzTextField* field) {
   field->popupOpen = isCharEdit;
   field->marksProjectModified = 1;
   field->str = NULL;
-  if (screen->cursorRow == 1) { field->str = chipnomadState->project.instruments[cInstrument].name; field->maxLen = PROJECT_INSTRUMENT_NAME_LENGTH; }
+  if (screen->cursorRow == 1 && chipnomadState->project.instruments[cInstrument].type != InstrumentType::Monk) { field->str = chipnomadState->project.instruments[cInstrument].name; field->maxLen = PROJECT_INSTRUMENT_NAME_LENGTH; }
   return 1;
 }
 

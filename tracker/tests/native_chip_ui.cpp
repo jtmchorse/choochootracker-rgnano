@@ -7,6 +7,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include "chipnomad_lib.h"
 #include "app.h"
 #include "corelib_font.h"
@@ -35,6 +36,58 @@ static void tapEdit(){key(1,keyEdit);key(0,0);}
 int main(int argc,char** argv){
   if(argc!=2&&argc!=3)return 1;output=argv[1];initDefaultAppSettings();appSettings.screenWidth=640;appSettings.screenHeight=480;fontSetCurrent(fontGetDefault());require(!gfxSetup(&appSettings.screenWidth,&appSettings.screenHeight),"SDL dummy setup");
   chipnomadState=chipnomadCreate();require(chipnomadState,"state");require(!projectLoad(&chipnomadState->project,"projects/gm-midi-demo.cct"),"fixture");
+  if(argc==3 && !strcmp(argv[2],"--live-waveform-only")) {
+    screensInitAll();waveformDisplayInit();monitorDisplayInit();cInstrument=0;
+    appSettings.waveformRefreshHz=1; // Exercise cached frames between refreshes.
+    auto pixels=[] {
+      SDL_Rect region{0,16*gfxGetCharHeight(),32*gfxGetCharWidth(),3*gfxGetCharHeight()};
+      std::vector<uint32_t> result(region.w*region.h);
+      require(SDL_RenderReadPixels(renderer,&region,SDL_PIXELFORMAT_ARGB8888,
+                                   result.data(),region.w*4)==0,"scope pixels");
+      return result;
+    };
+    for(auto type:{InstrumentType::SID,InstrumentType::OPLL,InstrumentType::GenesisFM,
+                  InstrumentType::MME,InstrumentType::Braids,InstrumentType::Plaits,
+                  InstrumentType::SegaPSG}) {
+      auto& instrument=chipnomadState->project.instruments[0];
+      getInstrumentFunctions(type).init(&instrument);
+      // No audio thread runs in this harness. Feed the UI snapshot a known
+      // monitor trace and deliberately expose the inactive render-chunk gap.
+      auto& status=chipnomadState->uiPlaybackStatus;
+      status.isPlaying=0;status.tracks[0].note.instrument=0;
+      memset(chipnomadState->voiceMonitors,0,sizeof(chipnomadState->voiceMonitors));
+      auto& monitor=chipnomadState->voiceMonitors[0];
+      for(int n=0;n<VOICE_MONITOR_SAMPLES;++n)monitor.samples[n]=std::sin(n*0.083f)*0.7f;
+      screenSetup(&screenInstrument,0);appDraw();const auto idle=pixels();
+      monitor.active=1;appDraw();const auto live=pixels();
+      require(live!=idle,"live trace differs from static preview");
+      currentScreen->fullRedraw();appDraw();
+      require(pixels()==live,"static redraw cannot show through cached live trace");
+      monitor.active=0;appDraw();
+      require(pixels()==live,"one inactive monitor read keeps live trace");
+      monitor.active=1;appDraw();
+      require(pixels()==live,"monitor recovery does not flash static");
+      status.isPlaying=1;monitor.active=0;SDL_Delay(300);appDraw();
+      const auto rest=pixels();
+      require(rest!=idle&&rest!=live,"song rest remains a live silence trace");
+      monitor.active=1;appDraw();
+      require(pixels()==live,"next note resumes immediately at low refresh rate");
+      monitor.active=0;status.isPlaying=0;SDL_Delay(300);appDraw();
+      const auto stopped=pixels();
+      require(stopped!=live&&stopped!=rest,"sustained idle restores static preview");
+      appDraw();require(pixels()==stopped,"idle preview is restored once, not repeatedly regenerated");
+      monitor.active=1;appDraw();monitor.active=0;
+      screenSetup(&screenInstrument,0);appDraw();
+      require(pixels()!=live,"screen reentry cannot retain a stale live trace");
+      getInstrumentFunctions(type).init(&chipnomadState->project.instruments[1]);
+      monitor.active=1;appDraw();
+      currentScreen->onInput(1,keyOpt|keyRight,1);appDraw();
+      require(cInstrument==1&&pixels()!=live,"instrument change cannot retain another instrument's live trace");
+      printf("Live waveform transitions passed for instrument type %d\n",int(type));
+    }
+    capture("waveform-returned-to-idle");
+    chipnomadDestroy(chipnomadState);SDL_Quit();return 0;
+  }
   if(argc==3 && !strcmp(argv[2],"--song-waveform-only")) {
     screensInitAll();waveformDisplayInit();monitorDisplayInit();
     auto& project=chipnomadState->project;
@@ -79,6 +132,8 @@ int main(int argc,char** argv){
       }
     }
     printf("Song-only waveform: transitions, full editor rows, bottom Phrase edits and Modulation touch passed in both modes\n");
+    chipnomadDestroy(chipnomadState);SDL_Quit();return 0;
+  }
   if(argc==3 && !strcmp(argv[2],"--sid-home-only")) {
     screensInitAll();waveformDisplayInit();monitorDisplayInit();
     static_assert(sizeof(FXId)==2,"Current lane commands must remain 16-bit");

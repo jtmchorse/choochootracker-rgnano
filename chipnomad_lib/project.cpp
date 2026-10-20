@@ -17,7 +17,7 @@ FXName fxNamesSequencer[] = {
   {fxRET, "RET"}, {fxDEL, "DEL"}, {fxOFF, "OFF"}, {fxKIL, "KIL"}, {fxTIC, "TIC"},
   {fxTBL, "TBL"}, {fxTBX, "TBX"}, {fxTHO, "THO"}, {fxTXH, "TXH"}, {fxGRV, "GRV"},
   {fxGGR, "GGR"}, {fxHOP, "HOP"}, {fxSNG, "SNG"}, {fxPRO, "PRO"},
-  {fxMOD, "MOD"}, {fxSPD, "SPD"}, {fxSLE, "SLE"}, {fxPAN, "PAN"}
+  {fxMOD, "MOD"}, {fxRNN, "RNN"}, {fxSPD, "SPD"}, {fxSLE, "SLE"}, {fxPAN, "PAN"}
 };
 int fxSequencerCount = sizeof(fxNamesSequencer) / sizeof(FXName);
 
@@ -61,37 +61,38 @@ FXName fxNamesInsert[] = {
 // FX Groups array. FX counts are filled in fillFXNames()
 FXGroup fxGroups[] = {
   {"Sequencer FX", fxNamesSequencer, 0, 8, InstrumentType::none},
-  {"Track FX", fxNamesTrack, 0, 4, InstrumentType::none},
+  {"Track FX", fxNamesTrack, 0, 8, InstrumentType::none},
   {"AY Classic FX", NULL, 0, 8, InstrumentType::AY1},
   {"AY Plus FX", NULL, 0, 8, InstrumentType::AY2},
   {"AYSample FX", NULL, 0, 8, InstrumentType::AYSample},
-  {"Braids FX", NULL, 0, 5, InstrumentType::Braids},
-  {"Sample FX", NULL, 0, 6, InstrumentType::Sample},
-  {"2xSCWF FX", NULL, 0, 4, InstrumentType::SCWF},
-  {"BYOWTBL FX", NULL, 0, 6, InstrumentType::BYOWTBL},
-  {"Plaits FX", NULL, 0, 7, InstrumentType::Plaits},
-  {"Plaits-Alt FX", NULL, 0, 7, InstrumentType::PlaitsAlt},
-  {"aChChid FX", NULL, 0, 9, InstrumentType::AChChid},
+  {"Braids FX", NULL, 0, 8, InstrumentType::Braids},
+  {"Sample FX", NULL, 0, 8, InstrumentType::Sample},
+  {"2xSCWF FX", NULL, 0, 8, InstrumentType::SCWF},
+  {"BYOWTBL FX", NULL, 0, 8, InstrumentType::BYOWTBL},
+  {"Plaits FX", NULL, 0, 8, InstrumentType::Plaits},
+  {"Plaits-Alt FX", NULL, 0, 8, InstrumentType::PlaitsAlt},
+  {"aChChid FX", NULL, 0, 8, InstrumentType::AChChid},
   {"Bogie FX", NULL, 0, 8, InstrumentType::DrumSynth},
   {"MME FX", NULL, 0, 8, InstrumentType::MME},
-  {"OPLL FX", NULL, 0, 4, InstrumentType::OPLL},
-  {"VRC7 FX", NULL, 0, 4, InstrumentType::VRC7},
-  {"OPL2 FX", NULL, 0, 4, InstrumentType::OPL2},
-  {"OPL3 FX", NULL, 0, 4, InstrumentType::OPL3},
-  {"Genesis FX", NULL, 0, 4, InstrumentType::GenesisFM},
-  {"Arcade FX", NULL, 0, 4, InstrumentType::ArcadeFM},
-  {"DX7 FX", NULL, 0, 4, InstrumentType::DX7},
-  {"Sega PSG FX", NULL, 0, 4, InstrumentType::SegaPSG},
-  {"GB Pulse FX", NULL, 0, 4, InstrumentType::GBPulse},
-  {"GB Noise FX", NULL, 0, 4, InstrumentType::GBNoise},
-  {"SID FX", NULL, 0, 4, InstrumentType::SID},
+  {"OPLL FX", NULL, 0, 8, InstrumentType::OPLL},
+  {"VRC7 FX", NULL, 0, 8, InstrumentType::VRC7},
+  {"OPL2 FX", NULL, 0, 8, InstrumentType::OPL2},
+  {"OPL3 FX", NULL, 0, 8, InstrumentType::OPL3},
+  {"Genesis FX", NULL, 0, 8, InstrumentType::GenesisFM},
+  {"Arcade FX", NULL, 0, 8, InstrumentType::ArcadeFM},
+  {"DX7 FX", NULL, 0, 8, InstrumentType::DX7},
+  {"Sega PSG FX", NULL, 0, 8, InstrumentType::SegaPSG},
+  {"GB Pulse FX", NULL, 0, 8, InstrumentType::GBPulse},
+  {"GB Noise FX", NULL, 0, 8, InstrumentType::GBNoise},
+  {"SID FX", NULL, 0, 8, InstrumentType::SID},
   {"Sintered FX", NULL, 0, 8, InstrumentType::Sintered},
-  {"ADSR / Trigger FX", fxNamesEnvelope, 0, 7, InstrumentType::none},
+  {"ADSR / Trigger FX", fxNamesEnvelope, 0, 8, InstrumentType::none},
   {"Modulation FX", fxNamesModulation, 0, 5, InstrumentType::none},
-  {"MIDI FX", NULL, 0, 4, InstrumentType::Midi},
+  {"MIDI FX", NULL, 0, 8, InstrumentType::Midi},
   {"TF1", fxNamesInsert, 8, 8, InstrumentType::none},
   {"TF2", fxNamesInsert + 8, 8, 8, InstrumentType::none},
-  {"SoundFont FX", NULL, 0, 4, InstrumentType::SoundFont},
+  {"MonkSynth FX", NULL, 0, 8, InstrumentType::Monk},
+  {"SoundFont FX", NULL, 0, 8, InstrumentType::SoundFont},
 };
 int fxGroupCount = sizeof(fxGroups) / sizeof(FXGroup);
 
@@ -147,11 +148,10 @@ void fillFXNames() {
     for (int i = 0; i < definition->fxCount; ++i) { names[i].fx = (FX)definition->fxList[i].fx; strcpy(names[i].name, definition->fxList[i].name); }
   }
 
-  {
-    auto type = InstrumentType::SoundFont;
+  for (auto type : {InstrumentType::Monk, InstrumentType::SoundFont}) {
     const auto* definition = getInstrumentDefinition(type);
     auto* names = instrumentGroupNames[(int)type];
-    auto& group = fxGroups[fxGroupCount - 1];
+    auto& group = fxGroups[fxGroupCount - (type == InstrumentType::Monk ? 2 : 1)];
     group.fxList = names; group.count = definition->fxCount;
     for (int i = 0; i < definition->fxCount; ++i) {
       names[i].fx = (FX)definition->fxList[i].fx;
@@ -175,8 +175,6 @@ void fillFXNames() {
     for(int fx=fxOAR;fx<=fxLEN;++fx)if(instrumentFXAvailable(type,fx)) {
       names[count].fx=FX(fx);strcpy(names[count++].name,directFMName(fx));
     }
-    // Keep the compact native FM lists in the existing six-column layout.
-    if(type==InstrumentType::OPLL||type==InstrumentType::VRC7||type==InstrumentType::OPL2||type==InstrumentType::OPL3||type==InstrumentType::GenesisFM||type==InstrumentType::ArcadeFM||type==InstrumentType::DX7)fxGroups[group].columns=6;
     fxGroups[group].fxList=names;fxGroups[group].count=count;
   }
 
@@ -226,6 +224,12 @@ void projectInit(Project* p) {
   p->delayTicks = 9;
   p->delayFeedback = 50;
   p->delayFilterCutoffHz = 12000;
+  p->delayAlgorithm = 0;
+  p->tapeDivision = 2;
+  p->tapeHeads = 6;
+  p->tapeTone = 160;
+  p->tapeFlutter = 25;
+  p->tapeSpring = 25;
 
   // Clean song structure
   for (int c = 0; c < PROJECT_MAX_LENGTH; c++) {

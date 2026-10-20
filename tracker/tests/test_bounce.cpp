@@ -214,7 +214,7 @@ TEST_CASE_FIXTURE(BounceFixture, "stopRange kills the sounding note at the bound
   // chipnomadRender writes interleaved stereo: samples * 2 floats
   float tail[512];
   int tailRendered = chipnomadRender(state, tail, 256);
-  CHECK(tailRendered == 256);
+  CHECK(tailRendered == 0); // Idle rendering must not resume a stale tick.
   for (int i = 0; i < 256 * 2; i++) {
     CHECK(tail[i] == 0.0f);
   }

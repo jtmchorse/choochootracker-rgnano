@@ -22,6 +22,8 @@ jobs:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -40,7 +42,10 @@ jobs:
           # GITHUB_REF_NAME contains a slash on pull_request events ("NN/merge"),
           # which breaks the zip output path. Sanitize it to a flat name.
           ZIP_REF=$(echo "${GITHUB_REF_NAME:-manual}" | tr '/' '-')
-          zip -qr ../../../releases/ChooChooTracker-${ZIP_REF}-Windows.zip .
+          strip --strip-unneeded choochootracker.exe
+          mapfile -t runtime_assets < <(find ../../packaging/common -mindepth 1 -maxdepth 1 -printf '%f\n')
+          zip -qr ../../../releases/ChooChooTracker-${ZIP_REF}-Windows.zip \
+            choochootracker.exe SDL2.dll libwinpthread-1.dll "${runtime_assets[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: choochootracker-windows

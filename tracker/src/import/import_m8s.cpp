@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <memory>
 
 static void copyName(char* dest, size_t destSize, const uint8_t* src, size_t srcSize) {
   size_t len = 0;
@@ -275,7 +276,8 @@ int projectLoadM8SWithSamples(Project* project, const char* path, const char* sa
     return 1;
   }
 
-  Project p;
+  auto owned = std::make_unique<Project>();
+  Project& p = *owned;
   projectInitAY(&p);
 
   float bpm;

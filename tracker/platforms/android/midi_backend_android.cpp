@@ -94,7 +94,15 @@ static void parseInput(const uint8_t* bytes, int length) {
   static uint8_t status = 0, data[2] = {}, dataCount = 0, expected = 0;
   for (int i = 0; i < length; ++i) {
     uint8_t byte = bytes[i];
-    if (byte >= 0xf8) continue; // realtime messages are outside the current router API
+    if (byte >= 0xf8) {
+      // Realtime bytes can interleave anywhere, even mid-message, and must
+      // never disturb the running-status state machine. Clock (0xF8) and
+      // transport (0xFA/0xFB/0xFC) are forwarded for MIDI clock sync;
+      // active sensing (0xFE) and reset (0xFF) are dropped.
+      if (byte == 0xf8 || byte == 0xfa || byte == 0xfb || byte == 0xfc)
+        pushInput(byte, 0, 0);
+      continue;
+    }
     if (byte & 0x80) {
       if (byte < 0xf0) {
         status = byte;
@@ -228,7 +236,9 @@ static int pollInput(void*, MidiEvent* event) {
   RawMessage message = inputQueue[tail];
   inputTail.store((tail + 1) % kInputCapacity, std::memory_order_release);
   event->timestampMicros = 0;
-  event->type = message.status & 0xf0;
+  // Realtime bytes keep their full status so the router can tell them
+  // apart; channel messages keep the existing type/channel split.
+  event->type = message.status >= 0xf8 ? message.status : (message.status & 0xf0);
   event->channel = message.status & 0x0f;
   event->data1 = message.data1;
   event->data2 = message.data2;
@@ -254,7 +264,7 @@ static const MidiBackend backend = {
   openInputPort, closeInputPort, openOutputPort, closeOutputPort,
   pollInput, scheduleOutput, flushOutput, droppedCount, nowMicros,
   nullptr, nullptr,
-  1, 1, 0, 0,
+  1, 1, 1, 0,
 };
 
 } // namespace

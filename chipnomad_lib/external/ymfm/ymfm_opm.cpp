@@ -520,15 +520,15 @@ void ym2151::write(uint32_t offset, uint8_t data)
 //  generate - generate one sample of sound
 //-------------------------------------------------
 
-void ym2151::generate(output_data *output, uint32_t numsamples)
+void ym2151::generate(output_data *output, uint32_t numsamples, uint32_t chanmask)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)
 	{
 		// clock the system
-		m_fm.clock(fm_engine::ALL_CHANNELS);
+		m_fm.clock(chanmask);
 
 		// update the FM content; OPM is full 14-bit with no intermediate clipping
-		m_fm.output(output->clear(), 0, 32767, fm_engine::ALL_CHANNELS);
+		m_fm.output(output->clear(), 0, 32767, chanmask);
 
 		// YM2151 uses an external DAC (YM3012) with mantissa/exponent format
 		// convert to 10.3 floating point value and back to simulate truncation

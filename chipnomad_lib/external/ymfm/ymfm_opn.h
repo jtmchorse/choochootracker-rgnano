@@ -759,7 +759,10 @@ public:
 	void write(uint32_t offset, uint8_t data);
 
 	// generate one sample of sound
-	void generate(output_data *output, uint32_t numsamples = 1);
+	// Restricted masks are for isolated voices: keep the mask fixed between
+	// resets and leave all omitted channels unused.
+	void generate(output_data *output, uint32_t numsamples = 1,
+		uint32_t chanmask = fm_engine::ALL_CHANNELS);
 
 protected:
 	// simulate the DAC discontinuity

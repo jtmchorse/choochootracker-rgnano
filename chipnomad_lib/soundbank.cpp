@@ -74,6 +74,7 @@ std::shared_ptr<const PreparedPreset> SampleCache::prepare(const Bank& b, const 
   result->name = p->name;
   result->warnings = b.warnings;
   result->warnings.insert(result->warnings.end(), p->warnings.begin(), p->warnings.end());
+  LoadStageScope progress(LoadStage::loading);
   std::set<const Audio*> counted;
   for (auto z : p->zones) {
     auto asset = b.assets.at(z.asset);

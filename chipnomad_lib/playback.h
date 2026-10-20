@@ -48,6 +48,7 @@ struct PlaybackNoteState {
   uint8_t accent;
 
   uint8_t pitchFinal; // Calculated pitch value
+  uint8_t sequencePitch; // Requested pitch before a Sequence PITCH bypass
   int8_t pitchOffset; // Pitch offset (semitones)
   int16_t fineOffset; // Fine pitch offset (cents or periods, depending on linearPitch setting)
   int16_t periodOffset; // Period offset
@@ -55,6 +56,7 @@ struct PlaybackNoteState {
   uint8_t volume2; // Instrument table volume
   uint8_t volume3; // Aux table volume
   int16_t volumeOffset; // Phrase-volume offset in the 0-127 domain
+  uint8_t sequenceVolume; // Requested phrase volume before a Sequence VOL bypass
 
   PlaybackTableState instrumentTable;
   PlaybackTableState auxTable;
@@ -134,7 +136,27 @@ struct PlaybackTrackState {
   // speed. Cleared by resetTrack so every stop path restores normal slice
   // mapping.
   uint8_t sliceBypass;
+
+  // RNS (random slice) runtime state: the picked slice index (0-based,
+  // valid only when rnsSeeded is set), whether a pick is currently
+  // held, and the last raw FX value seen (used to detect value changes
+  // for mode 02, pick and keep). Mode 02 holds the pick until the FX
+  // value changes or the track resets; modes 00/01 re-pick per row /
+  // per PLAY.
+  uint8_t rnsSlice;
+  uint8_t rnsSeeded;
+  uint8_t rnsLastValue;
+
+  // RNN (random note) runtime state: the picked note (valid only when
+  // rnnSeeded is set) and the last raw FX value seen, used to detect
+  // value changes for mode 02 (pick and keep).
+  uint8_t rnnPickedNote;
+  uint8_t rnnSeeded;
+  uint8_t rnnLastValue;
 };
+
+int playbackSequenceBypasses(const PlaybackTrackState* track, SequenceSource source);
+int16_t playbackSequenceGateOutput(const Modulation* modulation, uint32_t ticks);
 
 struct MidiCCRuntime {
   uint8_t active;

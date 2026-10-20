@@ -26,9 +26,10 @@ struct WorkCompressor {
     a2 = g * a1;
     a3 = g * a2;
   }
-  void process(float* l, float* r, int n) {
+  void process(float* l, float* r, int n, const float* sidechain = nullptr) {
     for (int i = 0; i < n; ++i) {
-      float sc = source == 1 ? l[i] : source == 2 ? r[i] : (l[i] + r[i]) * 0.5f;
+      float sc = source >= 3 ? (sidechain ? sidechain[i] : 0.0f) :
+                 source == 1 ? l[i] : source == 2 ? r[i] : (l[i] + r[i]) * 0.5f;
       if (filter) {
         float v3 = sc - ic2, v1 = a1 * ic1 + a2 * v3, v2 = ic2 + a2 * ic1 + a3 * v3;
         ic1 = 2 * v1 - ic1;

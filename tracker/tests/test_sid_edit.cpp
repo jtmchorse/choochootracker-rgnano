@@ -149,7 +149,7 @@ TEST_CASE("SID editor cutoff off sentinel and four digit fields render correctly
     CHECK(std::string(mockGfxCells[row] + 32, 8) == "        ");
 }
 
-TEST_CASE("SID editor identifies imported overrides while keeping the preset editable") {
+TEST_CASE("SID editor protects program-owned controls while keeping other controls editable") {
   Editor e;
   e.macro(2, 1500);
   REQUIRE(validSID(e.patch()));
@@ -161,10 +161,13 @@ TEST_CASE("SID editor identifies imported overrides while keeping the preset edi
     CHECK(e.hint(col, 3) == "Pulse width: imported pulse macro");
     e.table->onEdit(col, 3, CellEditAction::increase);
   }
-  CHECK(e.patch().value[sidPulse] == before.value[sidPulse] + 1);
-  CHECK(e.patch().value[sidPulseDepth] == before.value[sidPulseDepth] + 1);
-  CHECK(e.patch().value[sidPulseRate] == before.value[sidPulseRate] + 1);
+  CHECK(e.patch().value[sidPulse] == before.value[sidPulse]);
+  CHECK(e.patch().value[sidPulseDepth] == before.value[sidPulseDepth]);
+  CHECK(e.patch().value[sidPulseRate] == before.value[sidPulseRate]);
   CHECK(memcmp(&before.program, &e.patch().program, sizeof(ChipProgram)) == 0);
+  CHECK(projectModified == 0);
+  e.table->onEdit(0, 1, CellEditAction::increase);
+  CHECK(e.patch().value[sidAttack] == before.value[sidAttack] + 1);
   CHECK(projectModified == 1);
   e.macro(3, 2); e.macro(5, 900); e.macro(1, 7);
   REQUIRE(validSID(e.patch()));
@@ -173,7 +176,7 @@ TEST_CASE("SID editor identifies imported overrides while keeping the preset edi
   CHECK(e.hint(0, 7) == "Pitch: imported arpeggio macro");
 }
 
-TEST_CASE("SID editor GoatTracker base edits preserve imported tables") {
+TEST_CASE("SID editor GoatTracker controls cannot silently edit unused values") {
   Editor e;
   auto& p = e.patch().program;
   p.format = 2; p.rate = 50; p.size = 33;
@@ -184,8 +187,8 @@ TEST_CASE("SID editor GoatTracker base edits preserve imported tables") {
     for (int col = 0; col < e.table->getColumnCount(row); ++col)
       e.table->onEdit(col, row, CellEditAction::increase);
   CHECK(memcmp(&before.program, &e.patch().program, sizeof(ChipProgram)) == 0);
-  CHECK(e.patch().value[sidPulse] == before.value[sidPulse] + 1);
-  CHECK(projectModified == 1);
+  CHECK(e.patch().value[sidPulse] == before.value[sidPulse]);
+  CHECK(projectModified == 0);
   REQUIRE(validSID(e.patch()));
   e.draw();
   CHECK(std::string(mockGfxCells[14], 40).find("Source: GoatTracker tables") == 0);
@@ -259,4 +262,30 @@ TEST_CASE("SID editor observes real audio FX snapshots while editing the preset"
   chipnomadQueuePlaybackStop(chipnomadState);
   chipnomadRender(chipnomadState, audio.data(), 960);
   CHECK(e.hint(1, 4) == "Filter cutoff: 000-7FF");
+}
+
+TEST_CASE("SID home marks and protects imported controls") {
+  Editor e;
+  instrumentFMSetContext(0, InstrumentType::SID);
+  e.macro(2, 1500);
+  auto before = e.patch();
+  screenInstrumentOPL.drawStatic();
+  screenInstrumentOPL.drawField(1, 5, CellState::focus);
+  CHECK(mockGfxCells[9][27] == '*');
+  CHECK(std::string(mockGfxCells[10], 32).find("Program:") == std::string::npos);
+  CHECK(std::string(mockGfxCells[15], 32).find("* = program controlled") == 0);
+  screenInstrumentOPL.onEdit(1, 5, CellEditAction::increase);
+  CHECK(memcmp(&before, &e.patch(), sizeof(before)) == 0);
+  CHECK(projectModified == 0);
+  CHECK(std::string(screenGetActiveMessage()) == "Pulse width: imported pulse macro");
+  screenInstrumentOPL.onEdit(0, 8, CellEditAction::increase);
+  CHECK(e.patch().value[sidAttack] == before.value[sidAttack] + 1);
+  e.patch().program = {};
+  screenInstrumentOPL.drawField(1, 5, CellState::normal);
+  CHECK(mockGfxCells[9][27] == ' ');
+  screenInstrumentOPL.drawStatic();
+  CHECK(std::string(mockGfxCells[15], 32).find("* = program controlled") == std::string::npos);
+  e.macro(1, 12); // Pitch is owned only in EDIT, not among the home controls.
+  screenInstrumentOPL.drawStatic();
+  CHECK(std::string(mockGfxCells[15], 32).find("* = program controlled") == std::string::npos);
 }

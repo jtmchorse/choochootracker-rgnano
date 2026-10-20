@@ -12,14 +12,32 @@ int audioSetup(AudioCallback* audioCallback, int sampleRate, int bufferSize) {
 }
 void audioPause(int isPaused) { rgnanoAudioPause(isPaused); }
 void audioCleanup(void) { rgnanoAudioClose(); }
+
+// Audio input capture is compiled out on RG Nano (the Audio Input menu row is
+// hidden): inert stubs keep the shared input manager linking. MERGE-REVIEW.
+int audioInputDeviceCount(void) { return 0; }
+int audioInputDeviceName(int, char*, int) { return 1; }
+int audioInputSetup(AudioCaptureCallback*, int, int, int, int) { return 1; }
+void audioInputPause(int) {}
+void audioInputCleanup(void) {}
+int audioInputRefreshDevices(void) { return 1; }
 #else
+#include <cstring>
 #ifdef WEB_BUILD
 #include <emscripten.h>
 static AudioCallback* webAudioCallback = nullptr;
 static int webSampleRate, webBufferSize;
 #endif
+
+// Strong override of the weak default in link_client.cpp (T39): the
+// measured device output latency used by Link's beat-0 launch scheduler.
+// Same C++ linkage as the declaration in link_backend_internal.h.
+uint64_t outputLatencyMicros(void);
+static uint64_t measuredOutputLatencyMicros = 0;
+uint64_t outputLatencyMicros(void) { return measuredOutputLatencyMicros; }
 #ifdef ANDROID_BUILD
 #include "../android/audio_diagnostics.h"
+#include <jni.h>
 #include <android/log.h>
 #include <math.h>
 
@@ -119,6 +137,13 @@ int audioSetup(AudioCallback* audioCallback, int sampleRate, int bufferSize) {
   webSampleRate = sampleRate;
   webBufferSize = bufferSize;
 #endif
+  // Measured output latency for Ableton Link scheduling (T39): the time
+  // audio spends in SDL's buffer before reaching the DAC. PortMaster
+  // buffer 512 @ 48 kHz = ~10667 us; desktop 256 @ 48 kHz = ~5333 us.
+  // AUDIOENGINE-1 caveat (documented ship exclusion on PortMaster): the
+  // true DAC latency of ArkOS/ALSA is unmeasured, so this is a lower
+  // bound on the real output latency there.
+  measuredOutputLatencyMicros = (uint64_t)((uint64_t)spec.samples * 1000000ULL / (uint64_t)spec.freq);
 #ifdef ANDROID_BUILD
   if (audioDiagnostics::enabled) {
     __android_log_print(ANDROID_LOG_INFO, "CCTAudio",
@@ -166,5 +191,158 @@ extern "C" EMSCRIPTEN_KEEPALIVE int webRestartAudio() {
   return result;
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// Audio input (capture)
+// ---------------------------------------------------------------------------
+
+static SDL_AudioDeviceID captureDevice = 0;
+
+#ifdef ANDROID_BUILD
+// SDL's Android backend enumerates capture devices by their numeric id: the
+// "name" SDL reports IS the id as a decimal string, and opening parses it
+// back with SDL_atoi. The numeric string must therefore stay the device's
+// identity for opening, but it is useless for display. The tracker asks the
+// Java side for a human-readable name for the menu instead.
+static JavaVM* audioJavaVm = nullptr;
+static jobject audioJavaActivity = nullptr;
+static jmethodID audioInputDeviceNameMethod = nullptr;
+
+// The helper methods live on org.libsdl.app.SDLAudioManager as statics, NOT on
+// the activity class. GetMethodID on the activity class returns null and ART
+// aborts with "JNI DETECTED ERROR IN APPLICATION: mid == null" on the call.
+static jclass audioManagerClass = nullptr;
+
+struct AttachedJavaEnv {
+  JNIEnv* env = nullptr;
+  bool attached = false;
+  bool get(void) {
+    if (!audioJavaVm) return false;
+    if (audioJavaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) return true;
+    if (audioJavaVm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
+    attached = true;
+    return true;
+  }
+  ~AttachedJavaEnv(void) { if (attached) audioJavaVm->DetachCurrentThread(); }
+};
+
+static bool ensureAudioJava(void) {
+  if (audioInputDeviceNameMethod) return true;
+  JNIEnv* env = reinterpret_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+  jobject current = reinterpret_cast<jobject>(SDL_AndroidGetActivity());
+  if (!env || !current) return false;
+  env->GetJavaVM(&audioJavaVm);
+  audioJavaActivity = env->NewGlobalRef(current);
+  env->DeleteLocalRef(current);
+  jclass cls = env->FindClass("org/libsdl/app/SDLAudioManager");
+  if (!cls) {
+    env->ExceptionClear();
+    return false;
+  }
+  audioManagerClass = reinterpret_cast<jclass>(env->NewGlobalRef(cls));
+  env->DeleteLocalRef(cls);
+  if (!audioManagerClass) return false;
+  audioInputDeviceNameMethod = env->GetStaticMethodID(audioManagerClass,
+    "audioInputDeviceName", "(I)Ljava/lang/String;");
+  if (!audioInputDeviceNameMethod) {
+    env->ExceptionClear();
+    return false;
+  }
+  return true;
+}
+
+static int androidInputName(int deviceId, char* buffer, int bufferSize) {
+  AttachedJavaEnv attached;
+  if (!ensureAudioJava() || !attached.get()) return 1;
+  jstring name = (jstring)attached.env->CallStaticObjectMethod(audioManagerClass,
+    audioInputDeviceNameMethod, (jint)deviceId);
+  if (attached.env->ExceptionCheck()) {
+    attached.env->ExceptionClear();
+    return 1;
+  }
+  if (!name) return 1;
+  const char* utf = attached.env->GetStringUTFChars(name, nullptr);
+  if (!utf) { attached.env->DeleteLocalRef(name); return 1; }
+  strncpy(buffer, utf, bufferSize - 1);
+  buffer[bufferSize - 1] = 0;
+  attached.env->ReleaseStringUTFChars(name, utf);
+  attached.env->DeleteLocalRef(name);
+  return 0;
+}
+
+// True when the SDL device "name" is just the numeric id (Android backend).
+static int isNumericDeviceName(const char* name) {
+  if (!name || !*name) return 0;
+  for (const char* p = name; *p; ++p) {
+    if (*p < '0' || *p > '9') return 0;
+  }
+  return 1;
+}
+#endif
+
+int audioInputDeviceCount(void) {
+  return SDL_GetNumAudioDevices(SDL_TRUE);
+}
+
+int audioInputDeviceName(int index, char* buffer, int bufferSize) {
+  const char* name = SDL_GetAudioDeviceName(index, SDL_TRUE);
+  if (!name) return 1;
+#ifdef ANDROID_BUILD
+  // Keep the numeric id as the device identity (audioInputSetup opens by
+  // index through SDL_GetAudioDeviceName, which the aaudio backend parses
+  // back to an id), but hand the menu a readable name for display.
+  if (isNumericDeviceName(name)) {
+    if (androidInputName(SDL_atoi(name), buffer, bufferSize) == 0) return 0;
+  }
+#endif
+  strncpy(buffer, name, bufferSize - 1);
+  buffer[bufferSize - 1] = 0;
+  return 0;
+}
+
+static void sdlCaptureCallback(void* userdata, uint8_t* buffer, int bufferBytes) {
+  AudioCaptureCallback* cb = (AudioCaptureCallback*)userdata;
+  cb((const int16_t*)buffer, bufferBytes / sizeof(int16_t) / 2, 2);
+}
+
+int audioInputSetup(AudioCaptureCallback* callback, int sampleRate,
+                    int bufferSize, int channels, int deviceIndex) {
+  SDL_AudioSpec spec;
+  SDL_memset(&spec, 0, sizeof(spec));
+  spec.freq = sampleRate;
+  spec.format = AUDIO_S16;
+  spec.channels = channels;
+  spec.samples = bufferSize;
+  spec.callback = sdlCaptureCallback;
+  spec.userdata = (void*)callback;
+
+  captureDevice = SDL_OpenAudioDevice(
+    deviceIndex >= 0 ? SDL_GetAudioDeviceName(deviceIndex, SDL_TRUE) : NULL,
+    SDL_TRUE, &spec, NULL, 0);
+  if (captureDevice == 0) return 1;
+  SDL_PauseAudioDevice(captureDevice, 0);
+  return 0;
+}
+
+int audioInputRefreshDevices(void) {
+  // SDL caches the device list until the audio subsystem re-initializes.
+  // Re-init it so hot-plugged USB interfaces show up. Capture devices must be
+  // closed first (the caller disarms before calling this).
+  if (captureDevice) return 1;
+  SDL_QuitSubSystem(SDL_INIT_AUDIO);
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 1;
+  return 0;
+}
+
+void audioInputPause(int isPaused) {
+  if (captureDevice) SDL_PauseAudioDevice(captureDevice, isPaused ? 1 : 0);
+}
+
+void audioInputCleanup(void) {
+  if (captureDevice) {
+    SDL_CloseAudioDevice(captureDevice);
+    captureDevice = 0;
+  }
+}
 
 #endif // RGNANO_BUILD

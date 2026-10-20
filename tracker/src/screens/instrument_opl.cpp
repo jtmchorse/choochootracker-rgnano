@@ -209,7 +209,11 @@ void drawStatic(){instrumentCommonDrawStatic();gfxSetFgColor(appSettings.colorSc
  gfxPrint(0,13,"Cutoff:");gfxPrint(20,13,"Reso:");
  gfxPrint(0,14,"ADSR:");
  gfxPrint(6,14,"A");gfxPrint(11,14,"D");gfxPrint(16,14,"S");gfxPrint(21,14,"R");
- gfxSetFgColor(appSettings.colorScheme.textInfo);gfxPrint(0,15,"Max 4 notes");
+ gfxSetFgColor(appSettings.colorScheme.textInfo);
+ bool programControlled=false;
+ for(int row=5;row<=8;++row)for(int col=0;col<columns(row);++col)
+  programControlled|=sidImportedControlReason(current()->chip.sid,sidField(col,row))!=nullptr;
+ gfxPrint(0,15,programControlled?"* = program controlled":"Max 4 notes (ring/sync uses 2)");
  if(!sidWaveformBitmap)sidWaveformBitmap=gfxBitmapCreate(32,3);gfxClearRect(0,16,32,3);renderFMPreview(sidWaveformBitmap,current());gfxDrawBitmap(sidWaveformBitmap,0,16);return;
  }gfxPrint(0,9,"Fine ct");gfxPrint(0,11,"Mode");const char* mode=isOPLL(current()->type)?"2 operator":fourOp()?"4 operator":dx7()?"6 operator":current()->chip.opl.topology==OPLTopology::fourOperator?"4 operator":current()->chip.opl.topology==OPLTopology::dualVoice?"Dual voice":"2 operator";gfxPrint(9,11,mode);instrumentFMAmpDrawStatic();}
 void drawCursor(int col,int row){if(sid()&&row==4){gfxCursor(col?28:9,7,col?4:18);return;}if(sid()&&row>=5){gfxCursor(sidX(col,row),sidY(row),sidWidth(col,row));return;}if(row==6){instrumentFMToneDrawCursor(col);return;}if(row>=7){instrumentFMAmpDrawCursor(col,row-7);return;}if(row<3)instrumentCommonDrawCursor(col,row);else if(row==5&&col==1)gfxCursor(16,9,4);else gfxCursor(9,row==3?6:row==4?7:9,row==5?4:28);}
@@ -220,7 +224,9 @@ void drawField(int col,int row,CellState state){
  }
  if(sid()&&row>=5){
   int x=sidX(col,row),y=sidY(row);auto v=current()->chip.sid.value[sidField(col,row)];
-  gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);gfxClearRect(x,y,sidWidth(col,row),1);
+  const char* owned=sidImportedControlReason(current()->chip.sid,sidField(col,row));
+  gfxSetFgColor(appSettings.colorScheme.textInfo);gfxClearRect(x+sidWidth(col,row),y,1,1);if(owned)gfxPrint(x+sidWidth(col,row),y,"*");
+  gfxSetFgColor(owned?appSettings.colorScheme.textInfo:state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);gfxClearRect(x,y,sidWidth(col,row),1);
   if(row==5&&!col){const char* waves[]={"Off","Tri","Saw","TS","Pulse","TP","SP","TSP","Noise"};gfxPrint(x,y,waves[v]);}
   else if(row==6){const char* modes[]={"Off","LP","BP","LB","HP","LH","BH","LBH"};gfxPrint(x,y,modes[v&7]);}
   else gfxPrintf(x,y,"%0*X",sidWidth(col,row),v);
@@ -231,8 +237,8 @@ void drawField(int col,int row,CellState state){
   if(row==6){instrumentFMToneDrawField(col,state);return;}if(row>=7){instrumentFMAmpDrawField(col,row-7,state);return;}
   if(row<3){instrumentCommonDrawField(col,row,state);return;}
   if(row==5&&col==1){gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textInfo);gfxClearRect(16,9,4,1);gfxPrint(16,9,"EDIT");return;}
-  gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);int y=row==3?6:row==4?7:9;gfxClearRect(9,y,row==3?28:row==5?6:sid()?18:30,1);
-  if(row==3)gfxPrintf(9,y,"%.28s",instrumentPresetCollectionName());
+  gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);int y=row==3?6:row==4?7:9;gfxClearRect(9,y,row==3?(sid()?23:28):row==5?6:sid()?18:30,1);
+  if(row==3)gfxPrintf(9,y,"%.*s",sid()?23:28,instrumentPresetCollectionName());
   else if(row==4)gfxPrintf(9,y,"%.*s",sid()?18:30,presetName());else gfxPrintf(9,y,"%+04d",fineTune());
   instrumentFMRefreshStaticWaveform();
 }
@@ -241,6 +247,7 @@ int onEdit(int col,int row,CellEditAction action){
  if(sid()&&row>=5){
   int field=sidField(col,row),max=field==sidWave?8:field==sidPulse?4095:field==sidCutoff?2047:field==sidFilterMode?7:15;
   int min=field==sidWave?1:0,step=max>255?128:max>15?16:1;
+  if(const char* reason=sidImportedControlReason(current()->chip.sid,field)){screenMessage(MESSAGE_TIME_ERROR,"%s",reason);return 1;}
   action=convertMultiAction(action);int v=current()->chip.sid.value[field];
   if(action==CellEditAction::clear)v=min;else if(action==CellEditAction::increase)++v;else if(action==CellEditAction::decrease)--v;
   else if(action==CellEditAction::increaseBig)v+=step;else if(action==CellEditAction::decreaseBig)v-=step;else return 0;
@@ -299,6 +306,23 @@ void instrumentPresetCycle(int direction){
   int index=selected(),count=int(catalog.size()+userSounds.size());
   if(!count)return;
   for(int tries=0;tries<count;++tries){index=(index+direction+count)%count;if(index>=int(catalog.size())||matchesCollection(index)){select(index);break;}}
+}
+
+void instrumentSIDDrawHints() {
+  static char owned[48]{};
+  if(!sid()){owned[0]=0;return;}
+  const char* active=screenGetActiveMessage();
+  if(active[0]&&strcmp(active,owned)){owned[0]=0;return;}
+  const int row=screenInstrumentOPL.cursorRow,col=screenInstrumentOPL.cursorCol;
+  const char* hint="";
+  if(row==4&&!col)hint=current()->chip.sid.presetName;
+  else if(row>=5) {
+    hint=sidImportedControlReason(current()->chip.sid,sidField(col,row));
+    if(!hint)hint=row==5?(col?"Pulse width: 000-FFF":"Waveform: T triangle, S saw, P pulse"):
+      row==6?"Filter: L low, B band, H high pass":row==7?(col?"Resonance: 00-0F":"Filter cutoff: 000-7FF"):
+      col==2?"Sustain level: 00 silent, 0F full":"Envelope time: 00 fast, 0F slow";
+  }
+  screenMessage(0,"%s",hint);snprintf(owned,sizeof(owned),"%s",screenGetActiveMessage());
 }
 
 void instrumentFMSetContext(int instrument, InstrumentType type) {

@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "user_presets.h"
+#include "monk_patch.h"
 #include "packaged_presets.h"
 #include <filesystem>
 #include <fstream>
@@ -229,4 +230,119 @@ TEST_CASE("USER references restore nested ZIP and bank location for seamless ste
   for(const auto& ref:refs){REQUIRE(b.focus(ref,error));bool found=false;for(size_t i=0;i<b.items().size();++i)if(b.reference(i).path==ref.path)found=true;CHECK(found);}
   const auto label=b.label();auto missing=refs.front();missing.path="Missing/absent.cni";
   CHECK_FALSE(b.focus(missing,error));CHECK(b.label()==label);
+}
+
+TEST_CASE("SID single-file names retain model suffixes and ignore stale source names") {
+  Fixture f;
+  std::vector<uint8_t> goat(33);memcpy(goat.data(),"GTI5",4);
+  memcpy(goat.data()+13,"Wrong name",10);
+  write(f.root/"Violin_8580.ins",goat);
+  write(f.root/"Violin_6581.ins",goat);
+  UserPresets library;std::string error;library.setup(f.root.string(),InstrumentType::SID);
+  REQUIRE(library.refresh(error));
+  auto p=std::make_unique<Project>();projectInit(p.get());
+  for(const char* label:{"Violin 6581","Violin 8580"}) {
+    auto index=find(library,label);
+    REQUIRE(library.load(index,p.get(),0,error));
+    CHECK(std::string(p->instruments[0].chip.sid.presetName)==label);
+    CHECK(std::string(p->instruments[0].name)==label);
+    CHECK(memcmp(p->instruments[0].chip.sid.program.data,goat.data(),goat.size())==0);
+    REQUIRE(library.focus(library.reference(index),error));
+    CHECK(library.items()[0].name==label);
+    REQUIRE(library.back(error));
+  }
+  projectFree(p.get());
+}
+
+TEST_CASE("SID USER columns keep model folders in one collection and restore the chosen sound") {
+  Fixture f;
+  const auto original=fs::current_path();
+  fs::create_directories(f.root/"instruments/USER/sid");
+  fs::copy_file("tests/fixtures/preset-packs/sid-models.zip",f.root/"instruments/USER/sid/Chip Pack.zip");
+  struct Restore {fs::path path;~Restore(){fs::current_path(path);}} restore{original};
+  fs::current_path(f.root);
+  auto* prior=chipnomadState;auto* state=chipnomadCreate();chipnomadState=state;
+  screensInitAll();cInstrument=0;
+  getInstrumentFunctions(InstrumentType::SID).init(&state->project.instruments[0]);
+  auto press=[](int key){screenSelectionPopup.onInput(1,key,0);screenSelectionPopup.onInput(0,key,0);};
+  openUserPresetBrowser();
+  REQUIRE(currentScreen==&screenSelectionPopup);
+  CHECK_FALSE(selectionPopupIsFullWidth());
+  screenSelectionPopup.fullRedraw();
+  std::string collections,sounds;
+  for(int row=2;row<18;++row){collections.append(mockGfxCells[row],18);sounds.append(mockGfxCells[row]+20,20);}
+  const auto pack=collections.find("Chip Pack");
+  REQUIRE(pack!=std::string::npos);
+  CHECK(collections.find("Chip Pack",pack+1)==std::string::npos);
+  CHECK(collections.find("6581")==std::string::npos);
+  CHECK(collections.find("8580")==std::string::npos);
+  CHECK(collections.find(".zip")==std::string::npos);
+  CHECK(sounds.find("Violin 6581")!=std::string::npos);
+  CHECK(sounds.find("Violin 8580")!=std::string::npos);
+  press(keyRight);press(keyDown);press(keyEdit);
+  REQUIRE(currentScreen==&screenInstrument);
+  CHECK(std::string(state->project.instruments[0].chip.sid.presetName)=="Violin 8580");
+  const auto selected=state->project.instruments[0];
+  openUserPresetBrowser();press(keyRight);press(keyEdit);
+  CHECK(currentScreen==&screenInstrument);
+  CHECK(!memcmp(&selected,&state->project.instruments[0],sizeof(selected)));
+  openUserPresetBrowser();press(keyOpt);
+  CHECK(currentScreen==&screenInstrument);
+  CHECK(!memcmp(&selected,&state->project.instruments[0],sizeof(selected)));
+  chipnomadDestroy(state);chipnomadState=prior;
+}
+
+TEST_CASE("MONK defaults to ALL and preserves the bank while selecting and cycling both sources") {
+  Fixture f;
+  const auto original = fs::current_path();
+  fs::create_directories(f.root / "instruments/FACTORY/monk");
+  fs::create_directories(f.root / "instruments/USER/monk");
+  struct Restore { fs::path path; ~Restore() { fs::current_path(path); } } restore{original};
+  fs::current_path(f.root);
+  auto* prior = chipnomadState;
+  auto* state = chipnomadCreate(); chipnomadState = state;
+  screensInitAll(); cInstrument = 0;
+  auto& instrument = state->project.instruments[0];
+  getInstrumentFunctions(InstrumentType::Monk).init(&instrument);
+  CHECK(instrument.chip.monk.factory == monkBankAll);
+  for (int bank : {monkBankFactory, monkBankUser}) {
+    instrument.chip.monk.factory = bank;
+    instrument.chip.monk.vowel = bank == monkBankFactory ? 32 : 224;
+    std::strcpy(instrument.name, bank == monkBankFactory ? "Factory tone" : "User tone");
+    REQUIRE(instrumentSave(&state->project, bank == monkBankFactory ?
+      "instruments/FACTORY/monk/tone.cni" : "instruments/USER/monk/tone.cni", 0) == 0);
+  }
+  getInstrumentFunctions(InstrumentType::Monk).init(&instrument);
+  auto press = [](int key) { screenSelectionPopup.onInput(1,key,0); screenSelectionPopup.onInput(0,key,0); };
+  openUserPresetBrowser(); screenSelectionPopup.fullRedraw();
+  std::string menu; for (auto& row : mockGfxCells) menu.append(row,40);
+  CHECK(menu.find("ALL") != std::string::npos);
+  CHECK(menu.find("FACTORY") != std::string::npos);
+  CHECK(menu.find("USER") != std::string::npos);
+  press(keyRight); press(keyEdit);
+  REQUIRE(currentScreen == &screenInstrument);
+  CHECK(instrument.chip.monk.factory == monkBankAll);
+  const int first = instrument.chip.monk.vowel;
+  CHECK((first == 32 || first == 224));
+  cycleUserPreset(1);
+  CHECK(instrument.chip.monk.factory == monkBankAll);
+  CHECK(instrument.chip.monk.vowel == 256 - first);
+  const auto selected = instrument;
+  openUserPresetBrowser(); press(keyRight); press(keyEdit);
+  CHECK(std::memcmp(&instrument, &selected, sizeof(instrument)) == 0);
+  cycleUserPreset(1);
+  CHECK(instrument.chip.monk.vowel == first);
+  cycleUserPreset(-1);
+  CHECK(instrument.chip.monk.vowel == 256 - first);
+  REQUIRE(instrumentSave(&state->project, "all.cni", 0) == 0);
+  instrument.chip.monk.factory = monkBankUser;
+  REQUIRE(instrumentLoad(&state->project, "all.cni", 0) == 0);
+  CHECK(instrument.chip.monk.factory == monkBankAll);
+  for (int bank : {monkBankFactory, monkBankUser}) {
+    instrument.chip.monk.factory = bank;
+    cycleUserPreset(1);
+    CHECK(instrument.chip.monk.factory == bank);
+    CHECK(instrument.chip.monk.vowel == (bank == monkBankFactory ? 32 : 224));
+  }
+  chipnomadDestroy(state); chipnomadState = prior;
 }

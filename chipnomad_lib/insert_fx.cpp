@@ -1,3 +1,4 @@
+#include "formant_filter.h"
 #include "insert_fx.h"
 #include "beads_insert.h"
 #include "fx_profile.h"
@@ -26,7 +27,7 @@ static const InsertDescriptor descriptors[] = {
       {"Release", "Release", "Hz", 60, 0.4f, 128, M::exponential},
       {"Makeup", "Makeup", "dB", 0, 24, 0, M::linear},
       {"Ratio", "Ratio", "", 0, 7, 3, M::discrete},
-      {"Detect", "Detector source", "", 0, 2, 0, M::discrete},
+      {"Detect", "Detector source", "", 0, 10, 0, M::discrete},
       {"DetFilt", "Detector filter", "", -1, 1, 128, M::bipolar},
       {"Mix", "Mix", "%", 0, 1, 255, M::linear}}},
     {"Distortion",
@@ -56,11 +57,11 @@ static const InsertDescriptor descriptors[] = {
       {"Output", "Output", "dB", -24, 24, 112, M::bipolar}}},
     {"Chorus",
      5,
-     {{"Rate", "Rate", "Hz", 0.05f, 20, 82, M::exponential},
-      {"Depth", "Depth", "ms", 0.2f, 35, 115, M::exponential},
+     {{"Rate", "Rate", "Hz", 0.05f, 20, 99, M::exponential},
+      {"Depth", "Depth", "ms", 0.2f, 50, 145, M::exponential},
       {"Tone", "Tone", "Hz", 800, 18000, 210, M::exponential},
-      {"Mix", "Mix", "%", 0, 1, 96, M::linear},
-      {"Feedback", "Feedback", "%", -0.95f, 0.95f, 128, M::bipolar}}},
+      {"Mix", "Mix", "%", 0, 1, 128, M::linear},
+      {"Feedback", "Feedback", "%", -0.98f, 0.98f, 140, M::bipolar}}},
     {"Flanger",
      4,
      {{"Rate", "Rate", "Hz", 0.02f, 20, 100, M::exponential},
@@ -69,11 +70,11 @@ static const InsertDescriptor descriptors[] = {
       {"Mix", "Mix", "%", 0, 1, 100, M::linear}}},
     {"Phaser",
      5,
-     {{"Rate", "Rate", "Hz", 0.02f, 15, 60, M::exponential},
-      {"Depth", "Depth", "%", 0, 1.5f, 160, M::linear},
-      {"Feedback", "Feedback", "%", -0.98f, 0.98f, 144, M::bipolar},
-      {"Mix", "Mix", "%", 0, 1, 128, M::linear},
-      {"Stages", "Stages", "", 0, 4, 0, M::discrete}}},
+     {{"Rate", "Rate", "Hz", 0.02f, 15, 92, M::exponential},
+      {"Depth", "Depth", "%", 0, 2, 180, M::linear},
+      {"Feedback", "Feedback", "%", -0.98f, 0.98f, 160, M::bipolar},
+      {"Mix", "Mix", "%", 0, 1, 144, M::linear},
+      {"Stages", "Stages", "", 0, 4, 1, M::discrete}}},
     {"Rotary",
      4,
      {{"Speed", "Speed", "Hz", 0.01f, 25, 143, M::exponential},
@@ -124,24 +125,41 @@ static const InsertDescriptor descriptors[] = {
       {"Scatter", "Grain scatter", "%", 0, 1, 0, M::linear},
       {"Feedback", "Feedback", "%", 0, 1, 0, M::linear},
       {"Shp/Frz", "Shape / Freeze", "", 0, 255, 38, M::discrete},
-      {"Mix", "Mix", "%", 0, 1, 128, M::linear}}}};
+      {"Mix", "Mix", "%", 0, 1, 128, M::linear}}},
+    {"FORMANT", 6,
+     {{"MODE", "Mode", "", 0, 1, 0, M::discrete},
+      {"VOW", "Vowel", "", 0, 1, 0, M::linear},
+      {"F1", "First formant", "Hz", 200, 1200, 206, M::exponential},
+      {"F2", "Second formant", "Hz", 500, 2800, 173, M::exponential},
+      {"RES", "Resonance", "Q", 2, 16, 85, M::exponential},
+      {"MIX", "Mix", "%", 0, 1, 255, M::linear}}}};
 static_assert(sizeof(descriptors) / sizeof(descriptors[0]) == insertModuleCount,
               "Stable module catalogue");
 const InsertDescriptor& insertDescriptor(int m) {
   return descriptors[m >= 0 && m < insertModuleCount ? m : 0];
 }
-uint8_t insertClamp(int m, int p, int v) {
+int insertParameterMaximum(int m, int p) {
   const auto& d = insertDescriptor(m);
   if (p < 0 || p >= d.count) return 0;
-  return std::max(
-      0, std::min(v, d.parameters[p].mapping == M::discrete ? (int)d.parameters[p].maximum : 255));
+  if (m == insertFormant && p == 1) return 127;
+  return d.parameters[p].mapping == M::discrete ? (int)d.parameters[p].maximum : 255;
+}
+bool insertParameterActive(int m, int p, int mode) {
+  return p >= 0 && p < insertDescriptor(m).count &&
+    (m != insertFormant || (mode ? p != 1 : p != 2 && p != 3));
+}
+bool insertParameterModulatable(int m, int p, int mode) {
+  return insertParameterActive(m, p, mode) && !(m == insertFormant && p == 0);
+}
+uint8_t insertClamp(int m, int p, int v) {
+  return std::clamp(v, 0, insertParameterMaximum(m, p));
 }
 float insertMap(int m, int p, int v) {
   const auto& d = insertDescriptor(m);
   if (p < 0 || p >= d.count) return 0;
   const auto& a = d.parameters[p];
   v = insertClamp(m, p, v);
-  float x = v / 255.0f;
+  float x = v / float(std::max(1, insertParameterMaximum(m, p)));
   if (a.mapping == M::discrete) return v;
   if (a.mapping == M::exponential) return a.minimum * powf(a.maximum / a.minimum, x);
   if (a.mapping == M::bipolar)
@@ -169,7 +187,18 @@ void insertDescribe(char* text, size_t size, int m, int p, int value) {
     return;
   }
   float v = insertMap(m, p, value);
-  if (m == insertBeads && p == 6) {
+  if (m == insertFormant && p == 0) {
+    snprintf(text, size, "%s", value ? "CUSTOM" : "VOW");
+  } else if (m == insertFormant && p == 1) {
+    const int anchors[] = {0, 32, 64, 96, 127};
+    const char* names[] = {"A", "E", "I", "O", "U"};
+    value = insertClamp(m, p, value);
+    int i = 0;
+    while (i < 4 && value >= anchors[i + 1]) ++i;
+    if (value == anchors[i]) snprintf(text, size, "%s", names[i]);
+    else snprintf(text, size, "%s>%s %d%%", names[i], names[i+1],
+                  (value-anchors[i])*100/(anchors[i+1]-anchors[i]));
+  } else if (m == insertBeads && p == 6) {
     int packed = (int)v;
     snprintf(text, size, "%03d%% %s", (packed & 127) * 100 / 127,
              packed & 128 ? "Frozen" : "Recording");
@@ -198,7 +227,8 @@ void insertDescribe(char* text, size_t size, int m, int p, int value) {
     snprintf(text, size, "%.1f:1", n[(int)v]);
   } else if (m == insertCompressor && p == 5) {
     static const char* n[] = {"Stereo", "Left", "Right"};
-    snprintf(text, size, "%s", n[(int)v]);
+    if (v < 3) snprintf(text, size, "%s", n[(int)v]);
+    else snprintf(text, size, "Track %d", (int)v - 2);
   } else if (m == insertTranceGate && p == 0) {
     static const char* n[] = {
         "Full 1/16", "Downbeat 4/4", "8th Note Pulse", "Double Pump",
@@ -263,6 +293,57 @@ constexpr bool tranceGatePatternsAreUnique() {
   return true;
 }
 static_assert(tranceGatePatternsAreUnique(), "Trance Gate patterns must not be rotations or mirrors");
+bool tranceGatePatternOpen(uint8_t pattern, uint8_t length, uint32_t step) {
+  length = std::max<uint8_t>(1, std::min<uint8_t>(16, length));
+  return (tranceGatePatterns[pattern & 63] & (0x8000u >> (step % length))) != 0;
+}
+float tranceGateTicksPerStep(uint8_t rate) {
+  rate = std::min<uint8_t>(14, rate);
+  float ticks = 48.0f / (1 << (rate / 3));
+  if (rate % 3 == 1) ticks *= 2.0f / 3.0f;
+  if (rate % 3 == 2) ticks *= 1.5f;
+  return ticks;
+}
+static uint32_t gateRandom(uint32_t value) {
+  value ^= value >> 16;
+  value *= 0x7feb352dU;
+  value ^= value >> 15;
+  value *= 0x846ca68bU;
+  return value ^ (value >> 16);
+}
+static bool tranceGateOpen(const uint8_t* v, uint64_t step) {
+  const int length = v[2] + 1;
+  const int mode = v[5];
+  const int span = mode == 2 && length > 1 ? length * 2 - 2 : length;
+  const uint64_t loop = step / span;
+  int position = (int)(step % span);
+  if (mode == 1) position = length - 1 - position;
+  else if (mode == 2 && position >= length) position = span - position;
+  bool bits[16];
+  int opened = 0;
+  for (int i = 0; i < length; ++i) {
+    bits[i] = (tranceGatePatterns[v[0]] & (0x8000u >> ((i - v[4] + 16) & 15))) != 0;
+    opened += bits[i];
+  }
+  if (mode == 3 && opened && opened < length) {
+    int open[16], closed[16], openCount = 0, closedCount = 0;
+    for (int i = 0; i < length; ++i) {
+      if (bits[i]) open[openCount++] = i;
+      else closed[closedCount++] = i;
+    }
+    for (int move = 0; move < 2 && openCount && closedCount; ++move) {
+      uint32_t random = gateRandom((uint32_t)v[0] | ((uint32_t)v[4] << 8) |
+                                   ((uint32_t)(loop / 4) << 16) | ((uint32_t)move << 28));
+      int openPick = random % openCount, closedPick = (random >> 8) % closedCount;
+      bits[open[openPick]] = false;
+      bits[closed[closedPick]] = true;
+      open[openPick] = open[--openCount];
+      closed[closedPick] = closed[--closedCount];
+    }
+  }
+  return bits[position];
+}
+
 #include "external/insert_fx/work_compressor.h"
 struct InsertChain::Impl {
   static constexpr int block = 128;
@@ -285,6 +366,7 @@ struct InsertChain::Impl {
     float wet = 0;
     bool switching = false;
     BeadsPool::Handle beads;
+    FormantFilter formant;
     WorkCompressor work;
     insert_dsp::Distortion distortion;
     insert_dsp::StereoDoubler doubler;
@@ -300,6 +382,8 @@ struct InsertChain::Impl {
     float feedback[2]{}, held[2]{};
     Biquad eq[2][3];
     int delayWrite = 0, holdCounter = 0;
+    float phaserHeld[2][8]{};  // lite: coefficients held across blocks so the cadence is block-size independent
+    unsigned phaserTick = 0;
     float toneCoefficient = 1;
     bool eqNeutral = true;
     int skippedFrames = 0;
@@ -361,6 +445,9 @@ struct InsertChain::Impl {
     s.pending = m;
     s.dirty = true;
     switch (m) {
+      case insertFormant:
+        s.formant.reset(rate);
+        break;
       case insertBeads:
         if (s.beads) s.beads->reset();
         break;
@@ -388,6 +475,8 @@ struct InsertChain::Impl {
     memset(s.phaserFeedback, 0, sizeof(s.phaserFeedback));
     memset(s.feedback, 0, sizeof(s.feedback));
     memset(s.held, 0, sizeof(s.held));
+    memset(s.phaserHeld, 0, sizeof(s.phaserHeld));
+    s.phaserTick = 0;
     for (auto& channel : s.eq) for (auto& band : channel) band.reset();
     s.eqNeutral = true;
     s.phase = 0;
@@ -450,52 +539,14 @@ struct InsertChain::Impl {
     magnitude -= 1.0f;
     return copysignf(1.0f + magnitude - 0.5f * magnitude * magnitude, x);
   }
-  static uint32_t gateRandom(uint32_t value) {
-    value ^= value >> 16;
-    value *= 0x7feb352dU;
-    value ^= value >> 15;
-    value *= 0x846ca68bU;
-    return value ^ (value >> 16);
-  }
-  static bool tranceGateOpen(const uint8_t* v, uint64_t step) {
-    const int length = v[2] + 1;
-    const int mode = v[5];
-    const int span = mode == 2 && length > 1 ? length * 2 - 2 : length;
-    const uint64_t loop = step / span;
-    int position = (int)(step % span);
-    if (mode == 1) position = length - 1 - position;
-    else if (mode == 2 && position >= length) position = span - position;
-    bool bits[16];
-    int opened = 0;
-    for (int i = 0; i < length; ++i) {
-      bits[i] = (tranceGatePatterns[v[0]] & (0x8000u >> ((i - v[4] + 16) & 15))) != 0;
-      opened += bits[i];
-    }
-    if (mode == 3 && opened && opened < length) {
-      int open[16], closed[16], openCount = 0, closedCount = 0;
-      for (int i = 0; i < length; ++i) {
-        if (bits[i]) open[openCount++] = i;
-        else closed[closedCount++] = i;
-      }
-      // Two moves make Chaos plainly audible while preserving density and its
-      // four-cycle anchor. Sparse patterns naturally fall back to one move.
-      for (int move = 0; move < 2 && openCount && closedCount; ++move) {
-        uint32_t random = gateRandom((uint32_t)v[0] | ((uint32_t)v[4] << 8) |
-                                     ((uint32_t)(loop / 4) << 16) | ((uint32_t)move << 28));
-        int openPick = random % openCount, closedPick = (random >> 8) % closedCount;
-        bits[open[openPick]] = false;
-        bits[closed[closedPick]] = true;
-        open[openPick] = open[--openCount];
-        closed[closedPick] = closed[--closedCount];
-      }
-    }
-    return bits[position];
-  }
   void parameters(Slot& s, const uint8_t* v) {
     if (!s.dirty && !memcmp(v, s.previous, 8)) return;
     float p[8];
     for (int i = 0; i < 8; ++i) p[i] = insertMap(s.module, i, v[i]);
     switch (s.module) {
+      case insertFormant:
+        s.formant.set(v);
+        break;
       case insertCompressor:
         s.work.set(p);
         break;
@@ -556,7 +607,7 @@ struct InsertChain::Impl {
     memcpy(s.previous, v, 8);
     s.dirty = false;
   }
-  void process(Slot& s, float* data, int frames, const uint8_t* values) {
+  void process(Slot& s, float* data, int frames, const uint8_t* values, const float* sidechain) {
     const bool lite = fxLiteEnabled();
     float increment = 1.0f / std::max(1.0f, rate * 0.005f);
     for (int offset = 0; offset < frames;) {
@@ -603,11 +654,14 @@ struct InsertChain::Impl {
       memcpy(p, s.mapped, sizeof p);
       float* channels[] = {l, r};
       switch (s.module) {
+        case insertFormant:
+          s.formant.process(l, r, n);
+          break;
         case insertBeads:
           if (s.beads) s.beads->process(l, r, n, p);
           break;
         case insertCompressor:
-          s.work.process(l, r, n);
+          s.work.process(l, r, n, sidechain ? sidechain + offset : nullptr);
           break;
         case insertDistortion:
           s.distortion.processReplacing(channels, channels, n);
@@ -673,10 +727,9 @@ struct InsertChain::Impl {
           // FX lite: the sweep is at most 15 Hz, so the allpass coefficients are
           // refreshed every 8 samples (4 kHz at 32 kHz) instead of per sample;
           // the filters themselves still run every sample.
-          float held[2][8];
           for (int i = 0; i < n; ++i) {
             float dryL = l[i], dryR = r[i];
-            const bool refresh = !lite || (i & 7) == 0;
+            const bool refresh = !lite || (s.phaserTick++ & 7) == 0;
             for (int ch = 0; ch < 2; ++ch) {
               float x = (ch ? r[i] : l[i]) + s.phaserFeedback[ch] * p[2];
               float sidePhase = s.phase + (ch ? 3.14159265359f : 0.0f);
@@ -684,12 +737,13 @@ struct InsertChain::Impl {
                 float a;
                 if (refresh) {
                   float sweep = 0.5f + 0.5f * sinf(sidePhase + stage * 0.7f);
-                  float cutoff = 120.0f + sweep * p[1] * 4200.0f * stageScale[stage];
-                  float normalized = std::min(0.95f, cutoff / rate);
-                  a = (1.0f - normalized) / (1.0f + normalized);
-                  held[ch][stage] = a;
+                  float cutoff = 80.0f + sweep * p[1] * 10000.0f * stageScale[stage];
+                  cutoff = std::min(cutoff, rate * 0.45f);
+                  float g = tanf((float)M_PI * cutoff / rate);
+                  a = (1.0f - g) / (1.0f + g);
+                  s.phaserHeld[ch][stage] = a;
                 } else {
-                  a = held[ch][stage];
+                  a = s.phaserHeld[ch][stage];
                 }
                 float y = a * x + s.allpassX[ch][stage] - a * s.allpassY[ch][stage];
                 s.allpassX[ch][stage] = x;
@@ -928,7 +982,7 @@ bool InsertChain::active() const {
     if (s.config.module || s.module || s.switching) return true;
   return false;
 }
-void InsertChain::process(float* data, int frames, const uint8_t v[2][8]) {
+void InsertChain::process(float* data, int frames, const uint8_t v[2][8], const float* sidechain[2]) {
   if (!ready()) return;
   for (int slot = 0; slot < 2; ++slot) {
     auto& s = impl_->slots[slot];
@@ -939,7 +993,7 @@ void InsertChain::process(float* data, int frames, const uint8_t v[2][8]) {
     // slot per sample, so such calls are timed one in 64 and scaled up.
     const unsigned weight = frames >= 32 ? 1u : ((++s.profileTick & 63u) == 0 ? 64u : 0u);
     const uint64_t started = weight ? fxProfileNowNs() : 0;
-    impl_->process(s, data, frames, v[slot]);
+    impl_->process(s, data, frames, v[slot], sidechain ? sidechain[slot] : nullptr);
     const uint64_t finished = weight ? fxProfileNowNs() : 0;
     const uint64_t cost = weight ? (finished - started) * weight : 0;
     fxProfileInsert(module, cost, frames - s.skippedFrames, s.skippedFrames);

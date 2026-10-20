@@ -2377,13 +2377,15 @@ void ym2612::write(uint32_t offset, uint8_t data)
 //  generate - generate one sample of sound
 //-------------------------------------------------
 
-void ym2612::generate(output_data *output, uint32_t numsamples)
+void ym2612::generate(output_data *output, uint32_t numsamples, uint32_t chanmask)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)
 	{
 		// clock the system
-		m_fm.clock(fm_engine::ALL_CHANNELS);
+		m_fm.clock(chanmask);
 
+		// Keep every DAC contribution, including idle channels: omitting them
+		// would change the ladder offset and the adapter's silence baseline.
 		// sum individual channels to apply DAC discontinuity on each
 		output->clear();
 		output_data temp;

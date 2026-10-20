@@ -3,7 +3,7 @@
 ## Braids integration
 
 - Braids exposes 47 production models, indexed from 0 to 46. `QUESTION_MARK` is not part of the accessible set.
-- Braids still renders internally at its native 96 kHz, then a 31-tap half-band FIR decimates it into the 48 kHz master mix. This preserves its pitch/table assumptions while avoiding a 96 kHz pass through every downstream effect.
+- Braids still renders internally at its native 96 kHz, then resamples into the selected 32 or 48 kHz master mix. This preserves its pitch/table assumptions while avoiding a 96 kHz pass through every downstream effect.
 - One `BraidsVoice` belongs to each tracker track. Voices are monophonic, while AY and Braids instruments can coexist in one song.
 - Percussive models from `STRUCK_BELL` through `SNARE` keep Braids' internal `STRIKE` decay. Tonal models use the added audio-rate ADSR.
 - Braids must bypass AY register output. Treating every non-empty instrument as AY caused invalid register work until the AY path was explicitly restricted to AY1, AY2 and AYSample.
@@ -14,7 +14,7 @@
 ## Build and validation
 
 - Native Windows development uses MSYS2 UCRT64, GCC and SDL2. Docker is not required.
-- Windows and PortMaster use a fixed 48 kHz master rate. `settingsLoad` migrates old `audioSampleRate` values so an existing 96 kHz settings file cannot silently undo the optimization.
+- Audio settings offer 32 and 48 kHz master rates, defaulting to 48 kHz. `settingsLoad` migrates unsupported old `audioSampleRate` values to 48 kHz. A live rate change reinitializes the sound engines and stops playback.
 - The PortMaster source package should target `aarch64` first: the RG353V uses a 64-bit RK3566 CPU, and keeping an untested ARMHF build doubles the work without helping this target.
 - PortMaster officially supports WSL2/chroot, cross-compilation and Docker. This project uses WSL2/cross-compilation; Docker remains optional.
 
@@ -45,7 +45,7 @@
 - Plaits has two envelope routings. `TRIG` matches TRIG patched/LEVEL unpatched and reuses the envelope row's D/S storage as LPG decay/color. `VCA` holds LEVEL open and applies the ADSR after the Mutable voice. In `TRIG`, the wrapper now holds the Mutable gate high for the note duration; a repeated tracker note inserts one low block before returning high, preserving its rising-edge retrigger. VCA retriggers attack from the current level instead of resetting to zero, avoiding an amplitude discontinuity. Legacy `LEVEL` values load as `VCA`.
 - The Plaits wrapper passes pitch once to the Mutable voice; the previous integration also repeated it through the modulation input. A one-octave frequency-ratio test guards this path.
 - Reverb and Delay are shared master effects. Tracks accumulate post-fader send buses; each effect is processed once per callback, not once per track.
-- The Clouds reverb delay lengths are scaled from its original 32 kHz design to the fixed 48 kHz master rate; its LFO increments also use the actual rate. The ping-pong delay derives its sample delay from project tick rate and delay ticks.
+- The Clouds reverb delay lengths were scaled from its original 32 kHz design for the 48 kHz default master rate; at 32 kHz the same delay lengths yield longer reverb times. Its LFO increments use the actual rate. The ping-pong delay derives its sample delay from project tick rate and delay ticks.
 - `PRO` uses `00-64` as 0-100%, `MOD AB` uses a per-track phrase visit count, and conditions on one row are ANDed. `SPD` uses a rational phase accumulator and persists until replaced.
 - The scheduler advances at most one row per audio tick. High `SPD` multipliers therefore need hardware and musical validation with short grooves.
 

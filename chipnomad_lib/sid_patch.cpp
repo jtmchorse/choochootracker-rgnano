@@ -42,3 +42,42 @@ void saveSIDData(FILE* f,const Instrument* i){
  const auto& p=i->chip.sid;fprintf(f,"- SID identity: %u,%u\n- SID name: %s\n- SID parameters: ",p.schema,p.bankId,p.presetName);
  for(int n=0;n<sidParameterCount;++n)fprintf(f,"%s%u",n?",":"",p.value[n]);fputc('\n',f);saveChipProgram(f,p.program);
 }
+
+static bool hasMacro(const InstrumentSID& patch, unsigned id) {
+  const auto& p = patch.program;
+  if (p.format != 1) return false;
+  for (unsigned pos = 0; pos + 8 <= p.size;) {
+    if (p.data[pos] == id) return true;
+    pos += 8 + 4 * p.data[pos + 1];
+  }
+  return false;
+}
+const char* sidImportedControlReason(const InstrumentSID& patch, int parameter) {
+  if (patch.program.format == 2) {
+    switch (parameter) {
+      case sidWave: return "Waveform: imported Goat wave table";
+      case sidPulse: return "Pulse width: imported Goat pulse table";
+      case sidCutoff: case sidResonance: case sidFilterMode:
+        return "Filter: imported Goat filter table";
+      case sidAttack: case sidDecay: case sidSustain: case sidRelease:
+        return "ADSR: imported Goat instrument/wave table";
+      default: return "Goat program bypasses this recipe control";
+    }
+  }
+  switch (parameter) {
+    case sidWave:
+      if (hasMacro(patch, 3)) return "Waveform: imported waveform macro";
+      break;
+    case sidPulse: case sidPulseDepth: case sidPulseRate:
+      if (hasMacro(patch, 2)) return "Pulse width: imported pulse macro";
+      break;
+    case sidCutoff: case sidCutoffTarget:
+      if (hasMacro(patch, 5)) return "Cutoff: imported filter macro";
+      break;
+    case sidFixedFrequency:
+      if (hasMacro(patch, 1)) return "Pitch: imported arpeggio macro";
+      break;
+    default: break;
+  }
+  return nullptr;
+}

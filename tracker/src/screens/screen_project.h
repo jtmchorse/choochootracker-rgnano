@@ -3,8 +3,10 @@
 
 #include "screens.h"
 
-// Common rows on the project screen
-#define SCR_PROJECT_ROWS (5)
+// Common rows on the project screen:
+// 0 Load/Save/New/Export/Manage, 1 File, 2 Title, 3 Author, 4 Linear pitch,
+// 5 Clock source, 6 Tempo (BPM). AY-specific rows start at SCR_PROJECT_ROWS.
+#define SCR_PROJECT_ROWS (7)
 
 int projectLoadFromPath(const char* path);
 void projectOpenFromScreen(const AppScreen* returnScreen);

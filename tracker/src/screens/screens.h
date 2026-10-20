@@ -83,6 +83,7 @@ struct ScreenData {
   int (*onRawInput)(int keyCode, int isKeyboard, int isDown);  // Optional: capture raw SDL input
   int (*isCellValid)(int col, int row);  // Optional: return 0 for dead cells that cursor should skip
   LoopRange (*getLoopRange)(void);  // Optional: return loop range for ranged playback
+  int (*isButtonCell)(int col, int row);  // Optional: cells activated directly by a touch tap
 };
 
 extern const AppScreen screenProject;
@@ -101,7 +102,12 @@ extern const AppScreen screenPhrase;
 extern const AppScreen screenGroove;
 extern const AppScreen screenInstrument;
 extern const AppScreen screenSampleSettings;
+// Discards a completed editor recording (deletes its WAV, resets the
+// record state) without touching the instrument's sample slot. Called
+// when a new sample is loaded so the editor hosts one thing at a time.
+void sampleEditorDiscardRecording(int instrumentIndex);
 extern const AppScreen screenFMEdit;
+extern const AppScreen screenMonkEdit;
 extern const AppScreen screenSIDEdit;
 extern const AppScreen screenSoundFontEdit;
 extern const AppScreen screenInstrumentPool;
@@ -144,6 +150,13 @@ void screenMessage(int time, const char* format, ...);
 const char* screenGetActiveMessage(void);
 // Clear the message bar immediately (timed or not) and stop its timer.
 void screenClearMessage(void);
+// Show the animated "Input disconnected: Restarting audio handler" notice in
+// the helper box for ~3 s while the audio handler rebuilds after a device
+// disconnect. Overrides both the message bar and per-screen helper text.
+void screenNotifyAudioRestart(void);
+// Non-zero while the audio-restart notice is on screen (helper text should
+// stay hidden so the notice remains visible).
+int screenAudioRestartActive(void);
 void screensInitAll(void);
 void drawScreenMap(void);
 enum ScreenPlaybackLevel screenGetPlaybackLevel(const AppScreen* screen);

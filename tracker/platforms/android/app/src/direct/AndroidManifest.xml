@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Direct/F-Droid variant: the user picks one workspace folder with the
-         system folder picker (Storage Access Framework), so no storage
-         permission is needed. -->
+    <!-- Direct/F-Droid build: a conventional shared workspace at
+         /sdcard/ChooChooTracker. This permission is deliberately absent from
+         the Play Store flavor, which uses SAF instead. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 </manifest>

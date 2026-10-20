@@ -232,6 +232,14 @@ enum FX : FXId {
   fxFPT, fxFVL, fxFPN, fxFCF, fxFRS, fxFAT, fxFDC, fxFRL,
   fxFHD, fxFSU,
 
+  // MONK native controls, appended without changing existing song IDs.
+  fxMUV, fxMDT, fxMVS, fxMDM, fxMDR, fxMLV,
+
+  // Random slice / random note lane FX, appended without changing
+  // existing song IDs.
+  fxRNS, // Sample FX: random slice selection
+  fxRNN, // Sequencer FX: random note
+
   // Total count - must be last
   fxTotalCount
 };
@@ -443,6 +451,12 @@ struct Project {
   uint8_t delayTicks;
   uint8_t delayFeedback;
   uint16_t delayFilterCutoffHz;
+  uint8_t delayAlgorithm; // 0 Ping-pong, 1 Tape Echo
+  uint8_t tapeDivision; // 0 1/16, 1 1/8T, 2 1/8, 3 1/8., 4 1/4, 5 1/4., 6 1/2
+  uint8_t tapeHeads; // 0 H1, 1 H2, 2 H3, 3 H1+H2, 4 H1+H3, 5 H2+H3, 6 H1+H2+H3
+  uint8_t tapeTone;
+  uint8_t tapeFlutter;
+  uint8_t tapeSpring;
   // Sample save destination preference (Phase 4): 0 = ask every time,
   // 1 = write slice points into the WAV (cue chunks), 2 = keep them in the
   // project only. Set by the save dialog's "don't ask again" checkbox.

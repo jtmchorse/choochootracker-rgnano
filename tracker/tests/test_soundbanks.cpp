@@ -591,3 +591,32 @@ TEST_CASE("SoundFont linked sample flags do not override the authored pan genera
   }
   std::filesystem::remove(path);
 }
+
+TEST_CASE("EXS null headers use the real filename") {
+  namespace fs=std::filesystem;
+  auto root=fs::temp_directory_path()/"choochoo-null-exs";fs::remove_all(root);fs::create_directories(root);
+  std::ifstream in(fixtures+"tone.exs",std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(in)),{});REQUIRE(bytes.size()>84);
+  for(const char* name:{"(null)","(NULL)","", "Named Instrument"}) {
+    std::fill(bytes.begin()+20,bytes.begin()+84,0);memcpy(bytes.data()+20,name,strlen(name));
+    {std::ofstream out(root/"BASS PLUCK.exs",std::ios::binary);out.write(bytes.data(),bytes.size());}
+    auto b=parseBank({(root/"BASS PLUCK.exs").string(),""});
+    CHECK(b.presets[0].name==(std::string(name)=="Named Instrument"?"Named Instrument":"BASS PLUCK"));
+  }
+  fs::remove_all(root);
+}
+TEST_CASE("A ZIP sample is unzipped once across repeated zones") {
+  auto bank=parseBank({fixtures+"deflated.zip","nested/tone.wav"});
+  auto zone=bank.presets[0].zones[0];bank.presets[0].zones.assign(128,zone);
+  for(int k=0;k<128;++k)bank.presets[0].zones[k].loKey=bank.presets[0].zones[k].hiKey=k;
+  static int unzips;unzips=0;
+  SampleCache cache;
+  {
+    LoadProgressScope progress([](LoadStage stage){if(stage==LoadStage::unzipping)++unzips;});
+    auto p=cache.prepare(bank,"sample");REQUIRE(p->zones.size()==128);
+    CHECK(p->zones.front().audio==p->zones.back().audio);CHECK(unzips==1);
+    auto loose=decodeAudio(Asset{{fixtures+"tone.wav",""}},4096);
+    CHECK(p->zones[0].audio->pcm==loose->pcm);
+  }
+  Archive(fixtures+"deflated.zip").open("nested/tone.wav");CHECK(unzips==1);
+}

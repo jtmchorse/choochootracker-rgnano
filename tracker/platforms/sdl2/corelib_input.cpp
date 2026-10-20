@@ -193,7 +193,15 @@ const char* inputGetKeyName(InputCode input) {
       case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return "PadRght";
       case gamepadTriggerLeft: return "Pad L2";
       case gamepadTriggerRight: return "Pad R2";
-      default: return "Pad ?";
+      default:
+        if (input.code >= gamepadExtraButton && input.code < gamepadExtraButton + gamepadExtraButtonCount) {
+          static const char* extraNames[gamepadExtraButtonCount] = {
+            "Btn 1", "Btn 2", "Btn 3", "Btn 4", "Btn 5", "Btn 6", "Btn 7", "Btn 8",
+            "Btn 9", "Btn 10", "Btn 11", "Btn 12", "Btn 13", "Btn 14", "Btn 15", "Btn 16",
+          };
+          return extraNames[input.code - gamepadExtraButton];
+        }
+        return "Pad ?";
     }
   }
 

@@ -52,10 +52,12 @@ void FourOpVoice::noteOn(){amp_.noteOn();key(false);pitch();pendingKeyOn_=true;g
 void FourOpVoice::noteOff(){amp_.noteOff();pendingKeyOn_=false;key(false);gated_=false;}
 void FourOpVoice::kill(){amp_.kill();pendingKeyOn_=false;key(false);active_=gated_=false;level_=0;silent_=0;dcInput_[0]=dcInput_[1]=dcOutput_[0]=dcOutput_[1]=0;opnResampler_.reset();opmResampler_.reset();}
 void FourOpVoice::native(float& l,float& r){
-  if(type_==InstrumentType::GenesisFM){ymfm::ym2612::output_data out;opn_.generate(&out);// YM2612 ladder models a nonzero idle code; subtract its exact idle
+  // Each chord slot owns a chip and uses channel 0 only. Chip-wide clocks
+  // and DAC conversion still advance normally; unused operators do not.
+  if(type_==InstrumentType::GenesisFM){ymfm::ym2612::output_data out;opn_.generate(&out,1,1u);// YM2612 ladder models a nonzero idle code; subtract its exact idle
     // baseline before testing silence. The output DC blocker follows the FIR.
     l=(out.data[0]-504)/32768.f;r=(out.data[1]-504)/32768.f;}
-  else{ymfm::ym2151::output_data out;opm_.generate(&out);l=out.data[0]/32768.f;r=out.data[1]/32768.f;}
+  else{ymfm::ym2151::output_data out;opm_.generate(&out,1,1u);l=out.data[0]/32768.f;r=out.data[1]/32768.f;}
   if(pendingKeyOn_){pendingKeyOn_=false;gated_=true;key(true);}
   if(!gated_&&l==0&&r==0)++silent_;else silent_=0;
 }

@@ -14,6 +14,21 @@
 #include "external/miniz/miniz_tinfl.h"
 
 namespace soundbank {
+namespace {
+thread_local LoadProgressCallback progressCallback = nullptr;
+thread_local LoadStage progressStage = LoadStage::reading;
+void reportStage(LoadStage stage) {
+  progressStage = stage;
+  if (progressCallback) progressCallback(stage);
+}
+}
+LoadProgressScope::LoadProgressScope(LoadProgressCallback callback) : previous_(progressCallback) {
+  progressCallback = callback;
+}
+LoadProgressScope::~LoadProgressScope() { progressCallback = previous_; }
+LoadStageScope::LoadStageScope(LoadStage stage) : previous_(progressStage) { reportStage(stage); }
+LoadStageScope::~LoadStageScope() { reportStage(previous_); }
+
 bool isPlatformMetadata(const std::string& path) {
   for (const auto& part : std::filesystem::path(path)) {
     const auto name = part.string();
@@ -233,6 +248,7 @@ SourcePtr Archive::open(const std::string& name, uint64_t maxBytes) const {
                          [&](const ZipEntry& e) { return e.name == name; });
   require(it != entries_.end(), "Missing ZIP sample: " + name);
   const auto& e = *it;
+  LoadStageScope progress(e.method == 8 ? LoadStage::unzipping : LoadStage::checking);
   require(!(e.flags & 1) && (e.method == 0 || e.method == 8), "Encrypted/unsupported ZIP member");
   require(e.size <= maxBytes, "ZIP member exceeds preparation limit");
   auto local = source_->bytes(e.offset, 30);
@@ -341,6 +357,7 @@ Location Location::relative(const std::string& ref) const {
 }
 
 Location Location::relocated() const {
+  LoadStageScope progress(LoadStage::locating);
   namespace fs = std::filesystem;
   auto lower = [](std::string s) {
     for (auto& c : s) c = char(std::tolower(uint8_t(c)));

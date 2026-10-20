@@ -240,8 +240,14 @@ int fileGetWorkingFolderStatus(char* buffer, int bufferSize) {
 }
 
 int fileDirectoryExists(const char* path) {
+#ifdef _WIN32
+  if (!path || !path[0]) return 0;
+  DWORD attributes = GetFileAttributesA(path);
+  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+#else
   struct stat statBuf;
   return (stat(path, &statBuf) == 0 && S_ISDIR(statBuf.st_mode)) ? 1 : 0;
+#endif
 }
 
 int fileCreateDirectory(const char* path) {

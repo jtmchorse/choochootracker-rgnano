@@ -6,10 +6,18 @@ samples, and ZIP collections containing those formats. Sample libraries are
 external user files; none are included in this contribution.
 
 Rescan indexes metadata. Preset opens the current sound in a two-column
-collection/preset browser. EDIT+Left/Right cycles in the same order across the
-library, wrapping at either end. EDIT+PLAY auditions. Edit opens the supported
-playback controls. See [the manual](../USER_MANUAL.md#soundfont-experimental)
-for all controls, native key ranges and eight Lane FX.
+collection/preset browser. Physical folders stay navigable: Right or EDIT/A
+enters a folder, Left returns through the panels and parent folders, and OPT
+goes back. In the preset panel, Right pages by 15 entries without loading;
+EDIT/A loads the highlighted preset. PLAY controls song playback while browsing.
+EDIT+Left/Right cycles in matching nested folder order; EDIT+PLAY auditions.
+
+Collections use their full panel height. The selected preset stays below the
+eight track previews, and long names scroll after one second of idle selection.
+The third row reports the current preparation stage. Supporting sample folders
+stay with their mapped instruments without hiding unrelated loose samples.
+Empty or `(null)` EXS header names fall back to the instrument filename.
+See [the manual](../USER_MANUAL.md#soundfont-collection-browsing) for controls.
 
 Only the selected preset is decoded. Failed presets remain selected and silent,
 showing Error and its reason at the bottom of Instrument; cycling can continue.

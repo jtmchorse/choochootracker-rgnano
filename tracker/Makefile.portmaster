@@ -25,7 +25,8 @@ endif
 # information, but optimize the entire application for execution speed rather
 # than binary size; the DSP sources already use the same policy.
 PORTMASTER_CFLAGS = $(filter-out -Os,$(COMMON_CFLAGS)) -O3
-CFLAGS = $(PORTMASTER_CFLAGS) $(INCLUDES) $(SDL_CFLAGS) -DPORTMASTER_BUILD -D__LINUX_ALSASEQ__ -DGAMEPAD_SUPPORT -DTOUCH_INPUT
+CFLAGS = $(PORTMASTER_CFLAGS) $(INCLUDES) $(SDL_CFLAGS) -DPORTMASTER_BUILD -D__LINUX_ALSASEQ__ -DGAMEPAD_SUPPORT -DTOUCH_INPUT \
+	-DLINK_PLATFORM_LINUX=1 -DASIO_STANDALONE=1 -DASIO_NO_TYPEID=1 -DASIO_VERSION_NAMESPACE=link_asio_1_38_2 -Wno-multichar
 TARGET = $(BUILD)/choochootracker.aarch64
 OUTPUT = -o $(TARGET)
 
@@ -51,7 +52,7 @@ PortMaster: $(BUILD)/choochootracker.aarch64
 
 $(BUILD)/choochootracker.aarch64: $(OBJECTS)
 	mkdir -p $(BUILD)
-	$(CXX) $(PORTMASTER_CFLAGS) $(OBJECTS) $(SDL_LIBS)  -lasound -pthread -lm $(OUTPUT)
+	$(CXX) $(PORTMASTER_CFLAGS) $(OBJECTS) $(SDL_LIBS)  -lasound -pthread -lm -latomic $(OUTPUT)
 	$(STRIP) $(BUILD)/choochootracker.aarch64
 
 .PHONY: PortMaster-deploy
@@ -63,6 +64,7 @@ PortMaster-deploy: PortMaster
 	cp -r packaging/common/. $(PORT_DIR)/
 	cp ../docs/USER_MANUAL.md $(PORT_DIR)/
 	cp ../LICENSE $(PORT_DIR)/licenses/LICENSE.choochootracker.md
+	cp ../chipnomad_lib/external/insert_fx/LICENSE-JM-Formant $(PORT_DIR)/licenses/
 	cp packaging/portmaster/license/* $(PORT_DIR)/licenses/
 	cp packaging/portmaster/ChooChooTracker.sh $(PACKAGE_ROOT)/
 	cp packaging/portmaster/port.json packaging/portmaster/README.md packaging/portmaster/gameinfo.xml packaging/portmaster/cover.png packaging/portmaster/screenshot.png $(PORT_DIR)/

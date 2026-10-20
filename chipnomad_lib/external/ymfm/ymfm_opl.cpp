@@ -1226,15 +1226,15 @@ void ym3812::write(uint32_t offset, uint8_t data)
 //  generate - generate samples of sound
 //-------------------------------------------------
 
-void ym3812::generate(output_data *output, uint32_t numsamples)
+void ym3812::generate(output_data *output, uint32_t numsamples, uint32_t chanmask)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)
 	{
 		// clock the system
-		m_fm.clock(fm_engine::ALL_CHANNELS);
+		m_fm.clock(chanmask);
 
 		// update the FM content; mixing details for YM3812 need verification
-		m_fm.output(output->clear(), 1, 32767, fm_engine::ALL_CHANNELS);
+		m_fm.output(output->clear(), 1, 32767, chanmask);
 
 		// YM3812 uses an external DAC (YM3014) with mantissa/exponent format
 		// convert to 10.3 floating point value and back to simulate truncation
@@ -1399,15 +1399,15 @@ void ymf262::write(uint32_t offset, uint8_t data)
 //  generate - generate samples of sound
 //-------------------------------------------------
 
-void ymf262::generate(output_data *output, uint32_t numsamples)
+void ymf262::generate(output_data *output, uint32_t numsamples, uint32_t chanmask)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)
 	{
 		// clock the system
-		m_fm.clock(fm_engine::ALL_CHANNELS);
+		m_fm.clock(chanmask);
 
 		// update the FM content; mixing details for YMF262 need verification
-		m_fm.output(output->clear(), 0, 32767, fm_engine::ALL_CHANNELS);
+		m_fm.output(output->clear(), 0, 32767, chanmask);
 
 		// YMF262 output is 16-bit offset serial via YAC512 DAC
 		output->clamp16();
@@ -2034,15 +2034,15 @@ void opll_base::write(uint32_t offset, uint8_t data)
 //  generate - generate one sample of sound
 //-------------------------------------------------
 
-void opll_base::generate(output_data *output, uint32_t numsamples)
+void opll_base::generate(output_data *output, uint32_t numsamples, uint32_t chanmask)
 {
 	for (uint32_t samp = 0; samp < numsamples; samp++, output++)
 	{
 		// clock the system
-		m_fm.clock(fm_engine::ALL_CHANNELS);
+		m_fm.clock(chanmask);
 
 		// update the FM content; OPLL has a built-in 9-bit DAC
-		m_fm.output(output->clear(), 5, 256, fm_engine::ALL_CHANNELS);
+		m_fm.output(output->clear(), 5, 256, chanmask);
 
 		// final output is multiplexed; we don't simulate that here except
 		// to average over everything

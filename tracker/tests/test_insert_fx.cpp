@@ -64,6 +64,36 @@ void write(const char* path, const std::string& text) {
 }
 }  // namespace
 TEST_SUITE("track inserts") {
+  TEST_CASE("Compressor Detect keeps legacy choices and names eight sidechain tracks") {
+    CHECK(insertParameterMaximum(insertCompressor, 5) == 10);
+    char label[32];
+    const char* internal[] = {"Stereo", "Left", "Right"};
+    for (int choice = 0; choice <= 10; ++choice) {
+      insertDescribe(label, sizeof(label), insertCompressor, 5, choice);
+      std::string expected = choice < 3 ? internal[choice] : "Track " + std::to_string(choice - 2);
+      CHECK(std::string(label) == expected);
+    }
+    InsertConfig c[2]{};
+    insertSelect(&c[0], insertCompressor);
+    c[0].values[0] = 0;
+    c[0].values[1] = 0;
+    c[0].values[4] = 7;
+    c[0].values[5] = 3;
+    InsertAutomation automation{};
+    InsertChain chain(48000);
+    chain.sync(c, &automation);
+    uint8_t effective[2][8];
+    values(c, effective);
+    std::vector<float> loud(4096 * 2, 0.25f), quiet = loud;
+    std::vector<float> kick(4096, 0.9f);
+    const float* source[2] = {kick.data(), nullptr};
+    chain.process(loud.data(), 4096, effective, source);
+    chain.reset();
+    chain.process(quiet.data(), 4096, effective);
+    CHECK(std::abs(loud.back()) < std::abs(quiet.back()) * 0.2f);
+    CHECK(quiet.back() == doctest::Approx(0.25f).epsilon(1e-5));
+  }
+
   TEST_CASE("Rotary speed spans slow LFO rates through the existing maximum") {
     float previous = 0;
     for (int value = 0; value <= 255; ++value) {
@@ -237,7 +267,8 @@ TEST_SUITE("track inserts") {
     CHECK(fxF11 > fxATY);
     CHECK(fxF28 < 255);
     CHECK(genericModFirstInsert == 29);
-      const int counts[] = {0, 8, 4, 2, 6, 6, 5, 4, 5, 4, 4, 4, 4, 6, 8, 8};
+    const int counts[] = {0, 8, 4, 2, 6, 6, 5, 4, 5, 4, 4, 4, 4, 6, 8, 8, 6};
+    static_assert(sizeof(counts) / sizeof(counts[0]) == insertModuleCount, "Test covers every module");
     for (int m = 0; m < insertModuleCount; ++m) {
       CHECK(insertDescriptor(m).count == counts[m]);
       InsertConfig c{};
@@ -364,6 +395,35 @@ TEST_SUITE("track inserts") {
         CHECK(std::string(text) == "32x");
         insertDescribe(text, sizeof(text), insertDestruction, 0, 2);
         CHECK(std::string(text) == "Crush");
+  }
+  TEST_CASE("chorus and phaser extend from subtle to extreme modulation") {
+    for (int module : {insertChorus, insertPhaser}) {
+      InsertConfig c[2]{};
+      insertSelect(&c[0], module);
+      InsertAutomation automation{};
+      InsertChain chain(48000);
+      REQUIRE(chain.ready());
+      uint8_t v[2][8];
+      values(c, v);
+      auto dry = signal(12000), subtle = dry;
+      chain.sync(c, &automation);
+      chain.process(subtle.data(), 12000, v);
+      float subtleDifference = 0;
+      for (size_t i = 4096; i < dry.size(); ++i) subtleDifference += fabsf(subtle[i] - dry[i]);
+
+      for (int parameter = 0; parameter < insertDescriptor(module).count; ++parameter)
+        insertEdit(&c[0], parameter, 255);
+      InsertChain extremeChain(48000);
+      REQUIRE(extremeChain.ready());
+      extremeChain.sync(c, &automation);
+      values(c, v);
+      auto extreme = dry;
+      extremeChain.process(extreme.data(), 12000, v);
+      float extremeDifference = 0;
+      for (size_t i = 4096; i < dry.size(); ++i) extremeDifference += fabsf(extreme[i] - dry[i]);
+      CHECK(subtleDifference > 1);
+      CHECK(extremeDifference > subtleDifference * 2);
+    }
   }
   TEST_CASE("OFF and fully bypassed slots are exactly transparent") {
     InsertConfig c[2]{};
@@ -537,6 +597,9 @@ TEST_SUITE("track inserts") {
       c.bypass = slot;
       insertEdit(&c, 0, 255);
     }
+    insertSelect(&p->trackInserts[0][0], insertCompressor);
+    insertEdit(&p->trackInserts[0][0], 5, 10);
+    insertEdit(&p->masterInserts[0], 5, 3);
     const char* path = "build/tests/inserts.cct";
     REQUIRE(projectSave(p.get(), path) == 0);
     auto original = read(path);
@@ -614,6 +677,58 @@ TEST_SUITE("track inserts") {
       CHECK(wet.s->delayBuffer[i] == doctest::Approx(b[i] * .5f).epsilon(1e-6));
     }
   }
+  TEST_CASE("master sidechain keeps its source track dry after that track's inserts") {
+    Engine dry, wet;
+    for (auto* s : {dry.s, wet.s})
+      insertSelect(&s->project.trackInserts[0][0], insertDistortion);
+    auto& compressor = wet.s->project.masterInserts[0];
+    insertSelect(&compressor, insertCompressor);
+    compressor.values[0] = 0;
+    compressor.values[1] = 0;
+    compressor.values[4] = 7;
+    compressor.values[5] = 3; // Track 1 supplies detection but stays outside master inserts.
+    insertSelect(&wet.s->project.masterInserts[1], insertDistortion);
+    dry.start();
+    wet.start();
+    for (int block = 0; block < 8; ++block) {
+      float a[512], b[512];
+      REQUIRE(chipnomadRender(dry.s, a, 256) == 256);
+      REQUIRE(chipnomadRender(wet.s, b, 256) == 256);
+      for (int i = 0; i < 512; ++i)
+        CHECK(b[i] == doctest::Approx(a[i]).epsilon(1e-5));
+    }
+    CHECK(wet.s->masterSidechainExcludeMask == 1);
+    compressor.bypass = 1;
+    REQUIRE(chipnomadQueueProjectRefresh(wet.s));
+    float b[512];
+    for (int i = 0; i < 5; ++i) REQUIRE(chipnomadRender(wet.s, b, 256) == 256);
+    CHECK(wet.s->masterSidechainExcludeMask == 0);
+  }
+  TEST_CASE("a sidechain source without inserts is captured before its target track") {
+    Engine dry, duck;
+    for (auto* s : {dry.s, duck.s}) {
+      s->project.chipsCount = 2;
+      s->project.tracksCount = 2;
+    }
+    auto& target = duck.s->project.trackInserts[1][0];
+    insertSelect(&target, insertCompressor);
+    target.values[5] = 3; // Track 1 drives Track 2.
+    dry.start();
+    duck.start();
+    float a[512], b[512];
+    REQUIRE(chipnomadRender(dry.s, a, 256) == 256);
+    REQUIRE(chipnomadRender(duck.s, b, 256) == 256);
+    bool heardSource = false;
+    for (int i = 0; i < 256; ++i) {
+      float expected = (duck.s->insertBuffer[i * 2] + duck.s->insertBuffer[i * 2 + 1]) * 0.5f;
+      CHECK(duck.s->sidechainBuffer[i] == doctest::Approx(expected).epsilon(1e-6));
+      heardSource |= std::abs(expected) > 1e-5f;
+    }
+    CHECK(heardSource);
+    CHECK(duck.s->sidechainSourceMask == 1);
+    for (int i = 0; i < 512; ++i)
+      CHECK(b[i] == doctest::Approx(a[i]).epsilon(1e-5));
+  }
   TEST_CASE("master inserts process the completed mix") {
     Engine dry, wet;
     insertSelect(&wet.s->project.masterInserts[0], insertDistortion);
@@ -662,11 +777,16 @@ TEST_SUITE("track inserts") {
     e.start();
     float out[1920];
     chipnomadRender(e.s, out, 960);
+    const float last[2] = {out[1918], out[1919]};
     uint8_t enabled[8]{};
     chipnomadQueueTrackEnabled(e.s, enabled);
     chipnomadRender(e.s, out, 960);
+    const int fadeFrames = e.s->sampleRate * 3 / 1000;
     for (int i = 0; i < 1920; ++i) {
-      CHECK(out[i] == 0);
+      // Only the shared output correction survives mute; inserts and sends
+      // cannot feed new audio into it or leak beyond its three milliseconds.
+      const float weight = i / 2 < fadeFrames ? float(fadeFrames - 1 - i / 2) / (fadeFrames - 1) : 0;
+      CHECK(out[i] == doctest::Approx(last[i % 2] * weight));
       CHECK(e.s->reverbBuffer[i] == 0);
       CHECK(e.s->delayBuffer[i] == 0);
     }
@@ -986,11 +1106,10 @@ TEST_CASE("insert tips return after real key release and categorized chooser sel
   auto& insert = chipnomadState->project.trackInserts[0][0];
   insertSelect(&insert, insertOff);
   const int popupOrder[] = {
-      insertOff, insertCompressor, insertOTT,
-      insertDistortion, insertSaturation, insertBitcrusher, insertDestruction,
-      insertChorus, insertPhaser, insertFlanger,
-      insertTranceGate,
-      insertDoubler, insertRotary, insertTape, insertParametricEQ, insertBeads,
+      insertOff, insertOTT, insertCompressor, insertParametricEQ,
+      insertDistortion, insertSaturation, insertBitcrusher, insertDestruction, insertTape,
+      insertChorus, insertPhaser, insertFlanger, insertTranceGate,
+      insertRotary, insertDoubler, insertBeads, insertFormant,
   };
   for (int i = 1; i < (int)(sizeof(popupOrder) / sizeof(popupOrder[0])); ++i) {
     screenInsertFX.onInput(1, keyEdit | keyRight, 0);
@@ -999,14 +1118,14 @@ TEST_CASE("insert tips return after real key release and categorized chooser sel
   screenInsertFX.onInput(1, keyEdit | keyRight, 0);
   CHECK(insert.module == insertOff);
   screenInsertFX.onInput(1, keyEdit | keyLeft, 0);
-  CHECK(insert.module == insertBeads);
+  CHECK(insert.module == insertFormant);
   insertSelect(&insert, insertDistortion);
   screenInsertFX.onInput(1, keyEdit, 1);
   screenInsertFX.onInput(0, 0, 1);
   REQUIRE(currentScreen == &screenSelectionPopup);
   CHECK(selectionPopupIsFullWidth());
   screenSelectionPopup.fullRedraw();
-  CHECK(std::string(mockGfxCells[4], 40).find("Drive") != std::string::npos);
+  CHECK(std::string(mockGfxCells[4], 40).find("Character") != std::string::npos);
   CHECK(std::string(mockGfxCells[2], 40).find("Distortion") != std::string::npos);
   // Legacy category choosers keep their two-panel layout.
   SelectionItem items[] = {{"Existing", 0, nullptr, 0, nullptr}};

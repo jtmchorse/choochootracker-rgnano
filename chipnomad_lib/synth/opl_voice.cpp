@@ -62,8 +62,11 @@ void OPLVoice::noteOn(){amp_.noteOn();gated_=false;pitch();pendingKeyOn_=true;ac
 void OPLVoice::noteOff(){amp_.noteOff();pendingKeyOn_=false;gated_=false;pitch();}
 void OPLVoice::kill(){amp_.kill();pendingKeyOn_=false;write(0xb0,0);write(0xb3,0);active_=gated_=false;low_[0]=low_[1]=high_[0]=high_[1]=-1;silent_=0;level_=0;resampler_.reset();}
 void OPLVoice::native(float& l,float& r){
-  if(type_==InstrumentType::OPL3){ymfm::ymf262::output_data out;opl3_.generate(&out);l=(out.data[0]+out.data[2])/32768.f;r=(out.data[1]+out.data[3])/32768.f;}
-  else{ymfm::ym3812::output_data out;opl2_.generate(&out);l=r=out.data[0]/32768.f;}
+  // Each voice owns a chip but only uses channel 0, plus channel 3 for
+  // four-operator/dual patches. applyPatch resets before topology changes.
+  // Preserve the chip-wide LFO/envelope clocks without advancing unused voices.
+  if(type_==InstrumentType::OPL3){ymfm::ymf262::output_data out;opl3_.generate(&out,1,patch_.topology==OPLTopology::twoOperator?1u:9u);l=(out.data[0]+out.data[2])/32768.f;r=(out.data[1]+out.data[3])/32768.f;}
+  else{ymfm::ym3812::output_data out;opl2_.generate(&out,1,1u);l=r=out.data[0]/32768.f;}
   if(pendingKeyOn_){pendingKeyOn_=false;gated_=true;pitch();}
   if(!gated_&&l==0&&r==0)++silent_;else silent_=0;
 }

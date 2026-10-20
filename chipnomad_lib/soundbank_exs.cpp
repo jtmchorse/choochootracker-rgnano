@@ -2,6 +2,7 @@
 // See docs/soundbanks/EXS-parser-LICENSE.md. No proprietary SDK is used.
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 
@@ -36,7 +37,10 @@ void parseEXS(Bank& b, const SourcePtr& source) {
     auto kind = p[3] & 15;
     if (kind == 0) {
       auto name = str(p + 20, 64);
-      if (!name.empty()) preset.name = name;
+      auto normalized = name;
+      normalized.erase(0, normalized.find_first_not_of(" \t"));
+      for (auto& c : normalized) c = char(std::tolower(static_cast<unsigned char>(c)));
+      if (!normalized.empty() && normalized != "(null)" && normalized != "null") preset.name = name;
     } else if (kind == 1) {
       require(total >= 188 && zones.size() < maxZones, "Unsupported EXS zone size/count");
       Zone z;

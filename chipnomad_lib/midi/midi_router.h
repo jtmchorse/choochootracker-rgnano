@@ -101,8 +101,12 @@ enum class MidiInputMode {
   tracks8, // Reserved, not implemented: channels 1-8 -> tracker tracks 1-8.
 };
 
-// Reserved for a future PR: MIDI Clock/Start/Continue/Stop, neither
-// generated (master) nor followed (slave) yet.
+// MIDI clock sync. off: realtime bytes are ignored entirely (internal
+// clock). slave: follow an external device's Clock (0xF8) and transport
+// (0xFA Start / 0xFB Continue / 0xFC Stop) - the app layer reads the
+// measured tempo and transport state via the getters below and drives
+// playback from them. master (generating clock for other gear) is still
+// reserved for a future PR.
 enum class MidiClockMode {
   off,
   master,
@@ -164,6 +168,26 @@ void midiRouterSetChannelInstrumentMap(MidiRouterState* router, const int8_t cha
 // app shutdown, so a note held across the change can't leave a phantom
 // entry once a (possibly different) device resumes.
 void midiRouterResetHeldNotes(MidiRouterState* router);
+
+// Switches clock following on/off live (app startup, Project screen).
+// Resets tempo measurement and transport state but NOT the change serials,
+// so a caller comparing serials never re-applies a stale event after the
+// switch.
+void midiRouterSetClockMode(MidiRouterState* router, MidiClockMode mode);
+
+// Slave-mode clock state, polled by the app layer after midiRouterTick
+// (same serial pattern as midiRouterGetCCValue: serials let callers apply
+// each change exactly once). Transport: returns 1 once any transport
+// message has been seen in slave mode, with *running the latest state
+// (1 = Start/Continue, 0 = Stop) and *serial its change counter.
+int midiRouterGetClockTransport(const MidiRouterState* router, int* running, uint32_t* serial);
+// Tempo: returns 1 once a tempo has been measured in slave mode, with *bpm
+// the smoothed tempo (24 clocks/beat) and *serial bumped whenever the
+// quantized (whole BPM) value changes.
+int midiRouterGetClockBpm(const MidiRouterState* router, float* bpm, uint32_t* serial);
+// Monotonic MIDI-clock pulse count. Start/Continue reset the musical phase to
+// zero; callers can compare it with their own 24-ticks-per-beat phase.
+uint64_t midiRouterGetClockPulseCount(const MidiRouterState* router);
 
 // Polls the backend and applies the active input mode (only auto_ is
 // implemented: last-note-priority legato, channel-mapped or

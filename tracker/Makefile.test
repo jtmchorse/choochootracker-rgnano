@@ -24,7 +24,7 @@ endif
 
 # Include paths
 INCLUDES = -I. -Isrc -Isrc/corelib -Isrc/screens -Isrc/import -Itests/mocks -Iexternal \
-           -I../chipnomad_lib -I../chipnomad_lib/chips -I../chipnomad_lib/external/ayumi \
+           -I../chipnomad_lib -I../chipnomad_lib/chips -I../chipnomad_lib/link -I../chipnomad_lib/external/ayumi \
            -I../chipnomad_lib/external/gb_apu -I../chipnomad_lib/external/mutable -I../chipnomad_lib/external/open303/Source/DSPCode \
            -I../chipnomad_lib/external/signalsmith
 
@@ -52,6 +52,7 @@ CHIPNOMAD_LIB_SOURCES = $(wildcard ../chipnomad_lib/external/mutable/beads/*.cc)
                         $(wildcard ../chipnomad_lib/synth/*.cpp) \
                         $(wildcard ../chipnomad_lib/export/*.cpp) \
                         $(wildcard ../chipnomad_lib/midi/*.cpp) \
+                        $(wildcard ../chipnomad_lib/link/*.cpp) \
                         $(wildcard ../chipnomad_lib/external/open303/Source/DSPCode/*.cpp) \
                         $(wildcard ../chipnomad_lib/external/ayumi/*.cpp) \
                         $(wildcard ../chipnomad_lib/external/mutable/braids/*.cc) \
@@ -74,7 +75,7 @@ CHIPNOMAD_LIB_SOURCES = $(wildcard ../chipnomad_lib/external/mutable/beads/*.cc)
                         $(wildcard ../chipnomad_lib/external/mutable/plaits_alt/dsp/physical_modelling/*.cc) \
                         $(wildcard ../chipnomad_lib/external/mutable/plaits_alt/dsp/speech/*.cc)
 
-TRACKER_SRC_SOURCES = src/soundbank_library.cpp src/screens/instrument_soundfont.cpp src/screens/user_preset_browser.cpp src/user_presets.cpp src/fm_catalog.cpp src/app.cpp src/support_report.cpp src/version.cpp \
+TRACKER_SRC_SOURCES = src/screens/instrument_monk.cpp src/soundbank_library.cpp src/screens/instrument_soundfont.cpp src/screens/user_preset_browser.cpp src/user_presets.cpp src/fm_catalog.cpp src/app.cpp src/support_report.cpp src/version.cpp \
                       src/screens/edit_character.cpp \
                       src/screens/instrument_fm_controls.cpp src/screens/instrument_opl.cpp src/screens/screen_fm_edit.cpp src/screens/screen_sid_edit.cpp src/screens/instrument_simple_chip.cpp \
                       src/screens/screen_insert_fx.cpp \
@@ -93,6 +94,8 @@ TRACKER_SRC_SOURCES = src/soundbank_library.cpp src/screens/instrument_soundfont
                       src/screens/screen_midi_channel_map.cpp \
                       src/screens/screen_midi_cc.cpp \
                       src/string_utils.cpp \
+                      src/audio_input_manager.cpp \
+                      src/screens/screen_audio_input.cpp \
                       src/common.cpp \
                       src/export_path.cpp \
                       src/copy_paste.cpp \
@@ -197,6 +200,33 @@ benchmark-song-release:
 clean:
 	@rm -rf $(BUILD_DIR)
 
+# Sanitizer builds (T10): separate object dirs so the plain -O0 objects
+# stay cached; sanitizer instrumentation must match across every TU, so
+# these rebuild the full tree with the sanitizer flag added.
+# TSan needs -O1 (not -O0) for reliable shadow-memory tracking.
+SANITIZER_OBJECT_DIR = $(BUILD_DIR)/obj-$(1)
+define sanitizer_target
+.PHONY: $(2)
+$(2): $(BUILD_DIR)/$(2)$(if $(filter Windows_NT,$(OS)),.exe,)
+	@$(BUILD_DIR)/$(2)$(if $(filter Windows_NT,$(OS)),.exe,)
+
+$(BUILD_DIR)/$(2)$(if $(filter Windows_NT,$(OS)),.exe,): $$(foreach source,$$(ALL_SOURCES),$$(call object_for_san,$$(source),$(1)))
+	@mkdir -p $(BUILD_DIR)
+	@echo "Linking $(2)..."
+	@$$(CXX) -fsanitize=$(1) -g -O1 $$^ $$(LDFLAGS) -o $$@
+	@echo "Built: $$@"
+
+$$(foreach source,$$(ALL_COMPILE_SOURCES),$$(eval $$(call compile_source_san,$$(source),$(1))))
+endef
+object_for_san = $(BUILD_DIR)/obj-$(2)/$(subst ../,up/,$(basename $(1))).o
+define compile_source_san
+$(call object_for_san,$(1),$(2)): $(1) Makefile.test Makefile.native-chip-flags
+	@mkdir -p $$(dir $$@)
+	@$$(CXX) $$(CFLAGS) -fsanitize=$(2) -g -O1 $$(call native_chip_opt_flags,$$(1)) $$(INCLUDES) -MMD -MP -c $$< -o $$@
+endef
+$(eval $(call sanitizer_target,thread,test-tsan))
+$(eval $(call sanitizer_target,address,test-asan))
+
 # Help
 help:
 	@echo "ChipNomad Test Suite"
@@ -207,6 +237,8 @@ help:
 	@echo "  make -f Makefile.test build     Build changed files only"
 	@echo "  make -f Makefile.test clean     Remove build artifacts"
 	@echo "  make -f Makefile.test benchmark-song-release  Build the optimised song benchmark"
+	@echo "  make -f Makefile.test test-tsan Run tests under ThreadSanitizer"
+	@echo "  make -f Makefile.test test-asan Run tests under AddressSanitizer"
 	@echo "  make -f Makefile.test help      Show this help"
 	@echo "  make -f Makefile.test debug     Show discovered source files"
 	@echo ""
@@ -217,7 +249,7 @@ help:
 	@echo "  $(TEST_EXECUTABLE) --success              Show successful assertions"
 	@echo "  $(TEST_EXECUTABLE) --help                 See all doctest options"
 
-.PHONY: all build clean help debug measurements
+.PHONY: all build clean help debug measurements test-tsan test-asan
 
 # Offline factory conversion uses the same canonical writer/readers as the app.
 FACTORY_OBJECTS = $(foreach source,tests/chip_factory.cpp $(filter-out src/copy_paste.cpp,$(COMMON_SOURCES)) $(MOCK_SOURCES),$(call object_for,$(source)))

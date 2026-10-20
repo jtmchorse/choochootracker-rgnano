@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: true
 
       # Pinned by SHA-256. appimagetool 1.9.1 builds the image around the
       # static Type 2 runtime below, so the result no longer needs libfuse2

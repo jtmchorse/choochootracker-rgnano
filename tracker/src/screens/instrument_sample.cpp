@@ -13,7 +13,7 @@ static int sampleButtonDown;
 static constexpr int sourceValueX = 9;
 static constexpr int sourceValueWidth = 7;
 static constexpr int editLabelX = 17;
-static constexpr int editLabelWidth = 4;
+static constexpr int editLabelWidth = 8;
 static Bitmap* samplePreviewBitmap;
 static int samplePreviewWidth, samplePreviewHeight;
 static const char* stretchLabels[] = {"Off", "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars"};
@@ -98,6 +98,10 @@ static void onSampleLoaded(const char* path) {
     screenMessage(MESSAGE_TIME, "PCM16 %lu frames %lu Hz",
       (unsigned long)instrument->chip.sample.frameCount,
       (unsigned long)instrument->chip.sample.sampleRate);
+    // Loading a sample replaces any completed take: the editor hosts one
+    // thing at a time (a recording or a sample), so the take's WAV is
+    // deleted and its state reset before the editor is re-entered.
+    sampleEditorDiscardRecording(cInstrument);
   }
   audioManager.resume();
   screenSetup(&screenInstrument, cInstrument);
@@ -110,7 +114,9 @@ static int sampleHasFile(const InstrumentSample* sample) {
 static int getColumnCount(int row) {
   if (row < 3) return instrumentCommonColumnCount(row);
   if (row == 3) {
-    return sampleHasFile(&chipnomadState->project.instruments[cInstrument].chip.sample) ? 2 : 1;
+    // Row 3 always offers the EDIT/REC button (recording works with no
+    // armed input; the editor handles both loading and recording).
+    return 2;
   }
   return row == 9 ? 5 : 2;
 }
@@ -132,7 +138,11 @@ static void drawStatic(void) {
 static void drawCursor(int col, int row) {
   if (row < 3) return instrumentCommonDrawCursor(col, row);
   if (instrumentCommonDrawVoicePostCursor(col, row)) return;
-  else if (row == 3) gfxCursor(col ? editLabelX : sourceValueX, 6, col ? editLabelWidth : sourceValueWidth);
+  else if (row == 3) {
+    const int x = col == 0 ? sourceValueX : editLabelX;
+    const int w = col == 0 ? sourceValueWidth : editLabelWidth;
+    gfxCursor(x, 6, w);
+  }
   else gfxCursor(col ? 26 : sourceValueX,row+4,col?8:sourceValueWidth);
 }
 
@@ -160,14 +170,17 @@ static void drawField(int col, int row, CellState state) {
     gfxClearRect(col?26:sourceValueX,row+4,col?8:sourceValueWidth,1);
   }
   switch (row) {
-    case 3:
+    case 3: {
       if (col == 0) {
         gfxPrint(sourceValueX, 6, sampleHasFile(sample) ? shortSampleFilename(sample->path, 7) : "Load");
-        if (!sampleHasFile(sample)) gfxClearRect(editLabelX, 6, editLabelWidth, 1);
       } else {
-        gfxPrint(editLabelX, 6, "EDIT");
+        // One button for both worlds: REC when the instrument has no
+        // sample, EDIT/REC once one is loaded. Both open the merged
+        // sample editor, which hosts recording and editing alike.
+        gfxPrint(editLabelX, 6, sampleHasFile(sample) ? "EDIT/REC" : "REC");
       }
       break;
+    }
     case 4: if(!col) gfxPrintf(sourceValueX,8,"%+d st",sample->pitch); break;
     case 5:
       if (!col) gfxPrint(sourceValueX, 9, stretchLabels[sample->stretchMode <= 6 ? sample->stretchMode : 0]);
@@ -194,7 +207,7 @@ static int onEdit(int col, int row, CellEditAction action) {
   int handled = 0;
   switch (row) {
     case 3:
-      if (col == 1 && action == CellEditAction::tap && sampleHasFile(sample)) {
+      if (col == 1 && action == CellEditAction::tap) {
         screenSetup(&screenSampleSettings, cInstrument);
         return 1;
       }
@@ -243,6 +256,11 @@ static int loadAdjacentSample(int direction) {
 static int isCellValid(int col, int row) {
   // Speed is inert while Stretch drives the duration: skip it in navigation.
   if (!col && row == 7 && chipnomadState->project.instruments[cInstrument].chip.sample.stretchMode != 0) return 0;
+  if (row == 3) {
+    // The EDIT/REC button is always available: recording works with no
+    // armed input, and the editor handles an empty sample.
+    return 1;
+  }
   return 1;
 }
 

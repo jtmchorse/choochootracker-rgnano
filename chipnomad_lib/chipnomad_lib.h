@@ -6,6 +6,7 @@
 #include "playback.h"
 #include "synth/track_tilt.h"
 #include "utils.h"
+#include "stop_transition.h"
 
 class BraidsVoice;
 class SampleVoice;
@@ -16,6 +17,7 @@ class PlaitsAltVoice;
 class AChChidVoice;
 class DrumSynthVoice;
 class MMEVoice;
+class MonkSynthVoice;
 class SinteredVoice;
 class OPLLVoice;
 class SIDVoice;
@@ -26,6 +28,7 @@ class OPLVoice;
 class SimpleChipVoice;
 class AudioCommandQueue;
 struct MidiRouterState;
+struct LinkClientState;
 class AudioMonitor;
 
 constexpr int VOICE_MONITOR_SAMPLES = 256;
@@ -50,6 +53,11 @@ struct PlaybackStatus {
   PlaybackTrackState tracks[PROJECT_MAX_TRACKS];
   uint8_t trackEnabled[PROJECT_MAX_TRACKS];
   uint8_t isPlaying;
+  // Audio-thread tick counter and the host timestamp of that tick. They are
+  // published with the status snapshot so the UI can follow Link phase
+  // without racing the audio callback.
+  uint64_t linkPhaseTicks;
+  uint64_t linkPhaseTickMicros;
 };
 class MasterEffects;
 class MasterLimiter;
@@ -97,6 +105,7 @@ struct ChipNomadState {
   SoundChip* chips[PROJECT_MAX_CHIPS];
   int sampleRate;
   float frameSampleCounter;
+  StopTransition stopTransition;
   float mixVolume;
   int audioOverload;
   int trackClipping[PROJECT_MAX_TRACKS];
@@ -109,12 +118,16 @@ struct ChipNomadState {
   uint8_t insertValues[PROJECT_MAX_TRACKS][2][8];
   uint8_t insertActive[PROJECT_MAX_TRACKS];
   float* insertBuffer;
+  float* sidechainBuffer;
+  uint8_t sidechainSourceMask, masterSidechainExcludeMask;
   float* mixBuffer;
   float* reverbBuffer;
   float* delayBuffer;
   int mixBufferSize;
   int aySampleDithering;
   BraidsVoice* braidsVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
+  uint8_t braidsBits, braidsDrift, braidsSignature;
+  uint32_t braidsSignatureSeed;
   SoundbankVoice* soundbankVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   SampleVoice* sampleVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   SCWFVoice* scwfVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
@@ -123,6 +136,8 @@ struct ChipNomadState {
   AChChidVoice* achchidVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   DrumSynthVoice* drumSynthVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   MMEVoice* mmeVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
+  MonkSynthVoice* monkPreview;
+  MonkSynthVoice* monkVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   OPLVoice* oplVoices[PROJECT_MAX_TRACKS][CHORD_MAX_VOICES];
   OPLVoice* oplPreview;
   FourOpVoice* fourOpPreview;
@@ -151,8 +166,6 @@ struct ChipNomadState {
   uint32_t renderSeq;                       // odd while chipnomadRender runs (atomic)
   uint32_t voiceAllocFailures;
   uint8_t braidsSettingsValid;
-  uint8_t braidsBits, braidsDrift, braidsSignature;
-  uint32_t braidsSeed;
   struct VoiceRetired { void* object; void (*destroy)(void*); uint32_t seq; } voiceRetired[96];
   int voiceRetiredCount;
   // MIDI-Out active-note tracking, Program/Bank cache, and MIDI-In routing
@@ -160,6 +173,11 @@ struct ChipNomadState {
   // one instance per ChipNomadState, so independent engine states (e.g. one
   // per test fixture) never share bookkeeping through a hidden global.
   MidiRouterState* midiRouter;
+  // Receiver-only Ableton Link client (see link/link_client.h) - same
+  // one-instance-per-state ownership as the MIDI router. The UI polls it
+  // with serial-bumped getters; the audio thread captures session state
+  // through it at tick boundaries.
+  LinkClientState* linkClient;
   VoiceMonitor voiceMonitors[PROJECT_MAX_TRACKS];
   MasterEffects* masterEffects;
   // Master bus limiter (synth/master_limiter.h). masterLimiterEnabled is
@@ -172,6 +190,8 @@ struct ChipNomadState {
   AudioMonitor* audioMonitor;
   int benchmarkBypassPan;
   PlaybackStatus uiPlaybackStatus;
+  // Audio-thread-only state, copied into PlaybackStatus each tick.
+  uint64_t linkPhaseTicks;
 };
 
 /**
@@ -225,6 +245,16 @@ void chipnomadQueuePlaybackStop(ChipNomadState* state);
 // application shutdown, in addition to the automatic call on playback stop.
 void chipnomadMidiPanic(ChipNomadState* state);
 int chipnomadQueuePlaybackStartSong(ChipNomadState* state, int songRow, int chainRow, int loop);
+// Audio-thread conditional start. Unlike checking a UI playback snapshot,
+// this remains correct when a MIDI Stop and the following Start cross the
+// UI/audio thread boundary in the same render block.
+int chipnomadQueuePlaybackStartSongIfStopped(ChipNomadState* state, int songRow, int chainRow, int loop);
+// Timed start (T40): playback begins on the first audio tick frame at or
+// after waitUntilMicros on the monotonic host clock (same scale as
+// midiRouterNowMicros / linkClientNowMicros). waitUntilMicros == 0 fires
+// immediately. Used by the Ableton Link quantized launch to align song
+// start to a session beat boundary.
+int chipnomadQueuePlaybackStartSongAtTime(ChipNomadState* state, int songRow, int chainRow, int loop, uint64_t waitUntilMicros);
 int chipnomadQueuePlaybackStartChain(ChipNomadState* state, int trackIdx, int songRow, int chainRow, int loop);
 int chipnomadQueuePlaybackStartPhrase(ChipNomadState* state, int trackIdx, int songRow, int chainRow, int loop);
 int chipnomadQueuePlaybackStartPhraseRow(ChipNomadState* state, int trackIdx, const PhraseRow* row);
@@ -238,6 +268,7 @@ int chipnomadQueueSimpleChipPreview(ChipNomadState* state,int track,InstrumentTy
 int chipnomadQueueFourOpPreview(ChipNomadState* state,int track,InstrumentType type,const InstrumentFourOp* patch);
 int chipnomadQueueOPLPreview(ChipNomadState* state, int track, InstrumentType type, const InstrumentOPL* patch);
 int chipnomadQueueDX7Preview(ChipNomadState* state,int track,const InstrumentDX7* patch);
+int chipnomadQueueMonkPreview(ChipNomadState* state, int track, const InstrumentMonk* patch);
 int chipnomadQueueSIDPreview(ChipNomadState* state,int track,const InstrumentSID* patch);
 int chipnomadQueueOPLLPreview(ChipNomadState* state, int track, const InstrumentOPLL* patch);
 int chipnomadQueuePlaybackStopPreview(ChipNomadState* state, int trackIdx);

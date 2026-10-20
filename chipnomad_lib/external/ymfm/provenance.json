@@ -5,7 +5,9 @@
   "license": "BSD-3-Clause",
   "notice": "LICENSE",
   "use": "runtime",
-  "modifications": [],
+  "modifications": [
+    "ymfm_opl.h/.cpp, ymfm_opn.h/.cpp and ymfm_opm.h/.cpp: optional fixed channel masks for isolated tracker voices; defaults retain full-chip rendering. Global clocks and DAC behavior, including all YM2612 idle-channel contributions, remain unchanged."
+  ],
   "files": [
     {
       "path": "chipnomad_lib/external/ymfm/LICENSE",
@@ -35,12 +37,14 @@
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opl.h",
       "upstream_path": "src/ymfm_opl.h",
-      "sha256": "b01d13720c61cf040d10a2e68ee3e002e4467b9c795978514d58be6245dcbda5"
+      "sha256": "ad11a891a4ce4251076caefadb02ac30610c1185382979188636e7b2cd85896c",
+      "upstream_sha256": "b01d13720c61cf040d10a2e68ee3e002e4467b9c795978514d58be6245dcbda5"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opl.cpp",
       "upstream_path": "src/ymfm_opl.cpp",
-      "sha256": "e745673678d0de9733488427397e794d42348bb000dd45f6665d6f063963d517"
+      "sha256": "8054d82694bbeac954b44cb60c8ea85d5b86f75d0a02e1f1f9eb94a472d3fcb2",
+      "upstream_sha256": "e745673678d0de9733488427397e794d42348bb000dd45f6665d6f063963d517"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_adpcm.h",
@@ -65,22 +69,26 @@
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opn.h",
       "upstream_path": "src/ymfm_opn.h",
-      "sha256": "1950990c3ea0c6d492a20f66a683a372a7367ef39f7830aa65b20a20d1bcbef5"
+      "sha256": "2a75b6cd1fa9ee7ca06666ff2f9f4cac8b895cd41255f589e0ecd186dcf880ea",
+      "upstream_sha256": "1950990c3ea0c6d492a20f66a683a372a7367ef39f7830aa65b20a20d1bcbef5"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opn.cpp",
       "upstream_path": "src/ymfm_opn.cpp",
-      "sha256": "8734c6d5a6e1bf49a08eeb33d260d39c17cd1d26f5db506e5d0d3e416913b489"
+      "sha256": "6eef20b9fcdd3a021e7e5f51d754741d6822a2e8e1e7f5f7a8d9a5a1304dacc4",
+      "upstream_sha256": "8734c6d5a6e1bf49a08eeb33d260d39c17cd1d26f5db506e5d0d3e416913b489"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opm.h",
       "upstream_path": "src/ymfm_opm.h",
-      "sha256": "cab750257fe757cdab52fcf01917777c2b926ffa4c0aa2c8c9c714784e9aee7b"
+      "sha256": "0be74ec291d1a248cd6dac320f327614b2193fa096f5fcff732f86f74d77378d",
+      "upstream_sha256": "cab750257fe757cdab52fcf01917777c2b926ffa4c0aa2c8c9c714784e9aee7b"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_opm.cpp",
       "upstream_path": "src/ymfm_opm.cpp",
-      "sha256": "2235d57101d26cdd70d4021fd1f3b8116faeba6fd5efb2ca83ba3be1298b22dc"
+      "sha256": "c4f7455f79a9c186220871520613535dc53952dad1c4b76d1b6c481266bf05a5",
+      "upstream_sha256": "2235d57101d26cdd70d4021fd1f3b8116faeba6fd5efb2ca83ba3be1298b22dc"
     },
     {
       "path": "chipnomad_lib/external/ymfm/ymfm_ssg.h",

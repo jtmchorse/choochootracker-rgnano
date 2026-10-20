@@ -59,6 +59,7 @@ struct StickLiveFixture {
     initDefaultAppSettings();
     mockAudioReconfigureResult = 0;
     mockAudioReconfigureCalls = 0;
+    mockAudioReconfigureRate = 0;
     mockAudioReconfigureSize = 0;
     mockAudioCpuLoad = 0;
     appSettings.keyMapping.keyMotionLive[0] = keyboardLive;
@@ -337,7 +338,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "absent, older and invalid settings default 
   }
 }
 
-TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio buffer control align") {
+TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
     REQUIRE(screenSettings.draw != nullptr);
     REQUIRE(screenSettings.setup != nullptr);
     REQUIRE(screenControlsSettings.draw != nullptr);
@@ -384,33 +385,55 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio buffer control ali
   mockAudioCpuLoad = 37;
   screenAudioSettings.fullRedraw();
   screen = mockScreenData;
-#ifdef RGNANO_BUILD
-  CHECK(screen->rows == 3);  // + FX lite
-#else
-  CHECK(screen->rows == 2);
+  CHECK(screen->rows == 4);
+  screen->drawField(0, 0, CellState::focus);
+  CHECK(std::string(mockGfxCells[2], 11) == "Sample rate");
+#ifndef RGNANO_BUILD
+  CHECK(std::string(mockGfxCells[2] + 23, 6) == "48 kHz");
 #endif
-  screen->drawField(0, 0, CellState::focus);
-  CHECK(std::string(mockGfxCells[2], 11) == "Buffer size");
-  CHECK(std::string(mockGfxCells[2] + 23, 3) == "512");
+#ifndef RGNANO_BUILD  // RG Nano pins the rate to 32 kHz (row 0 not editable)
+  REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
+  CHECK(mockAudioReconfigureRate == 32000);
+  CHECK(appSettings.audioSampleRate == 32000);
+  REQUIRE(screen->onEdit(0, 0, CellEditAction::clear) == 1);
+  CHECK(appSettings.audioSampleRate == 48000);
+  mockAudioReconfigureResult = 1;
+  REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
+  CHECK(appSettings.audioSampleRate == 48000);
+#endif
+  mockAudioReconfigureResult = 0;
+  screen->drawField(0, 1, CellState::focus);
+  CHECK(std::string(mockGfxCells[3], 11) == "Buffer size");
+  CHECK(std::string(mockGfxCells[3] + 23, 3) == "512");
   appSettings.audioBufferSize = 64;
-  screen->drawField(0, 0, CellState::focus);
-  CHECK(std::string(mockGfxCells[2] + 23, 4) == "64  ");
+  screen->drawField(0, 1, CellState::focus);
+  CHECK(std::string(mockGfxCells[3] + 23, 4) == "64  ");
   appSettings.audioBufferSize = 256;
-  screen->drawField(0, 1, CellState::normal);
-  CHECK(std::string(mockGfxCells[3], 8) == "CPU load");
-  CHECK(std::string(mockGfxCells[3] + 23, 4) == "037%");
-  CHECK_FALSE(screen->isCellValid(0, 1));
-  REQUIRE(screen->onEdit(0, 0, CellEditAction::increase) == 1);
-  CHECK(mockAudioReconfigureCalls == 1);
+  screen->drawField(0, 2, CellState::normal);
+  CHECK(std::string(mockGfxCells[4], 8) == "CPU load");
+  CHECK(std::string(mockGfxCells[4] + 23, 4) == "037%");
+  CHECK_FALSE(screen->isCellValid(0, 2));
+  screen->drawField(0, 3, CellState::focus);
+#ifdef RGNANO_BUILD
+  CHECK(std::string(mockGfxCells[5], 7) == "FX lite");
+  CHECK(screen->isCellValid(0, 3));
+  CHECK_FALSE(screen->isCellValid(0, 0));
+#else
+  CHECK(std::string(mockGfxCells[5], 11) == "Audio Input");
+  CHECK(std::string(mockGfxCells[5] + 23, 3) == "OFF");
+  CHECK(screen->isCellValid(0, 3));
+  REQUIRE(screen->onEdit(0, 3, CellEditAction::tap) == 1);
+#endif
+  REQUIRE(screen->onEdit(0, 1, CellEditAction::increase) == 1);
   CHECK(mockAudioReconfigureSize == 512);
   CHECK(appSettings.audioBufferSize == 512);
-  REQUIRE(screen->onEdit(0, 0, CellEditAction::clear) == 1);
+  REQUIRE(screen->onEdit(0, 1, CellEditAction::clear) == 1);
   CHECK(appSettings.audioBufferSize == 32);
   const int callsAtMinimum = mockAudioReconfigureCalls;
-  REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
+  REQUIRE(screen->onEdit(0, 1, CellEditAction::decrease) == 1);
   CHECK(mockAudioReconfigureCalls == callsAtMinimum);
   mockAudioReconfigureResult = 1;
-  REQUIRE(screen->onEdit(0, 0, CellEditAction::increase) == 1);
+  REQUIRE(screen->onEdit(0, 1, CellEditAction::increase) == 1);
   CHECK(mockAudioReconfigureSize == 64);
   CHECK(appSettings.audioBufferSize == 32);
 }
@@ -427,6 +450,29 @@ TEST_CASE_FIXTURE(StickLiveFixture, "audio buffer settings use supported sizes")
     CHECK(appSettings.audioBufferSize == setting.expected);
   }
 }
+
+// MERGE-REVIEW: RG Nano pins the rate to 32 kHz on every load (toggle adopted later).
+#ifndef RGNANO_BUILD
+TEST_CASE_FIXTURE(StickLiveFixture, "audio sample rate settings accept only 32 or 48 kHz") {
+  struct StoredSetting { const char* text; int expected; };
+  for (const auto& setting : {StoredSetting{"audioSampleRate: 32000\n", 32000},
+                              StoredSetting{"audioSampleRate: 48000\n", 48000},
+                              StoredSetting{"audioSampleRate: 96000\n", 48000},
+                              StoredSetting{"audioSampleRate: 0\n", 48000}}) {
+    std::ofstream(realSettingsPath) << setting.text;
+    REQUIRE(settingsLoad() == 0);
+    CHECK(appSettings.audioSampleRate == setting.expected);
+  }
+}
+#else
+TEST_CASE_FIXTURE(StickLiveFixture, "audio sample rate setting is pinned to 32 kHz on RG Nano") {
+  for (const char* text : {"audioSampleRate: 48000\n", "audioSampleRate: 96000\n", "audioSampleRate: 0\n"}) {
+    std::ofstream(realSettingsPath) << text;
+    REQUIRE(settingsLoad() == 0);
+    CHECK(appSettings.audioSampleRate == 32000);
+  }
+}
+#endif
 }
 
 TEST_SUITE("MIDI settings") {
@@ -488,6 +534,25 @@ TEST_CASE_FIXTURE(StickLiveFixture, "MIDI device names round-trip through settin
   REQUIRE(settingsLoad() == 0);
   CHECK(std::string(appSettings.midiInputDeviceName) == "Keystation Mini");
   CHECK(std::string(appSettings.midiOutputDeviceName) == "FluidSynth virtual port");
+}
+
+TEST_CASE_FIXTURE(StickLiveFixture, "MIDI clock mode round-trips through settings save/load") {
+  appSettings.clockSource = ClockSource::midiClock;
+  REQUIRE(settingsSave() == 0);
+
+  initDefaultAppSettings();
+  CHECK(appSettings.clockSource == ClockSource::internal);
+
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.clockSource == ClockSource::midiClock);
+
+  // Invalid values fall back to the default rather than being trusted.
+  FILE* file = fopen(realSettingsPath.c_str(), "w");
+  REQUIRE(file != nullptr);
+  fprintf(file, "midiClockMode: 7\n");
+  fclose(file);
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.clockSource == ClockSource::internal);
 }
 
 TEST_CASE_FIXTURE(StickLiveFixture, "screenMidiChannelMap cycles channel-to-instrument assignment") {
@@ -637,4 +702,32 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Personal visual settings coexist and surviv
   REQUIRE(settingsLoad() == 0);
   CHECK(appSettings.persistentWaveform == 1);
   CHECK(appSettings.trackVisuals[1].mode == TrackVisualMode::audio);
+}
+
+TEST_CASE_FIXTURE(StickLiveFixture, "audio device removal restarts the audio handler and shows the notice") {
+  // The disconnect path rebuilds everything audio: the output device is
+  // reopened through AudioManager::restart, capture is torn down and
+  // re-enumerated, and the helper box shows the animated notice.
+  mockAudioRestartResult = 0;
+  mockAudioRestartCalls = 0;
+  mockAudioRestartNotificationFrames = 0;
+
+  MainLoopEventData event = {};
+  event.type = MainLoopEvent::audioDeviceRemoved;
+  event.data.value = 1; // capture device removed
+  appOnEvent(event);
+
+  CHECK(mockAudioRestartCalls == 1);
+  CHECK(mockAudioRestartNotificationFrames > 0);
+  CHECK(screenAudioRestartActive());
+
+  // The notice is transient: it clears without any further event.
+  mockAudioRestartNotificationFrames = 1;
+  CHECK(screenAudioRestartActive());
+  mockAudioRestartNotificationFrames = 0;
+  CHECK_FALSE(screenAudioRestartActive());
+
+  // A second disconnect restarts again (hot-unplug/replug cycles).
+  appOnEvent(event);
+  CHECK(mockAudioRestartCalls == 2);
 }

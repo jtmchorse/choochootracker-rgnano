@@ -268,9 +268,15 @@ static void layoutVirtualPad(void) {
     dpadRightRect = (SDL_Rect){margin + dpadSize * 2 / 3, y + dpadSize / 3, dpadSize / 3, dpadSize / 3};
     aButtonRect = (SDL_Rect){actionX, y, actionSize, actionSize};
     bButtonRect = (SDL_Rect){leftActionX, y + actionSize + gap, actionSize, actionSize};
-    startButtonRect = (SDL_Rect){actionX, y + dpadSize - smallH, actionSize, smallH};
-    selectButtonRect = (SDL_Rect){leftActionX, y + actionSize * 2 + gap * 2, actionSize, smallH};
-    const int separatorY = selectButtonRect.y + selectButtonRect.h + gap * 2;
+    // Transport keys are one row below the play controls, rather than a
+    // staggered extension of the A/B diagonal.
+    const int controlsBottom = y + dpadSize > bButtonRect.y + bButtonRect.h
+      ? y + dpadSize : bButtonRect.y + bButtonRect.h;
+    const int transportY = controlsBottom + gap;
+    const int transportX = (layoutW - actionSize * 2 - gap) / 2;
+    selectButtonRect = (SDL_Rect){transportX, transportY, actionSize, smallH};
+    startButtonRect = (SDL_Rect){transportX + actionSize + gap, transportY, actionSize, smallH};
+    const int separatorY = transportY + smallH + gap * 2;
     const int stickSize = btnSize * 2;
     const int stickY = separatorY + gap * 2;
     leftStickRect = (SDL_Rect){margin, stickY, stickSize, stickSize};
@@ -286,20 +292,29 @@ static void layoutVirtualPad(void) {
     int dpadSize = sideBand - margin * 2;
     if (dpadSize > layoutH - margin * 2) dpadSize = layoutH - margin * 2;
     const int dpadY = (layoutH - dpadSize) / 2;
-    const int actionSize = btnSize + btnSize / 2;
+    // The diagonal B/A layout lets each button grow until B would touch the
+    // tracker canvas. Keep that boundary clear so the last tracker columns
+    // remain touchable.
+    const int layoutActionSize = btnSize + btnSize / 2;
+    int actionSize = btnSize * 2;
+    const int maxActionSize = (sideBand - margin - gap) / 2;
+    if (actionSize > maxActionSize) actionSize = maxActionSize;
     const int smallH = btnSize;
     const int actionRight = layoutW - margin - actionSize;
     const int actionLeft = actionRight - actionSize - gap;
-    const int y = (layoutH - (actionSize * 2 + gap * 3 + smallH * 2)) / 2;
+    // Start and Select retain the redesigned layout; only A and B grow.
+    const int y = (layoutH - (layoutActionSize * 2 + gap * 3 + smallH * 2)) / 2;
     dpadRect = (SDL_Rect){margin, dpadY, dpadSize, dpadSize};
     dpadUpRect = (SDL_Rect){margin + dpadSize / 3, dpadY, dpadSize / 3, dpadSize / 3};
     dpadDownRect = (SDL_Rect){margin + dpadSize / 3, dpadY + dpadSize * 2 / 3, dpadSize / 3, dpadSize / 3};
     dpadLeftRect = (SDL_Rect){margin, dpadY + dpadSize / 3, dpadSize / 3, dpadSize / 3};
     dpadRightRect = (SDL_Rect){margin + dpadSize * 2 / 3, dpadY + dpadSize / 3, dpadSize / 3, dpadSize / 3};
-    aButtonRect = (SDL_Rect){actionRight, y, actionSize, actionSize};
-    bButtonRect = (SDL_Rect){actionLeft, y + actionSize + gap, actionSize, actionSize};
-    startButtonRect = (SDL_Rect){actionRight, y + actionSize * 2 + gap * 2, actionSize, smallH};
-    selectButtonRect = (SDL_Rect){actionLeft, y + actionSize * 2 + gap * 3 + smallH, actionSize, smallH};
+    aButtonRect = (SDL_Rect){actionRight, dpadY, actionSize, actionSize};
+    bButtonRect = (SDL_Rect){actionLeft, dpadY + dpadSize - actionSize, actionSize, actionSize};
+    startButtonRect = (SDL_Rect){layoutW - margin - layoutActionSize,
+      y + layoutActionSize * 2 + gap * 2, layoutActionSize, smallH};
+    selectButtonRect = (SDL_Rect){layoutW - margin - layoutActionSize * 2 - gap,
+      y + layoutActionSize * 2 + gap * 3 + smallH, layoutActionSize, smallH};
     recButtonRect = delButtonRect = leftStickRect = rightStickRect = (SDL_Rect){0, 0, 0, 0};
   }
 }
@@ -503,8 +518,14 @@ void gfxTitlePrint(int x, int y, const char* text) {
 void gfxToggleFullscreen(void) {
 #ifdef DESKTOP_BUILD
   const Uint32 flags = SDL_GetWindowFlags(window);
-  SDL_SetWindowFullscreen(window, flags & SDL_WINDOW_FULLSCREEN_DESKTOP
-    ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+  if (SDL_SetWindowFullscreen(window, flags & SDL_WINDOW_FULLSCREEN_DESKTOP
+    ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP) == 0) {
+    // Windows can invalidate render targets during this transition without
+    // delivering a usable resize event until after the next present.
+    int width = 0, height = 0;
+    SDL_GetWindowSize(window, &width, &height);
+    gfxHandleResize(width, height);
+  }
 #endif
 }
 

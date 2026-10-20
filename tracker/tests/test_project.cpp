@@ -11,6 +11,7 @@
 #include <fstream>
 #include <string>
 #include <cstdio>
+#include <memory>
 
 TEST_SUITE("project") {
 
@@ -72,20 +73,59 @@ TEST_CASE_FIXTURE(ProjectFixture, "projectInit defaults to Clouds with usable Be
   CHECK(p.beadsReverbHighpassCutoffHz == 150);
 }
 
+TEST_CASE_FIXTURE(ProjectFixture, "projectInit has a usable Tape Echo preset") {
+  CHECK(p.delayAlgorithm == 0);
+  CHECK(p.tapeDivision == 2);
+  CHECK(p.tapeHeads == 6);
+  CHECK(p.tapeTone == 160);
+  CHECK(p.tapeFlutter == 25);
+  CHECK(p.tapeSpring == 25);
+}
+
 TEST_CASE("Beads reverb settings survive save and load") {
   Project saved, loaded;
   projectInit(&saved); projectInit(&loaded);
+  // Match the valid project setup used by the other save/load fixtures.
+  saved.chipsCount = 1;
+  saved.tracksCount = 1;
+  saved.chipType = ChipType::AY;
+  std::strcpy(saved.pitchTable.name, "Beads test");
   saved.reverbAlgorithm = 1;
   saved.beadsReverbTime = 77;
   saved.beadsReverbTone = 201;
   saved.beadsReverbHighpassCutoffHz = 900;
   const char* path = "build/tests/beads_reverb_io.cct";
   REQUIRE(projectSave(&saved, path) == 0);
+  INFO(projectFileError);
   REQUIRE(projectLoad(&loaded, path) == 0);
   CHECK(loaded.reverbAlgorithm == 1);
   CHECK(loaded.beadsReverbTime == 77);
   CHECK(loaded.beadsReverbTone == 201);
   CHECK(loaded.beadsReverbHighpassCutoffHz == 900);
+}
+
+TEST_CASE("Tape Echo settings survive save and load") {
+  Project saved, loaded;
+  projectInit(&saved); projectInit(&loaded);
+  saved.chipsCount = loaded.chipsCount = 1;
+  saved.tracksCount = loaded.tracksCount = 1;
+  saved.chipType = loaded.chipType = ChipType::AY;
+  std::strcpy(saved.pitchTable.name, "Tape Echo test");
+  saved.delayAlgorithm = 1;
+  saved.tapeDivision = 5;
+  saved.tapeHeads = 4;
+  saved.tapeTone = 77;
+  saved.tapeFlutter = 61;
+  saved.tapeSpring = 43;
+  const char* path = "build/tests/tape_echo_io.cct";
+  REQUIRE(projectSave(&saved, path) == 0);
+  REQUIRE(projectLoad(&loaded, path) == 0);
+  CHECK(loaded.delayAlgorithm == 1);
+  CHECK(loaded.tapeDivision == 5);
+  CHECK(loaded.tapeHeads == 4);
+  CHECK(loaded.tapeTone == 77);
+  CHECK(loaded.tapeFlutter == 61);
+  CHECK(loaded.tapeSpring == 43);
 }
 
 TEST_CASE_FIXTURE(ProjectFixture, "projectInit enables MIDI CC mapping rows") {
@@ -415,7 +455,7 @@ TEST_CASE("instrument catalogue covers every family and its routable motion FX")
   }
 
   Instrument instrument;
-  uint8_t fx; int base, range; InstrumentMotionValue value;
+  FXId fx; int base, range; InstrumentMotionValue value;
   getInstrumentFunctions(InstrumentType::Sample).init(&instrument);
   CHECK(instrumentMotionDestination(&instrument, 3, &fx, &base, &range, &value));
   CHECK(fx == fxSST); CHECK(base == 0); CHECK(range == 255);
@@ -478,16 +518,17 @@ TEST_CASE("instrument catalogue covers every family and its routable motion FX")
   CHECK(instrumentModDestinationAvailable(&instrument, 9));
 }
 
-TEST_CASE("v4 projects preserve LFO wavetable settings") {
+TEST_CASE("projects preserve syncLFO and slowLFO settings") {
   Project saved, loaded;
   projectInitAY(&saved);
   projectInitAY(&loaded);
   getInstrumentFunctions(InstrumentType::AY2).init(&saved.instruments[0]);
   Modulation& mod = saved.instruments[0].modulation[2];
-  mod.type = ModulationType::SLFO;
+  SUBCASE("legacy syncLFO") { mod.type = ModulationType::SLFO; }
+  SUBCASE("slowLFO") { mod.type = ModulationType::SlowLFO; }
   mod.p1 = static_cast<uint8_t>(LFOShape::wavetable);
   mod.p2 = static_cast<uint8_t>(LFOTrigger::chain);
-  mod.p3 = 12;
+  mod.p3 = mod.type == ModulationType::SlowLFO ? SLOW_LFO_MAX_STEP : 12;
   mod.p4 = 8;
   mod.p5 = 42;
   const char* path = "build/tests/lfo_wavetable_v4.cct";
@@ -496,6 +537,9 @@ TEST_CASE("v4 projects preserve LFO wavetable settings") {
   REQUIRE(projectLoad(&loaded, path) == 0);
   CHECK(projectFileVersion == 7);
   const Modulation& reloaded = loaded.instruments[0].modulation[2];
+  CHECK(reloaded.type == mod.type);
+  CHECK(reloaded.p3 == mod.p3);
+  CHECK(reloaded.p4 == mod.p4);
   CHECK(reloaded.p1 == static_cast<uint8_t>(LFOShape::wavetable));
   CHECK(reloaded.p2 == static_cast<uint8_t>(LFOTrigger::chain));
   CHECK(reloaded.p5 == 42);
@@ -515,7 +559,7 @@ TEST_CASE("v3 projects default the LFO wavetable index to zero") {
 TEST_CASE("phrase FX groups put the active engine after Track FX") {
   CHECK(std::strcmp(fxGroups[0].name, "Sequencer FX") == 0);
   CHECK(std::strcmp(fxGroups[1].name, "Track FX") == 0);
-  CHECK(fxGroups[1].columns == 4);
+  CHECK(fxGroups[1].columns == 8);
   CHECK(fxGroups[1].fxList[3].fx == fxCRD);
   // Merged sample FX order keeps SPL/SLI first (our fork's saved-project
   // numeric values); SST is the sample-start control, STA a legacy alias.
@@ -780,6 +824,14 @@ TEST_CASE("fillFXNames ay") {
 TEST_CASE("fillFXNames unknown") {
   fillFXNames();
   CHECK(std::strcmp(fxNames[fxFBK + 1].name, "---") == 0);
+}
+
+TEST_CASE("project load keeps its working project off the caller stack") {
+  auto loaded = std::make_unique<Project>();
+  projectInit(loaded.get());
+  REQUIRE(projectLoad(loaded.get(), "packaging/common/projects/gm-midi-demo.cct") == 0);
+  CHECK(loaded->tracksCount == PROJECT_MAX_TRACKS);
+  projectFree(loaded.get());
 }
 
 } // TEST_SUITE("project")

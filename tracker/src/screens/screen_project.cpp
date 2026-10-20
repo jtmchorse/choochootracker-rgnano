@@ -13,11 +13,13 @@
 #include "import/import_vt2.h"
 #include "import/import_midi.h"
 #include "import/import_m8s.h"
-#include "import/import_lsdj.h"
-#include "selection_popup.h"
 #include "string_utils.h"
+#include "midi/midi_router.h"
+#include "link/link_client.h"
 #include <string.h>
 #include <strings.h>
+
+#include <chrono>
 
 #ifdef WEB_BUILD
 #include <emscripten/emscripten.h>
@@ -27,10 +29,21 @@ static int isCharEdit = 0;
 static const AppScreen* projectReturnScreen = &screenProject;
 static char* editingString = NULL;
 static int editingStringLength = 0;
-static int tickRateI = 0;
-static uint16_t tickRateF = 0;
-// Song picked in an LSDj save (.sav), -1 when none: read by projectLoadFromPath
-static int pendingSavSlot = -1;
+// Tempo is edited/displayed in whole BPM. The project's canonical tickRate
+// stays in Hz (see project_io.cpp's "- Frame rate" format): BPM =
+// tickRate * 60/24 = tickRate * 2.5, so tickRate = BPM * 0.4. Old projects
+// with a fractional tempo (e.g. 59 Hz = 147.5 BPM) display rounded and snap
+// to a whole BPM on the first tempo edit; untouched projects save unchanged.
+static uint16_t bpmValue = 125;
+// Mirror of appSettings.clockSource for the Clock source row.
+// 0 = Internal, 1 = Midi Clock, 2 = Ableton Link (future).
+static uint8_t clockSourceMirror = 0;
+
+// Whole-BPM range: tickRate 1-200 Hz maps to 2.5-500 BPM, so whole numbers
+// start at 3.
+#define BPM_MIN (3)
+#define BPM_MAX (500)
+#define BPM_DEFAULT (125) // the old 50 Hz default
 
 int projectLoadFromPath(const char* path) {
   if (!path) {
@@ -64,18 +77,7 @@ int projectLoadFromPath(const char* path) {
       loadResult = projectLoadMidi(&replacement, path);
     } else if (strcasecmp(ext, ".m8s") == 0) {
       // Import a Dirtywave M8 song (structure and notes only)
-      loadResult = projectLoadM8SWithSamples(&replacement, path, appSettings.samplePath);
-    } else if (strcasecmp(ext, ".lsdsng") == 0) {
-      // Import a Little Sound Dj song (structure and notes only)
-      loadResult = projectLoadLSDJ(&replacement, path);
-    } else if (strcasecmp(ext, ".sav") == 0) {
-      // One song of an LSDj save, picked in the list
-      if (pendingSavSlot >= 0) {
-        loadResult = projectLoadLSDJSav(&replacement, path, pendingSavSlot);
-      } else {
-        snprintf(projectFileError, 40, "Pick a song in the .sav list");
-        loadResult = 1;
-      }
+      loadResult = projectLoadM8S(&replacement, path);
     } else if (strcasecmp(ext, ".cct") == 0) {
       // Load ChooChooTracker native format
       loadResult = projectLoad(&replacement, path);
@@ -94,8 +96,7 @@ int projectLoadFromPath(const char* path) {
     projectModified = 0; // Clear modified flag after loading
 
     // Store filename without extension
-    if (pendingSavSlot >= 0) snprintf(appSettings.projectFilename, FILENAME_LENGTH + 1, "%s", replacement.title);
-    else extractFilenameWithoutExtension(path, appSettings.projectFilename, FILENAME_LENGTH + 1);
+    extractFilenameWithoutExtension(path, appSettings.projectFilename, FILENAME_LENGTH + 1);
     // The loaded project's export folder (if any) is adopted on next export
     exportResetFolderTracking();
     settingsSave();
@@ -115,47 +116,7 @@ int projectLoadFromPath(const char* path) {
   return loadResult;
 }
 
-static void onProjectCancelled(void) {
-  screenSetup(projectReturnScreen, 0);
-}
-static void onProjectLoaded(const char* path);
-
-// An LSDj save (.sav) holds up to 32 songs: list them and load the one picked.
-static char savPath[2048];
-static LsdjSavSong savSongs[32];
-static char savLabels[32][40];
-static SelectionItem savItems[32];
-
-static void onSavSongSelected(int slot) {
-  pendingSavSlot = slot;
-  int result = projectLoadFromPath(savPath);
-  pendingSavSlot = -1;
-  if (result == 0 && projectReturnScreen == &screenTitle) screenSetup(&screenSong, 0);
-  else screenSetup(projectReturnScreen, 0);
-}
-
-static int openLsdjSave(const char* path) {
-  int count = 0;
-  if (lsdjListSav(path, savSongs, 32, &count) != 0) {
-    screenMessage(MESSAGE_TIME_ERROR, "%s", projectFileError);
-    return 0;
-  }
-  snprintf(savPath, sizeof(savPath), "%s", path);
-  for (int i = 0; i < count; i++) {
-    snprintf(savLabels[i], sizeof(savLabels[i]), "%02d %-8s v%02X %3d blocks", savSongs[i].slot, savSongs[i].name[0] ? savSongs[i].name : "-", savSongs[i].version, savSongs[i].blocks);
-    savItems[i] = {savLabels[i], savSongs[i].slot, nullptr, 0, nullptr};
-  }
-  selectionPopupSetup("LSDJ SONGS", savItems, count, savSongs[0].slot, onSavSongSelected, onProjectCancelled, true);
-  screenSetup(&screenSelectionPopup, 0);
-  return 1;
-}
-
 static void onProjectLoaded(const char* path) {
-  const char* ext = path ? strrchr(path, '.') : NULL;
-  if (ext && strcasecmp(ext, ".sav") == 0) {
-    if (!openLsdjSave(path)) screenSetup(projectReturnScreen, 0);
-    return;
-  }
   if (projectLoadFromPath(path) == 0 && projectReturnScreen == &screenTitle)
     screenSetup(&screenSong, 0);
   else
@@ -185,8 +146,12 @@ static void onProjectSaved(const char* folderPath) {
   screenSetup(&screenProject, 0);
 }
 
+static void onProjectCancelled(void) {
+  screenSetup(projectReturnScreen, 0);
+}
+
 static void doLoadProject(void) {
-  fileBrowserSetup("LOAD PROJECT", ".cct,.vt2,.mid,.midi,.m8s,.lsdsng,.sav", appSettings.projectPath,
+  fileBrowserSetup("LOAD PROJECT", ".cct,.vt2,.mid,.midi,.m8s", appSettings.projectPath,
     onProjectLoaded, onProjectCancelled);
   screenSetup(&screenFileBrowser, 0);
 }
@@ -210,7 +175,7 @@ void projectOpenFromScreen(const AppScreen* returnScreen) {
 
 void projectOpenFromScreenAtPath(const AppScreen* returnScreen, const char* path) {
   projectReturnScreen = returnScreen ? returnScreen : &screenProject;
-  fileBrowserSetup("LOAD PROJECT", ".cct,.vt2,.mid,.midi,.m8s,.lsdsng,.sav", path,
+  fileBrowserSetup("LOAD PROJECT", ".cct,.vt2,.mid,.midi,.m8s", path,
     onProjectLoaded, onProjectCancelled);
   screenSetup(&screenFileBrowser, 0);
 }
@@ -267,8 +232,12 @@ static void setup(int input) {
   isCharEdit = 0;
   editingString = NULL;
   editingStringLength = 0;
-  tickRateI = (int)chipnomadState->project.tickRate;
-  tickRateF = (uint16_t)((chipnomadState->project.tickRate - (float)tickRateI) * 1000.f);
+  // Round to whole BPM: 50 Hz -> 125, 59 Hz -> 148 (147.5 rounded).
+  int bpm = (int)(chipnomadState->project.tickRate * 2.5f + 0.5f);
+  if (bpm < BPM_MIN) bpm = BPM_MIN;
+  if (bpm > BPM_MAX) bpm = BPM_MAX;
+  bpmValue = (uint16_t)bpm;
+  clockSourceMirror = (uint8_t)appSettings.clockSource;
 }
 
 static void fullRedraw(void) {
@@ -276,7 +245,68 @@ static void fullRedraw(void) {
   screenFullRedraw(screen);
 }
 
+// Live followed tempo while slaved to MIDI clock, rounded to whole BPM
+// (app.cpp keeps project.tickRate updated from the router's measurement).
+static int liveClockBpm(void) {
+  return (int)(chipnomadState->project.tickRate * 2.5f + 0.5f);
+}
+
+// Scratch serial for status queries that don't need change tracking.
+static uint32_t statusSerialScratch = 0;
+
+// Current Link status, cached per draw pass (queried once per row render).
+static LinkStatus currentLinkStatus(void) {
+  return linkClientGetStatus(chipnomadState->linkClient, &statusSerialScratch);
+}
+
+// Alternating "connected" / "Peers: N" status on the Link row: the phase
+// flips roughly once a second while connected, and a status transition
+// resets it so a fresh connection always shows "connected" first.
+static LinkStatus linkStatusPhaseStatus = LinkStatus::disabled;
+static std::chrono::steady_clock::time_point linkStatusPhaseFlip = {};
+static int linkStatusShowPeers = 0;
+
+static void updateLinkStatusPhase(void) {
+  const LinkStatus status = currentLinkStatus();
+  const auto now = std::chrono::steady_clock::now();
+  if (status != linkStatusPhaseStatus) {
+    linkStatusPhaseStatus = status;
+    linkStatusPhaseFlip = now;
+    linkStatusShowPeers = 0;
+    return;
+  }
+  if (status == LinkStatus::connected &&
+      (linkStatusPhaseFlip == std::chrono::steady_clock::time_point() ||
+        std::chrono::duration<float>(now - linkStatusPhaseFlip).count() >= 1.0f)) {
+    linkStatusPhaseFlip = now;
+    linkStatusShowPeers = !linkStatusShowPeers;
+  }
+}
+
 static void draw(void) {
+  // Row 6 is asynchronous in both clock-slave modes: MIDI clock shows the
+  // live measured tempo, Link shows the connect toggle and session status
+  // (discovery threshold, peer joins/leaves, the 1 s alternation).
+  // fullRedraw only runs on navigation/edit, so refresh the field here
+  // every frame. gfxClearRect erases the cursor underline together with
+  // the field and the framework does not redraw the cursor after draw(),
+  // so restore it whenever it rests on this row (same pattern as the
+  // song screen's live refresh).
+  if (!clockSourceMirror) return;
+  if (clockSourceMirror == 2) updateLinkStatusPhase();
+
+  ScreenData* screen = projectScreen();
+  const int focused = screen->cursorRow == 6;
+  if (clockSourceMirror == 1) {
+    // MIDI clock: live followed tempo in the info color, as before.
+    const ColorScheme cs = appSettings.colorScheme;
+    gfxSetFgColor(cs.textInfo);
+    gfxClearRect(13, 11, 27, 1);
+    gfxPrintf(13, 11, "%u BPM", liveClockBpm());
+  } else {
+    projectCommonDrawField(0, 6, focused ? CellState::focus : CellState::normal);
+  }
+  if (focused) screen->drawCursor(screen->cursorCol, 6);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -293,7 +323,11 @@ int projectCommonColumnCount(int row) {
   } else if (row >= 1 && row <= 3) {
     return 24; // File, title, author
   } else if (row == 4) {
-    return 2; // Tick rate
+    return 1; // Linear pitch
+  } else if (row == 5) {
+    return 1; // Clock source
+  } else if (row == 6) {
+    return 1; // Tempo (BPM), or the Link connect toggle in Link mode
   }
   return 1; // Default value
 }
@@ -312,7 +346,11 @@ void projectCommonDrawStatic(void) {
   gfxPrint(0, 6, "Title");
   gfxPrint(0, 7, "Author");
 
-  gfxPrint(0, 9, "Tick rate");
+  gfxPrint(0, 9, "Linear pitch");
+  gfxPrint(0, 10, "Clock source");
+  // Row 6 doubles as the Link connect row; the label follows the mode
+  // (a full redraw runs whenever the clock source changes).
+  gfxPrint(0, 11, clockSourceMirror == 2 ? "Link" : "Tempo");
 }
 
 void projectCommonDrawCursor(int col, int row) {
@@ -332,11 +370,19 @@ void projectCommonDrawCursor(int col, int row) {
     // Text fields: file name, title, author
     gfxCursor(7 + col, 4 + row, 1);
   } else if (row == 4) {
-    // Tick rate
-    if (col == 0) {
-      gfxCursor(13, 9, 3);
+    // Linear pitch
+    gfxCursor(13, 9, 3);
+  } else if (row == 5) {
+    // Clock source ("Internal" / "Midi Clock" / "Ableton Link")
+    gfxCursor(13, 10, 12);
+  } else if (row == 6) {
+    // Tempo ("500.0 BPM"), or in Link mode the connect toggle whose
+    // underline follows the label width.
+    if (clockSourceMirror == 2) {
+      const LinkStatus status = currentLinkStatus();
+      gfxCursor(13, 11, status == LinkStatus::connected || status == LinkStatus::connecting ? 12 : 9);
     } else {
-      gfxCursor(17, 9, 3);
+      gfxCursor(13, 11, 8);
     }
   }
 }
@@ -369,11 +415,54 @@ void projectCommonDrawField(int col, int row, CellState state) {
     gfxClearRect(7, 7, PROJECT_TITLE_LENGTH, 1);
     gfxPrintf(7, 7, "%s", chipnomadState->project.author);
   } else if (row == 4) {
-    // Tick rate and BPM
-    gfxClearRect(13, 9, 27, 1);
-    float tickRate = (float)tickRateI + (float)tickRateF / 1000.0f;
-    float bpm = tickRate * 60.0f / 24.0f;
-    gfxPrintf(13, 9, "%03d.%03dHz (%.1f BPM)", tickRateI, tickRateF, bpm);
+    // Linear pitch
+    gfxPrint(13, 9, chipnomadState->project.linearPitch ? "ON " : "OFF");
+  } else if (row == 5) {
+    // Clock source: Internal / Midi Clock / Ableton Link
+    gfxClearRect(13, 10, 27, 1);
+    gfxPrint(13, 10,
+      clockSourceMirror == 2 ? "Ableton Link" :
+      clockSourceMirror == 1 ? "Midi Clock"  :
+      "Internal");
+  } else if (row == 6) {
+    gfxClearRect(13, 11, 27, 1);
+    if (clockSourceMirror == 2) {
+      // Link mode: the row is the session connect/disconnect toggle. The
+      // session owns the tempo (app.cpp applies it to the project), so no
+      // BPM is shown or edited here.
+      const LinkStatus status = currentLinkStatus();
+      const char* label = (status == LinkStatus::connected) ? "[Disconnect]" :
+                          (status == LinkStatus::connecting) ? "[Connecting]" :
+                          "[Connect]";
+      gfxPrint(13, 11, label);
+      // Status message on the right, in the info color. While connected,
+      // alternate between "connected" and the peer count roughly once a
+      // second (phase kept by draw()) so both the link state and the
+      // session size stay visible without widening the row.
+      gfxSetFgColor(appSettings.colorScheme.textInfo);
+      if (status == LinkStatus::connected) {
+        if (linkStatusShowPeers) {
+          gfxPrintf(26, 11, "Peers: %d", linkClientGetPeerCount(chipnomadState->linkClient));
+        } else {
+          gfxPrint(26, 11, "connected");
+        }
+      } else {
+        const char* statusStr =
+          status == LinkStatus::noNetwork  ? "No net"  :
+          status == LinkStatus::connecting ? "Wait..." :
+          status == LinkStatus::noPeers    ? "No sess" :
+          status == LinkStatus::error      ? "Err"     : "";
+        if (statusStr[0]) gfxPrint(26, 11, statusStr);
+      }
+    } else if (clockSourceMirror == 1) {
+      // Slaved to MIDI clock: read-only live tempo measured from the
+      // incoming clock, shown in the info color (draw() refreshes it
+      // every frame with the same color).
+      gfxSetFgColor(appSettings.colorScheme.textInfo);
+      gfxPrintf(13, 11, "%u BPM", liveClockBpm());
+    } else {
+      gfxPrintf(13, 11, "%u BPM", bpmValue);
+    }
   }
 }
 
@@ -450,24 +539,138 @@ int projectCommonOnEdit(int col, int row, enum CellEditAction action) {
       handled = 1;
     }
   } else if (row == 4) {
-    // Tick rate
-    if (col == 0) {
-      // Integer part (1-200), clear sets to 50
-      if (action == CellEditAction::clear) {
-        tickRateI = 50;
-        handled = 1;
-      } else {
-        handled = edit8noLast(action, (uint8_t*)&tickRateI, 10, 1, 200);
-      }
-    } else {
-      // Fractional part (.000-.999) with overflow
-      handled = edit16withOverflow(action, &tickRateF, 100, 0, 999);
-    }
-
+    // Linear pitch (ON/OFF)
+    handled = edit8noLast(action, &chipnomadState->project.linearPitch, 1, 0, 1);
     if (handled) {
-      // Update project tick rate from the two components
-      chipnomadState->project.tickRate = (float)tickRateI + (float)tickRateF / 1000.0f;
       projectModified = 1;
+      chipnomadQueuePlaybackStop(chipnomadState);
+      reinitializePitchTable(&chipnomadState->project);
+    }
+  } else if (row == 5) {
+    // Clock source: Internal / Midi Clock / Ableton Link. Persisted in
+    // settings.txt as `clockSource: 0|1|2` (the `midiClockMode:` line is
+    // also written as a backwards-compat alias for older binaries).
+    // Applied to the router live; the audio thread picks it up through
+    // the regular project refresh. The connect/disconnect toggle lives
+    // on row 6 in Link mode.
+    action = convertMultiAction(action);
+    switch (action) {
+      case CellEditAction::tap:
+      case CellEditAction::doubleTap:
+        clockSourceMirror = (clockSourceMirror + 1) % 3;
+        handled = 1;
+        break;
+      case CellEditAction::clear:
+        clockSourceMirror = 0;
+        handled = 1;
+        break;
+      case CellEditAction::increase:
+      case CellEditAction::increaseBig:
+        clockSourceMirror = (clockSourceMirror + 1) % 3;
+        handled = 1;
+        break;
+      case CellEditAction::decrease:
+      case CellEditAction::decreaseBig:
+        clockSourceMirror = (clockSourceMirror + 2) % 3;
+        handled = 1;
+        break;
+      default:
+        break;
+    }
+    if (handled) {
+      appSettings.clockSource = (ClockSource)clockSourceMirror;
+      midiRouterSetClockMode(chipnomadState->midiRouter,
+        appSettings.clockSource == ClockSource::midiClock ? MidiClockMode::slave : MidiClockMode::off);
+      // Link mode: selecting arms the client (status -> selected, no
+      // network I/O); leaving Link mode disconnects. Actual Connect is
+      // the toggle on row 6.
+      if (appSettings.clockSource == ClockSource::link) {
+        linkClientSelect(chipnomadState->linkClient);
+      } else {
+        linkClientDeselect(chipnomadState->linkClient);
+      }
+      // Row 6 switches between the tempo field and the Link toggle (and
+      // the row label changes with it), so redraw the whole form.
+      // Re-sync the BPM mirror from the project's tick rate first: while
+      // slaved (MIDI clock or Link) app.cpp drives tickRate, and leaving
+      // a slaved mode should display the tempo actually in effect.
+      int bpm = (int)(chipnomadState->project.tickRate * 2.5f + 0.5f);
+      if (bpm < BPM_MIN) bpm = BPM_MIN;
+      if (bpm > BPM_MAX) bpm = BPM_MAX;
+      bpmValue = (uint16_t)bpm;
+      fullRedraw();
+    }
+  } else if (row == 6) {
+    if (clockSourceMirror == 2) {
+      // Link mode: the row is the connect/disconnect toggle (the session
+      // owns the tempo, so there is nothing to edit here). Tap connects
+      // (from selected/noNetwork/noPeers/error) or disconnects (from
+      // connected); taps during connecting are swallowed so the pending
+      // discovery isn't torn down mid-flight.
+      action = convertMultiAction(action);
+      if (action == CellEditAction::tap || action == CellEditAction::doubleTap) {
+        const LinkStatus status = currentLinkStatus();
+        if (status == LinkStatus::connected) {
+          linkClientDisconnect(chipnomadState->linkClient);
+          handled = 1;
+        } else if (status == LinkStatus::selected || status == LinkStatus::noNetwork ||
+                   status == LinkStatus::noPeers || status == LinkStatus::error) {
+          linkClientConnect(chipnomadState->linkClient);
+          handled = 1;
+        } else if (status == LinkStatus::connecting) {
+          handled = 1; // swallow: connection attempt already in flight
+        }
+      } else if (action == CellEditAction::clear) {
+        // Clear = disconnect if connected, otherwise no-op.
+        if (currentLinkStatus() == LinkStatus::connected) {
+          linkClientDisconnect(chipnomadState->linkClient);
+        }
+        handled = 1;
+      }
+    } else if (clockSourceMirror == 1) {
+      // Slaved to MIDI clock: the tempo is driven by the incoming clock,
+      // so edits are swallowed (the field shows the live followed tempo).
+      handled = 1;
+    } else {
+      // Tempo in whole BPM. Fine steps are 1 BPM, coarse 5 BPM; clear
+      // restores the old default 50 Hz = 125 BPM.
+      action = convertMultiAction(action);
+      switch (action) {
+        case CellEditAction::tap:
+        case CellEditAction::doubleTap:
+          bpmValue += 1;
+          if (bpmValue > BPM_MAX) bpmValue = BPM_MIN;
+          handled = 1;
+          break;
+        case CellEditAction::clear:
+          bpmValue = BPM_DEFAULT;
+          handled = 1;
+          break;
+        case CellEditAction::increase:
+          if (bpmValue < BPM_MAX) bpmValue += 1;
+          handled = 1;
+          break;
+        case CellEditAction::decrease:
+          if (bpmValue > BPM_MIN) bpmValue -= 1;
+          handled = 1;
+          break;
+        case CellEditAction::increaseBig:
+          bpmValue = bpmValue > BPM_MAX - 5 ? BPM_MAX : bpmValue + 5;
+          handled = 1;
+          break;
+        case CellEditAction::decreaseBig:
+          bpmValue = bpmValue < BPM_MIN + 5 ? BPM_MIN : bpmValue - 5;
+          handled = 1;
+          break;
+        default:
+          break;
+      }
+      if (handled) {
+        // Backwards compatible writeback: the project file keeps storing
+        // Hz ("- Frame rate"), BPM * 0.4 in Hz.
+        chipnomadState->project.tickRate = (float)bpmValue * 0.4f;
+        projectModified = 1;
+      }
     }
   }
 

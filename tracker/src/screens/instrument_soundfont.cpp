@@ -17,6 +17,7 @@ std::vector<soundbank::PresetReference> references;
 std::vector<std::vector<SelectionItem>> collectionItems;
 std::vector<SelectionItem> choices;
 std::string lastStatus;
+std::string browserPath;
 int buttonDown = 0;
 bool lastBusy = false;
 bool footerErrorDisplayed = false;
@@ -24,8 +25,19 @@ extern const AppScreen screenSoundbankBrowser;
 Instrument& current() { return chipnomadState->project.instruments[cInstrument]; }
 void back() { chipnomadQueuePlaybackStopPreview(chipnomadState,*pSongTrack); screenSetup(&screenInstrument, cInstrument); }
 void show();
+void up() {
+  if (browserPath.empty()) { back(); return; }
+  const auto slash = browserPath.rfind('/');
+  browserPath = slash == std::string::npos ? std::string() : browserPath.substr(0, slash);
+  show();
+}
 void select(int value) {
-  if(value==-2){back();return;}
+  if(value==-2){up();return;}
+  if(value<=-1000) {
+    const size_t folder = size_t(-1000-value);
+    if(folder<browserCollections.size()) { browserPath=browserCollections[folder].path;show(); }
+    return;
+  }
   if(value<0 || size_t(value)>=references.size())return;
   const auto& ref=references[value];const auto& bank=soundbankEntries()[ref.bank];
   soundbankLoad(cInstrument,bank.id,bank.presets[ref.preset].first);
@@ -39,25 +51,29 @@ void preview(int value, bool held) {
     chipnomadQueuePlaybackPreviewNote(chipnomadState,*pSongTrack,
       instrumentFirstNote(&chipnomadState->project,cInstrument),cInstrument);
 }
+const char* loadingStatus() {
+  static std::string message;
+  message=soundbankBusy()?soundbankLoadingStatus():soundbankInstrumentError(cInstrument);
+  return message.c_str();
+}
 void show() {
-  browserCollections=soundbank::collections(soundbankEntries());
+  browserCollections=soundbank::browseCollections(soundbankEntries(),browserPath);
   choices.clear();references.clear();collectionItems.clear();
   collectionItems.resize(browserCollections.size());
-  choices.push_back({"< Instrument",-2,nullptr,0,nullptr});
   int selected=-2;
   for(size_t g=0;g<browserCollections.size();++g) {
-    auto& group=browserCollections[g];auto& items=collectionItems[g];items.reserve(group.presets.size());
+    auto& group=browserCollections[g];auto& items=collectionItems[g];items.reserve(group.presets.size()+1);
     for(const auto& ref:group.presets) {
       int index=int(references.size());references.push_back(ref);
       items.push_back({ref.label.c_str(),index,nullptr,0,ref.label.c_str()});
       const auto& bank=soundbankEntries()[ref.bank];
       if(bank.id==current().chip.soundfont.bank && bank.presets[ref.preset].first==current().chip.soundfont.preset)selected=index;
     }
-    choices.push_back({group.name.c_str(),-100-int(g),items.data(),int(items.size()),nullptr});
+    choices.push_back({group.name.c_str(),-1000-int(g),items.data(),int(items.size()),group.path.c_str(),group.hasFolders});
   }
-  if(references.empty())choices.push_back({soundbankBusy()?"Scanning...":"No presets",-3,nullptr,0,nullptr});
-  else if(selected==-2)selected=0;
-  selectionPopupSetup("SOUNDFONT PRESETS",choices.data(),int(choices.size()),selected,select,back,false,preview,true,true);
+  if(browserCollections.empty())choices.push_back({soundbankBusy()?"Scanning...":"No presets",-3,nullptr,0,nullptr});
+  else if(selected==-2) selected=-1000;
+  selectionPopupSetup("SOUNDFONT PRESETS",choices.data(),int(choices.size()),selected,select,up,false,preview,true,true,loadingStatus,true);
   screenSetup(&screenSoundbankBrowser,0);
 }
 void setup(int n) { screenSelectionPopup.setup(n);lastStatus=soundbankStatus();lastBusy=soundbankBusy(); }
@@ -70,9 +86,17 @@ void draw() {
   screenSelectionPopup.draw();
 }
 int input(int down,int keys,int taps){return screenSelectionPopup.onInput(down,keys,taps);}
-ScreenPlaybackLevel level(){return ScreenPlaybackLevel::none;}
+ScreenPlaybackLevel level(){return ScreenPlaybackLevel::song;}
 const AppScreen screenSoundbankBrowser={nullptr,setup,screenSelectionPopup.fullRedraw,draw,input,level};
-void open(){if(!soundbankScanned() && !soundbankBusy())soundbankRescan();show();}
+void open(){
+  const std::string bank=current().chip.soundfont.bank;
+  const auto disk=bank.substr(0,bank.find("::"));
+  const auto slash=disk.rfind('/');
+  browserPath=slash==std::string::npos?std::string():disk.substr(0,slash);
+  const auto parent=browserPath.rfind('/');
+  browserPath=parent==std::string::npos?std::string():browserPath.substr(0,parent);
+  if(!soundbankScanned() && !soundbankBusy())soundbankRescan();show();
+}
 int columns(int row) { return row < 3 ? instrumentCommonColumnCount(row) : row == 4 ? 2 : 1; }
 void drawStatic() {
   instrumentCommonDrawStatic();

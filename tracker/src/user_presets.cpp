@@ -15,6 +15,18 @@ std::string extension(const std::string& path) {
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
   return s;
 }
+// Single SID source files often contain truncated or copy-pasted internal names.
+// Use the complete filename, retaining model/variant suffixes, in browser and patch.
+std::string sidFileName(const std::string& path) {
+  auto label=fs::path(path).stem().string();
+  bool start=true;
+  for(char& c:label) {
+    if(c=='_'||c=='-')c=' ';
+    if(start)c=std::toupper(static_cast<unsigned char>(c));
+    start=c==' ';
+  }
+  return label;
+}
 bool hidden(const std::string& path) {
   for (const auto& part : fs::path(path)) {
     auto s = part.string();
@@ -44,6 +56,7 @@ bool metadata(const std::vector<uint8_t>& data, InstrumentType& type, std::strin
 
 const char* userPresetFolder(InstrumentType t) {
   switch (t) {
+    case InstrumentType::Monk: return "monk";
     case InstrumentType::DX7: return "dx7";
     case InstrumentType::OPLL: return "opll";
     case InstrumentType::VRC7: return "vrc7";
@@ -85,7 +98,7 @@ bool UserPresets::addPreset(const std::string& name, const std::string& path, st
     std::vector<ExternalPreset> parsed;
     if (!importExternalPresets(type_,path,data,parsed,reason)) { error=reason; return false; }
     if(!reason.empty())error=reason;
-    if (parsed.size() == 1) items_.push_back({parsed[0].name, path, Kind::preset, parsed[0].sourceIndex});
+    if (parsed.size() == 1) items_.push_back({type_==InstrumentType::SID?sidFileName(path):parsed[0].name, path, Kind::preset, parsed[0].sourceIndex});
     else items_.push_back({name, path, Kind::bank});
   } else {
     std::string label; InstrumentType type;
@@ -112,7 +125,7 @@ bool UserPresets::refresh(std::string& error) {
     if (!bytes(location.zip ? location.member : location.path, data, error) ||
         !importExternalPresets(type_, location.zip ? location.member : location.path, data, voices_, error)) return false;
     for (size_t n = 0; n < voices_.size(); ++n)
-      items_.push_back({voices_[n].name, location.zip ? location.member : location.path, Kind::preset, voices_[n].sourceIndex});
+      items_.push_back({type_==InstrumentType::SID&&voices_.size()==1?sidFileName(location.zip?location.member:location.path):voices_[n].name, location.zip ? location.member : location.path, Kind::preset, voices_[n].sourceIndex});
     return true;
   }
   std::string skipped;
@@ -242,7 +255,14 @@ bool UserPresets::load(const Reference& item, Project* destination, int slot, st
     ok = importExternalPresets(type_,item.path,data,parsed,error);
     auto selected=std::find_if(parsed.begin(),parsed.end(),[&](const ExternalPreset& p){return p.sourceIndex==item.voice;});
     ok=ok&&selected!=parsed.end();
-    if(ok){staged->instruments[0]=selected->instrument;staged->tables[0]=selected->table;}
+    if(ok){
+      staged->instruments[0]=selected->instrument;staged->tables[0]=selected->table;
+      if(type_==InstrumentType::SID&&parsed.size()==1) {
+        auto label=sidFileName(item.path);auto& instrument=staged->instruments[0];
+        snprintf(instrument.name,sizeof(instrument.name),"%s",label.c_str());
+        snprintf(instrument.chip.sid.presetName,sizeof(instrument.chip.sid.presetName),"%s",label.c_str());
+      }
+    }
   } else if (ok) ok = instrumentLoadMemory(staged.get(), data.data(), data.size(), 0) == 0;
   ok = ok && userPresetCompatible(type_, staged->instruments[0].type);
   if (ok) {

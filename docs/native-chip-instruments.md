@@ -134,3 +134,94 @@ linked with MinGW; it was not run on
 Windows locally. The checked-in web bundle was regenerated, and its JavaScript
 syntax and WebAssembly binary validation passed. Audio engine code and the
 simplified tracker FX list are unchanged.
+
+### Native FM render-cost audit (2026-10-18)
+
+This local audit covers DX7, OPLL/MSX, VRC7, AdLib/OPL2, OPL3,
+Genesis/YM2612 and Arcade/YM2151. Each ymfm-backed tracker chord slot owns a
+separate chip but uses only channel 0, plus channel 3 for OPL3 four-operator
+or dual-voice patches. The old adapters advanced every chip channel for each
+native sample: nine for OPLL/OPL2, eighteen for OPL3, six for Genesis and eight
+for Arcade. This repeats unused operator work for every note of a CRD chord.
+
+Optional channel masks now restrict those operator clocks to the occupied
+channels. Default callers still render the entire chip. Chip-wide envelope,
+LFO and noise clocks, output rate, DAC conversion, resampling and gain remain
+unchanged. The restricted mask must stay fixed between resets, and omitted
+channels must remain unused. The adapters leave rhythm, channel-3 special
+mode, CSM and sample DAC playback disabled. Genesis still includes all six
+channels in its DAC calculation: even an idle channel contributes to the
+ladder offset, and the adapter's exact idle baseline remains 504 per side.
+
+DX7 is unchanged. Its MSFA core already renders 64-sample blocks, skips
+inactive voices and avoids expensive operator rendering below its existing
+gain threshold while advancing phase. Its shared part clock intentionally
+advances through empty slots to preserve LFO and envelope timing. The other
+FM engines still generate one native sample at a time; this change does not
+convert them to block rendering or change polyphony limits.
+
+Regression coverage compares full-chip and selected-channel PCM for 64 OPL
+configurations, 64 Genesis configurations, 64 Arcade configurations and all
+30 OPLL/VRC7 preset tones. It covers algorithms, waveform/SSG settings,
+feedback, pan, modulation, live pitch and level edits, release and retrigger.
+A separate Genesis check verifies the complete idle DAC baseline. A sequencer
+test plays four-note CRD chords across all seven families and all three OPL3
+topologies, checking the expected pitches and active, audible chord voices.
+
+The host measurements use the unchanged clean-main baseline `7deefa32`,
+Apple Clang 17 on x86_64 macOS, `-O3`, 48 kHz and 512-frame buffers.
+Three alternating baseline/optimized runs render ten seconds per configuration
+following the existing benchmark warmup. The table reports the median of the
+three per-run p50 times. Raw rows are in `native-fm-host-benchmark-20261018.csv`.
+The full regression suite was running concurrently; these are offline host
+render times, not device callback CPU percentages or thermal measurements.
+
+| Engine | Notes | Before (µs/block) | After (µs/block) | Reduction |
+| --- | ---: | ---: | ---: | ---: |
+| DX7 | 1 | 17.292 | 17.367 | -0.4% |
+| DX7 | 8 | 79.041 | 84.300 | -6.7% |
+| OPLL / MSX | 1 | 53.355 | 27.345 | 48.7% |
+| OPLL / MSX | 8 | 425.628 | 222.767 | 47.7% |
+| VRC7 | 1 | 53.421 | 27.346 | 48.8% |
+| VRC7 | 8 | 438.142 | 249.799 | 43.0% |
+| OPL2 | 1 | 58.311 | 28.949 | 50.4% |
+| OPL2 | 8 | 548.813 | 298.251 | 45.7% |
+| OPL3 four | 1 | 95.699 | 41.383 | 56.8% |
+| OPL3 four | 8 | 811.909 | 381.672 | 53.0% |
+| OPL3 dual | 1 | 92.615 | 41.043 | 55.7% |
+| OPL3 dual | 8 | 826.833 | 392.825 | 52.5% |
+| Genesis FM | 1 | 78.219 | 55.052 | 29.6% |
+| Genesis FM | 8 | 626.192 | 386.130 | 38.3% |
+| Arcade FM | 1 | 77.899 | 46.497 | 40.3% |
+| Arcade FM | 8 | 611.554 | 355.500 | 41.9% |
+
+DX7's measured variation is an unchanged-code control, not a claimed change
+in its performance. All six complete benchmark runs produced the same sampled
+checksum, `-93.306319633`. That checksum samples the output; the separate
+PCM regressions compare every generated sample in their fixtures.
+
+Reproduce from `tracker`:
+
+```sh
+make -f Makefile.test -j4 benchmark-native-chips BUILD_DIR=build/fm-release \
+  CFLAGS='-std=c++17 -O3 -DNDEBUG -DTEST -DTEST_PORTMASTER_INPUT'
+build/fm-release/benchmark_native_chips 10 --bounded
+```
+
+The optimized focused suite passed five cases and 86,274 assertions, including
+CRD playback for every family. The web target rebuilt with the existing SDK;
+JavaScript syntax and WebAssembly validation passed, and all 760 preload files
+matched their source inputs byte for byte. The generated data bundle differs
+from the previous bundle only through CRLF-to-LF conversion in 94 text assets;
+no preload file was added or removed. Browser interaction and handheld playback
+have not been tested for this audit.
+
+The required full debug run completed with 798 of 799 cases passing and
+119,882,353 of 119,882,354 assertions passing; neither cases nor assertions
+were skipped. Both separate allocation/lifetime checks passed. The one failure
+is the unchanged M8 importer test at `tracker/tests/test_import_m8s.cpp:214`:
+it requires lowercase `samples/Pack/Kick_4.wav`, while this case-insensitive
+macOS filesystem resolves and loads `m8s_t/lib/Samples/Pack/Kick_4.wav`.
+The diagnostic confirmed that the WAV loads with the expected two frames;
+only the path spelling assertion fails. The preceding AdLib-only clean-main
+run reproduced the same failure. No M8 importer or sample code was changed.

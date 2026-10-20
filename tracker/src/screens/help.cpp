@@ -448,7 +448,7 @@ const char* helpFXHint(uint8_t* fx, int isTable, uint8_t instrumentIdx) {
 
 
 // FX help text storage - initialized at first use
-static const char* fxHelpText[256] = {nullptr};
+static const char* fxHelpText[fxTotalCount] = {nullptr};
 static bool fxHelpTextInitialized = false;
 
 static void initFxHelpText() {
@@ -550,6 +550,8 @@ static void initFxHelpText() {
   fxHelpText[fxSSP] = "Sample Speed FX\n00-FF maps to 0-500 percent\nuntil the next note trigger";
   fxHelpText[fxSLP] = "Sample Playback FX\n00 forward, 01 reverse\n02 loop, 03 ping-pong\nuntil the next note trigger";
   fxHelpText[fxSLI] = "Sample Slice FX\nPlays the numbered slice\nregardless of the note;\n01 = first slice. Needs\nslice mode enabled";
+  fxHelpText[fxRNS] = "Random Slice FX\nPlays random slice\nwhen in slicing mode";
+  fxHelpText[fxRNN] = "Random Note FX\nPlays random note\nX: mode, Y: range";
   fxHelpText[fxSDT] = "Stereo Osc Detune FX\nSets detune between oscillators\nuntil the next note trigger";
   fxHelpText[fxSMX] = "Stereo Osc Mix FX\nSets oscillator A/B mix\nuntil the next note trigger";
   fxHelpText[fxSCF2] = "Stereo Osc Cutoff FX\n00-FF logarithmic cutoff\nuntil the next note trigger";

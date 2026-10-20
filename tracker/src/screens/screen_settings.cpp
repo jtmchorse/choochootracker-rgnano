@@ -53,6 +53,8 @@ static void drawField(int, int row, CellState state) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxPrint(0, 12, "Working folder");
     gfxPrint(23, 12, strncmp(workingFolderStatus, "Folder:", 7) == 0 ? "FOLDER " :
+      strncmp(workingFolderStatus, "Shared", 6) == 0 ? "SHARED " :
+      strncmp(workingFolderStatus, "Permission", 10) == 0 ? "ALLOW  " :
       strcmp(workingFolderStatus, "Unavailable") == 0 ? "N/A    " : "PRIVATE");
   }
 #endif

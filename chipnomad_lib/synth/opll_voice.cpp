@@ -73,7 +73,8 @@ void OPLLVoice::kill() {
 }
 float OPLLVoice::nextNative() {
   ymfm::ym2413::output_data output;
-  chip_.generate(&output);
+  // Channel 0 carries this isolated chord voice; rhythm mode stays disabled.
+  chip_.generate(&output, 1, 1u);
   // Clock key-off before asserting a retrigger: ymfm samples key state at native ticks.
   if (pendingKeyOn_) { pendingKeyOn_ = false; gated_ = true; pitch(); }
   const float sample = (output.data[0] + output.data[1]) / 32768.0f;

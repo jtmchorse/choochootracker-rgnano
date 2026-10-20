@@ -15,6 +15,9 @@ enum class MainLoopEvent {
   touchTap,
   touchAdjust,
   touchNavigate,
+  // SDL_AUDIODEVICEREMOVED reached the platform loop. data.value is the
+  // event's iscapture flag (1 = a capture device was removed/failed).
+  audioDeviceRemoved,
 };
 
 struct MainLoopEventData {

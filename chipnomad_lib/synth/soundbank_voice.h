@@ -14,6 +14,7 @@ class SoundbankVoice {
   void noteOn();
   void noteOff();
   void kill();
+  void stopImmediately(); // Transport output owns the final fade after rendering ends.
   void render(float* stereo, size_t frames);
   bool active() const;
   float envelopeLevel() const;

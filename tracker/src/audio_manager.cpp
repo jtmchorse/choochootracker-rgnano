@@ -4,10 +4,12 @@
 #include <limits.h>
 #include <string.h>
 #include "audio_manager.h"
+#include "audio_input_manager.h"
 #include "corelib_audio.h"
 
 #include "chipnomad_lib.h"
 #include "playback.h"
+#include "link/link_client.h"
 #include "corelib_file.h"
 #include "synth/sample_voice.h"
 #include "synth/scwf_voice.h"
@@ -34,6 +36,14 @@ static float* samplePreviewBuffer;
 
 enum { PREVIEW_NONE, PREVIEW_PCM, PREVIEW_AY, PREVIEW_SCWF, PREVIEW_BYOWTBL };
 static constexpr double previewTwoPi = 6.28318530717958647692;
+
+// Cumulative samples handed to the audio callback since process start.
+// Fed to the Link backend's HostTimeFilter every callback (T29) so the
+// launch-time estimator can map "current sample counter" -> host time.
+// int, not uint64_t: the counter only needs to be unique per callback on
+// the same clock scale the filter sees; wraparound of a 64-bit counter
+// is unreachable, and a plain increment keeps the audio path cheap.
+static uint64_t audioSampleCounter;
 
 static void freeSCWFPreview(void) {
   free(scwfPreview.oscillator[0].data);
@@ -106,6 +116,16 @@ static void updatePlaybackMuteFlags(void) {
 static void audioCallback(int16_t* buffer, int stereoSamples) {
   const auto startedAt = std::chrono::steady_clock::now();
 
+  // Feed the Link HostTimeFilter BEFORE any early return so the filter
+  // keeps seeing (sampleCounter, hostTime) pairs even while playback is
+  // stopped - the launch-time estimator needs a fresh fit at Play time.
+  // The counter advances by the callback size on every path below.
+  const uint64_t counter = audioSampleCounter;
+  audioSampleCounter += (stereoSamples > 0 ? (uint64_t)stereoSamples : 1);
+  linkClientNotifyAudioFrame(chipnomadState->linkClient, counter,
+    (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+      startedAt.time_since_epoch()).count());
+
   if (stereoSamples <= 0 || stereoSamples > aBufferSize ||
       !floatBuffer || !samplePreviewBuffer) {
 #ifdef ANDROID_BUILD
@@ -117,13 +137,10 @@ static void audioCallback(int16_t* buffer, int stereoSamples) {
     return;
   }
 
-  if (chipnomadRender(chipnomadState, floatBuffer, stereoSamples) != stereoSamples) {
-#ifdef ANDROID_BUILD
-    if (audioDiagnostics::enabled)
-      audioDiagnostics::renderFailures.fetch_add(1, std::memory_order_relaxed);
-#endif
-    memset(floatBuffer, 0, stereoSamples * 2 * sizeof(*floatBuffer));
-  }
+  // A short render is normal when a song ends. Preserve its valid prefix;
+  // pre-clear also makes an early render failure safe without stale samples.
+  memset(floatBuffer, 0, stereoSamples * 2 * sizeof(*floatBuffer));
+  chipnomadRender(chipnomadState, floatBuffer, stereoSamples);
   renderPreview(samplePreviewBuffer, stereoSamples);
   for (int i = 0; i < stereoSamples * 2; ++i) floatBuffer[i] += samplePreviewBuffer[i];
 
@@ -134,6 +151,10 @@ static void audioCallback(int16_t* buffer, int stereoSamples) {
     if (sample < -32768) sample = -32768;
     buffer[i] = sample;
   }
+
+  // Audio input monitoring (Phase 2.4): route armed capture into the output
+  // when enabled. No-op (single atomic load) when monitor is off.
+  audioInputManager.mixMonitor(buffer, stereoSamples);
 
   const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
     std::chrono::steady_clock::now() - startedAt).count();
@@ -195,6 +216,7 @@ static int reconfigure(int sampleRate, int bufferSize) {
   if (sampleRate <= 0 || bufferSize <= 0 || bufferSize > INT_MAX / 2 ||
       !floatBuffer || !samplePreviewBuffer) return 1;
   if (sampleRate == aSampleRate && bufferSize == aBufferSize) return 0;
+  if (sampleRate != aSampleRate && audioInputManagerRecordingActive()) return 1;
 
   float* newFloatBuffer = (float*)malloc(bufferSize * 2 * sizeof(float));
   float* newPreviewBuffer = (float*)malloc(bufferSize * 2 * sizeof(float));
@@ -222,11 +244,23 @@ static int reconfigure(int sampleRate, int bufferSize) {
   aBufferSize = bufferSize;
   cpuLoadPercent.store(0, std::memory_order_relaxed);
   if (audioSetup(audioCallback, sampleRate, bufferSize) == 0) {
-    free(oldFloatBuffer);
-    free(oldPreviewBuffer);
-    updatePlaybackMuteFlags();
-    audioPause(0);
-    return 0;
+    if (sampleRate != oldSampleRate && audioInputManager.reconfigureRate(sampleRate)) {
+      audioCleanup();
+    } else {
+      if (sampleRate != oldSampleRate) {
+        stopSamplePreview();
+        chipnomadInitChips(chipnomadState, sampleRate, NULL);
+        playbackStop(&chipnomadState->playbackState);
+        samplePreviewVoice.init((float)sampleRate);
+        scwfPreviewVoice.init((float)sampleRate);
+      }
+      linkClientResetHostTimeFilter(chipnomadState->linkClient);
+      free(oldFloatBuffer);
+      free(oldPreviewBuffer);
+      updatePlaybackMuteFlags();
+      audioPause(0);
+      return 0;
+    }
   }
 
   floatBuffer = oldFloatBuffer;
@@ -250,6 +284,18 @@ static void resume(void) {
   audioPause(0);
 }
 
+// Reopens the output device after it was lost (unplugged interface, driver
+// reset). Same rate/size, so the render buffers and engine state stay valid;
+// only the SDL device handle is recreated. Returns 0 on success.
+static int restart(void) {
+  if (!floatBuffer || !samplePreviewBuffer) return 1;
+  audioPause(1);
+  audioCleanup();
+  if (audioSetup(audioCallback, aSampleRate, aBufferSize)) return 1;
+  audioPause(0);
+  return 0;
+}
+
 static void replaceProject(Project* replacement) {
   if (!replacement || !chipnomadState) return;
   pause();
@@ -266,6 +312,15 @@ static void reinitializeChips(void) {
   pause();
   chipnomadInitChips(chipnomadState, aSampleRate, NULL);
   resume();
+}
+
+static int mutateProject(ProjectMutation* mutation, void* userdata) {
+  if (!mutation || !chipnomadState) return 1;
+  pause();
+  int result = mutation(userdata);
+  chipnomadInitChips(chipnomadState, aSampleRate, NULL);
+  resume();
+  return result;
 }
 
 static void stop() {
@@ -439,10 +494,12 @@ static int previewBYOWTBL(const char* path, const InstrumentBYOWTBL* settings, i
 struct AudioManager audioManager = {
   .start = start,
   .reconfigure = reconfigure,
+  .restart = restart,
   .pause = pause,
   .resume = resume,
   .replaceProject = replaceProject,
   .reinitializeChips = reinitializeChips,
+  .mutateProject = mutateProject,
   .stop = stop,
   .toggleTrackMute = toggleTrackMute,
   .toggleTrackSolo = toggleTrackSolo,

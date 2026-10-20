@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <memory>
 
 static void copyName(char* dest, size_t destSize, const uint8_t* src, size_t srcSize) {
   size_t len = 0;
@@ -121,7 +122,8 @@ static int loadLsdjBuffer(Project* project, const uint8_t* file, size_t size) {
     return 1;
   }
 
-  Project p;
+  auto owned = std::make_unique<Project>();
+  Project& p = *owned;
   projectInitAY(&p);
 
   // One LSDj row is a 16th note: 6 ticks at T bpm is T / 60 * 4 * 6 ticks per second.

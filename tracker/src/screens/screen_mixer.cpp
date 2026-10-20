@@ -12,6 +12,7 @@
 #include <string.h>
 
 static void fullRedraw(void);
+static void refreshEffectRows(void);
 static int displayedCpuLoad = -1;
 static int mixerPage = 0; // 0 mixer, 1 reverb, 2 delay
 static Bitmap* stereoImage;
@@ -98,10 +99,21 @@ static void drawAnalyzers(void) {
 int screenMixerGetPage(void) { return mixerPage; }
 
 static bool beadsReverb() { return chipnomadState->project.reverbAlgorithm == 1; }
-static int effectRows() { return mixerPage == 0 ? 0 : mixerPage == 1 ? (beadsReverb() ? 5 : 6) : 5; }
+static bool tapeEcho() { return chipnomadState->project.delayAlgorithm == 1; }
+static int effectRows() { return mixerPage == 0 ? 0 : mixerPage == 1 ? (beadsReverb() ? 5 : 6) : (tapeEcho() ? 9 : 6); }
 static int columnCount(int row) { return mixerPage == 0 ? (row == PROJECT_MAX_TRACKS ? 1 : 7) : 1; }
 static void drawRowHeader(int row, CellState state) {}
 static void drawColHeader(int col, CellState state) {}
+
+static const char* tapeDivisionName(uint8_t division) {
+  static const char* names[] = {"1/16", "1/8T", "1/8", "1/8.", "1/4", "1/4.", "1/2"};
+  return names[division <= 6 ? division : 2];
+}
+
+static const char* tapeHeadsName(uint8_t heads) {
+  static const char* names[] = {"H1", "H2", "H3", "H1+H2", "H1+H3", "H2+H3", "H1+H2+H3"};
+  return names[heads <= 6 ? heads : 6];
+}
 
 static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
@@ -116,9 +128,14 @@ static void drawStatic(void) {
     if (beadsReverb()) { gfxPrint(0, 6, "Tone"); gfxPrint(0, 7, "HP filter"); }
     else { gfxPrint(0, 6, "Damping"); gfxPrint(0, 7, "LP filter"); gfxPrint(0, 8, "HP filter"); }
   } else {
-    gfxPrint(0, 0, "PING-PONG DELAY");
-    gfxPrint(0, 3, "Return"); gfxPrint(0, 4, "To Reverb");
-    gfxPrint(0, 5, "Ticks"); gfxPrint(0, 6, "Feedback"); gfxPrint(0, 7, "Filter");
+    gfxPrint(0, 0, tapeEcho() ? "TAPE ECHO" : "PING-PONG DELAY");
+    gfxPrint(0, 3, "Algorithm"); gfxPrint(0, 4, "Return"); gfxPrint(0, 5, "To Reverb");
+    if (tapeEcho()) {
+      gfxPrint(0, 6, "Time"); gfxPrint(0, 7, "Heads"); gfxPrint(0, 8, "Feedback");
+      gfxPrint(0, 9, "Tone"); gfxPrint(0, 10, "Flutter"); gfxPrint(0, 11, "Spring");
+    } else {
+      gfxPrint(0, 6, "Ticks"); gfxPrint(0, 7, "Feedback"); gfxPrint(0, 8, "Filter");
+    }
   }
 }
 
@@ -130,9 +147,14 @@ static void drawCursor(int col, int row) {
     if (col < 0 || col >= 7 || row < 0 || row >= PROJECT_MAX_TRACKS) return;
     gfxCursor(x[col], 3 + row, width[col]);
   } else if (row >= 0 && row < effectRows()) {
-    int filterRow = mixerPage == 2 ? 4 : beadsReverb() ? 4 : 4;
+    int filterRow = mixerPage == 1 ? 4 : -1;
     int width = mixerPage == 1 && row == 0 ? (beadsReverb() ? 5 : 6) : 2;
-    if (row >= filterRow) {
+    if (mixerPage == 2) {
+      if (row == 0) width = tapeEcho() ? 4 : 8;
+      else if (tapeEcho() && row == 3) width = (int)strlen(tapeDivisionName(chipnomadState->project.tapeDivision));
+      else if (tapeEcho() && row == 4) width = (int)strlen(tapeHeadsName(chipnomadState->project.tapeHeads));
+    }
+    if (mixerPage == 1 && row >= filterRow) {
       char value[12];
       unsigned int cutoff = mixerPage == 2 ? chipnomadState->project.delayFilterCutoffHz
         : beadsReverb() ? chipnomadState->project.beadsReverbHighpassCutoffHz
@@ -178,14 +200,20 @@ static void drawField(int col, int row, CellState state) {
       gfxPrintf(12, 3 + row, "%u Hz", cutoff);
     }
   } else {
-    if (row == 0) gfxPrint(12, 3, byteToHex(controlFromRange(p->delayReturn, 100)));
-    else if (row == 1) gfxPrint(12, 4, byteToHex(controlFromRange(p->delayReverbSend, 100)));
-    else if (row == 2) gfxPrintf(12, 5, "%02X", p->delayTicks);
-    else if (row == 3) gfxPrint(12, 6, byteToHex(controlFromRange(p->delayFeedback, 95)));
-    else {
-      gfxClearRect(12, 7, 8, 1);
-      gfxPrintf(12, 7, "%u Hz", p->delayFilterCutoffHz);
-    }
+    if (row == 0) gfxPrint(12, 3, tapeEcho() ? "TAPE" : "PINGPONG");
+    else if (row == 1) gfxPrint(12, 4, byteToHex(controlFromRange(p->delayReturn, 100)));
+    else if (row == 2) gfxPrint(12, 5, byteToHex(controlFromRange(p->delayReverbSend, 100)));
+    else if (!tapeEcho() && row == 3) gfxPrintf(12, 6, "%02X", p->delayTicks);
+    else if (!tapeEcho() && row == 4) gfxPrint(12, 7, byteToHex(controlFromRange(p->delayFeedback, 95)));
+    else if (!tapeEcho()) {
+      gfxClearRect(12, 8, 8, 1);
+      gfxPrintf(12, 8, "%u Hz", p->delayFilterCutoffHz);
+    } else if (row == 3) gfxPrint(12, 6, tapeDivisionName(p->tapeDivision));
+    else if (row == 4) gfxPrint(12, 7, tapeHeadsName(p->tapeHeads));
+    else if (row == 5) gfxPrint(12, 8, byteToHex(controlFromRange(p->delayFeedback, 95)));
+    else if (row == 6) gfxPrint(12, 9, byteToHex(p->tapeTone));
+    else if (row == 7) gfxPrint(12, 10, byteToHex(controlFromRange(p->tapeFlutter, 100)));
+    else gfxPrint(12, 11, byteToHex(controlFromRange(p->tapeSpring, 100)));
   }
 }
 
@@ -221,16 +249,26 @@ static int onEdit(int col, int row, CellEditAction action) {
       else if (beadsReverb()) handled = editFilterCutoff(action, &p->beadsReverbHighpassCutoffHz);
       else handled = editFilterCutoff(action, row == 4 ? &p->reverbFilterCutoffHz : &p->reverbHighpassCutoffHz);
     } else {
-      if (row == 0) handled = edit8noLast(action, &p->delayReturn, 10, 0, 100);
-      else if (row == 1) handled = edit8noLast(action, &p->delayReverbSend, 10, 0, 100);
-      else if (row == 2) handled = edit8noLast(action, &p->delayTicks, 4, 1, 255);
-      else if (row == 3) handled = edit8noLast(action, &p->delayFeedback, 10, 0, 95);
-      else handled = editFilterCutoff(action, &p->delayFilterCutoffHz);
+      if (row == 0) handled = edit8noLast(action, &p->delayAlgorithm, 1, 0, 1);
+      else if (row == 1) handled = edit8noLast(action, &p->delayReturn, 10, 0, 100);
+      else if (row == 2) handled = edit8noLast(action, &p->delayReverbSend, 10, 0, 100);
+      else if (!tapeEcho() && row == 3) handled = edit8noLast(action, &p->delayTicks, 4, 1, 255);
+      else if (!tapeEcho() && row == 4) handled = edit8noLast(action, &p->delayFeedback, 10, 0, 95);
+      else if (!tapeEcho()) handled = editFilterCutoff(action, &p->delayFilterCutoffHz);
+      else if (row == 3) handled = edit8noLast(action, &p->tapeDivision, 1, 0, 6);
+      else if (row == 4) handled = edit8noLast(action, &p->tapeHeads, 1, 0, 6);
+      else if (row == 5) handled = edit8noLast(action, &p->delayFeedback, 10, 0, 95);
+      else if (row == 6) handled = edit8noLast(action, &p->tapeTone, 16, 0, 255);
+      else if (row == 7) handled = edit8noLast(action, &p->tapeFlutter, 10, 0, 100);
+      else handled = edit8noLast(action, &p->tapeSpring, 10, 0, 100);
     }
   }
   if (handled) {
     projectModified = 1;
-    if ((mixerPage == 0 && col >= 5) || (mixerPage == 1 && row == 0)) fullRedraw();
+    if ((mixerPage == 0 && col >= 5) || (mixerPage == 1 && row == 0) || (mixerPage == 2 && row == 0)) {
+      if (mixerPage == 2 && row == 0) refreshEffectRows();
+      fullRedraw();
+    }
   }
   return handled;
 }
@@ -247,6 +285,7 @@ static ScreenData screen = {
 
 static void setup(int input) { displayedCpuLoad = -1; mixerPage = 0; screen.rows = PROJECT_MAX_TRACKS + 1; }
 static void fullRedraw(void) { screenFullRedraw(&screen); }
+static void refreshEffectRows(void) { screen.rows = effectRows(); }
 static void draw(void) {
   if (mixerPage == 0) {
     for (int track = 0; track < chipnomadState->project.tracksCount; ++track)

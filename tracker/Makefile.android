@@ -7,7 +7,7 @@ include Makefile.common
 
 # Android-specific settings - use common libs + sdl2 platform with mobile features
 LIBS = $(COMMON_LIBS) platforms/sdl2
-ANDROID_SOURCES = platforms/android/corelib_assets.cpp platforms/android/midi_backend_android.cpp platforms/android/saf_storage.cpp
+ANDROID_SOURCES = platforms/android/corelib_assets.cpp platforms/android/midi_backend_android.cpp platforms/android/link_backend_android.cpp platforms/android/saf_storage.cpp platforms/android/extra_buttons_android.cpp
 OUTPUT_EXT =
 
 # NDK settings
@@ -36,12 +36,13 @@ AR = $(TOOLCHAIN)/bin/llvm-ar
 STRIP = $(TOOLCHAIN)/bin/llvm-strip
 
 # Android-specific flags
-XTRA_CFLAGS = -DANDROID_BUILD -DMOBILE_BUILD -DMOBILE_LIFECYCLE -DTOUCH_INPUT -DGAMEPAD_SUPPORT -fPIC -I$(SDL2_INCLUDE)
+XTRA_CFLAGS = -DANDROID_BUILD -DMOBILE_BUILD -DMOBILE_LIFECYCLE -DTOUCH_INPUT -DGAMEPAD_SUPPORT -fPIC -I$(SDL2_INCLUDE) \
+	-DLINK_PLATFORM_LINUX=1 -DASIO_STANDALONE=1 -DASIO_NO_TYPEID=1 -DASIO_VERSION_NAMESPACE=link_asio_1_38_2 -Wno-multichar
 # The picked-folder (SAF) workspace is served by platforms/android/saf_storage.cpp,
 # which intercepts these libc calls for paths under /ChooChooTracker.
 SAF_WRAP = $(addprefix -Wl$(comma)--wrap=,fopen open stat lstat access mkdir remove unlinkat rename chdir getcwd realpath opendir readdir closedir)
 comma := ,
-XTRA_LIBS = -static-libstdc++ -L$(SDL2_LIB)/$(ARCH) -lSDL2 -lm -llog -landroid $(SAF_WRAP)
+XTRA_LIBS = -static-libstdc++ -L$(SDL2_LIB)/$(ARCH) -lSDL2 -lm -llog -landroid -latomic $(SAF_WRAP)
 
 # Android's Windows linker can fail without diagnostics when LTO combines the
 # complete tracker in one process. Keep release optimisation, skip only LTO.

@@ -76,44 +76,6 @@ int value(const Field& f) {
   int v = current()->chip.sid.value[f.parameter];
   return f.parameter == sidCutoffTarget && v == 65535 ? -1 : v;
 }
-bool hasMacro(unsigned id) {
-  const auto& p = current()->chip.sid.program;
-  if (p.format != 1) return false;
-  for (unsigned pos = 0; pos + 8 <= p.size;) {
-    if (p.data[pos] == id) return true;
-    pos += 8 + 4 * p.data[pos + 1];
-  }
-  return false;
-}
-const char* importedOverrideReason(int parameter) {
-  if (current()->chip.sid.program.format == 2) {
-    switch (parameter) {
-      case sidWave: return "Waveform: imported Goat wave table";
-      case sidPulse: return "Pulse width: imported Goat pulse table";
-      case sidCutoff: case sidResonance: case sidFilterMode:
-        return "Filter: imported Goat filter table";
-      case sidAttack: case sidDecay: case sidSustain: case sidRelease:
-        return "ADSR: imported Goat instrument/wave table";
-      default: return "Goat program bypasses this recipe control";
-    }
-  }
-  switch (parameter) {
-    case sidWave:
-      if (hasMacro(3)) return "Waveform: imported waveform macro";
-      break;
-    case sidPulse: case sidPulseDepth: case sidPulseRate:
-      if (hasMacro(2)) return "Pulse width: imported pulse macro";
-      break;
-    case sidCutoff: case sidCutoffTarget:
-      if (hasMacro(5)) return "Cutoff: imported filter macro";
-      break;
-    case sidFixedFrequency:
-      if (hasMacro(1)) return "Pitch: imported arpeggio macro";
-      break;
-    default: break;
-  }
-  return nullptr;
-}
 int parameterFX(int parameter) {
   switch (parameter) {
     case sidWave: return fxSWV;
@@ -134,7 +96,7 @@ int parameterFX(int parameter) {
 }
 const char* overrideReason(int parameter) {
   // Imported macros run after the track overrides, so identify them first.
-  if (const char* reason = importedOverrideReason(parameter)) return reason;
+  if (const char* reason = sidImportedControlReason(current()->chip.sid, parameter)) return reason;
   const int fx = parameterFX(parameter);
   if (fx < 0) return nullptr;
   const auto* status = chipnomadGetPlaybackStatus(chipnomadState);
@@ -168,7 +130,7 @@ void drawStatic() {
     gfxPrint(0, 14, format == 2 ? "Source: GoatTracker tables" : "Source: imported SID macros");
     gfxPrintf(0, 16, "Source clock: %u Hz", current()->chip.sid.program.rate);
   }
-  if (drawnOverrides) gfxPrint(0, 15, "* = playback override");
+  if (drawnOverrides) gfxPrint(0, 15, "* = program / FX override");
 }
 void drawRowHeader(int row, CellState state) {
   if (!visible(row) || !field(0, row)) return;
@@ -197,6 +159,10 @@ void drawCursor(int col, int row) {
 int onEdit(int col, int row, CellEditAction action) {
   const Field* f = field(col, row);
   if (!f) return 0;
+  if (const char* reason = sidImportedControlReason(current()->chip.sid, f->parameter)) {
+    screenMessage(MESSAGE_TIME_ERROR, "%s", reason);
+    return 1;
+  }
   action = convertMultiAction(action);
   int v = value(*f);
   if (action == CellEditAction::clear) v = f->min;
@@ -224,7 +190,7 @@ void draw() {
       for (int col = 0; col < columns(row); ++col)
         drawField(col, row, row == data.cursorRow && col == data.cursorCol ? CellState::focus : CellState::normal);
     gfxClearRect(0, 15, 32, 1);
-    if (mask) { gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(0, 15, "* = playback override"); }
+    if (mask) { gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(0, 15, "* = program / FX override"); }
     drawCursor(data.cursorCol, data.cursorRow);
   }
   const Field* f = field(data.cursorCol, data.cursorRow);

@@ -620,8 +620,11 @@ public:
 	void write_data(uint8_t data);
 	void write(uint32_t offset, uint8_t data);
 
-	// generate samples of sound
-	void generate(output_data *output, uint32_t numsamples = 1);
+	// generate samples of sound; the default advances the complete chip.
+	// A restricted mask is only for isolated voices: keep it fixed between
+	// resets, leave omitted channels unused, and keep rhythm mode disabled.
+	void generate(output_data *output, uint32_t numsamples = 1,
+		uint32_t chanmask = fm_engine::ALL_CHANNELS);
 
 protected:
 	// internal state
@@ -667,8 +670,11 @@ public:
 	void write_address_hi(uint8_t data);
 	void write(uint32_t offset, uint8_t data);
 
-	// generate samples of sound
-	void generate(output_data *output, uint32_t numsamples = 1);
+	// generate samples of sound; the default advances the complete chip.
+	// A restricted mask is only for isolated voices: keep it fixed between
+	// resets, leave omitted channels unused, and keep rhythm mode disabled.
+	void generate(output_data *output, uint32_t numsamples = 1,
+		uint32_t chanmask = fm_engine::ALL_CHANNELS);
 
 protected:
 	// internal state
@@ -833,7 +839,10 @@ public:
 	void write(uint32_t offset, uint8_t data);
 
 	// generate samples of sound
-	void generate(output_data *output, uint32_t numsamples = 1);
+	// Restricted masks are for isolated voices: keep the mask fixed between
+	// resets and leave all omitted channels unused.
+	void generate(output_data *output, uint32_t numsamples = 1,
+		uint32_t chanmask = fm_engine::ALL_CHANNELS);
 
 protected:
 	// internal state

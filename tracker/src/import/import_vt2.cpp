@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <memory>
 #include <ctype.h>
 #include <chipnomad_lib.h>
 #include <corelib/corelib_file.h>
@@ -998,7 +999,8 @@ int projectLoadVT2(Project* destination, const char* path) {
     return 1;
   }
 
-  Project p;
+  auto owned = std::make_unique<Project>();
+  Project& p = *owned;
   projectInitAY(&p);
 
   Project* project = &p;

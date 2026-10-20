@@ -7,6 +7,7 @@
 #include "soundbank_browser.h"
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <future>
@@ -24,6 +25,7 @@ struct Result {
   std::shared_ptr<const soundbank::PreparedPreset> preset;
   std::string error;
 };
+std::vector<std::pair<int,int>> presetOrder;
 std::vector<soundbank::BankEntry> entries;
 std::future<Result> job;
 std::string status, bankId, presetId, expectedBank, expectedPreset;
@@ -31,6 +33,7 @@ int target = -1;
 int preparationFrames = 0;
 bool restoringProject = false;
 bool scanned = false;
+std::atomic<soundbank::LoadStage> loadingStage{soundbank::LoadStage::reading};
 int pendingInstrument = -1;
 std::string pendingBank, pendingPreset, pendingExpectedBank, pendingExpectedPreset;
 uint32_t pendingExpectedHandle=0;
@@ -79,6 +82,17 @@ bool soundbankBusy() { return job.valid(); }
 bool soundbankScanned() { return scanned; }
 bool soundbankScanning() { return job.valid() && target < 0; }
 const std::string& soundbankStatus() { return status; }
+std::string soundbankLoadingStatus() {
+  if (!soundbankBusy()) return {};
+  if (soundbankScanning()) return "Indexing presets...";
+  switch (loadingStage.load(std::memory_order_relaxed)) {
+    case soundbank::LoadStage::unzipping: return "Unzipping...";
+    case soundbank::LoadStage::locating: return "Finding samples...";
+    case soundbank::LoadStage::checking: return "Checking samples...";
+    case soundbank::LoadStage::loading: return "Loading samples...";
+    default: return "Reading preset...";
+  }
+}
 std::string soundbankPresetName(const std::string& bank, const std::string& preset) {
   for (const auto& entry : entries) if (entry.id == bank)
     for (const auto& item : entry.presets) if (item.first == preset)
@@ -97,7 +111,7 @@ std::string soundbankInstrumentError(int instrument) {
 }
 std::string soundbankInstrumentStatus(int instrument) {
   if (!chipnomadState || instrument < 0 || instrument >= PROJECT_MAX_INSTRUMENTS) return {};
-  if (job.valid() && target == instrument) return "Preparing preset...";
+  if (job.valid() && target == instrument) return soundbankLoadingStatus();
   const auto& s = chipnomadState->project.instruments[instrument].chip.soundfont;
   if (soundbank::prepared(s.prepared)) return "Preset ready";
   if (failed.count(std::string(s.bank) + "|" + s.preset)) return {};
@@ -175,10 +189,14 @@ void soundbankLoad(int instrument, const std::string& bank, const std::string& p
   expectedPreset = i.chip.soundfont.preset;
   expectedHandle = i.chip.soundfont.prepared;
   status = "Preparing preset...";
+  loadingStage.store(soundbank::LoadStage::reading, std::memory_order_relaxed);
   auto root = soundbankRoot();
   preparationFrames = 2;
   job = std::async(launchPolicy, [root, bank, preset]() {
     Result r;
+    soundbank::LoadProgressScope progress([](soundbank::LoadStage stage) {
+      loadingStage.store(stage, std::memory_order_relaxed);
+    });
     try {
       auto b = soundbank::parseBank(soundbank::BankIndex(root).resolve(bank));
       r.preset = cache.prepare(b, preset);
@@ -193,7 +211,7 @@ void soundbankCycle(int instrument, int direction) {
   const auto& i = chipnomadState->project.instruments[instrument];
   if (i.type != InstrumentType::SoundFont) return;
   if (!scanned) { if (!soundbankBusy()) soundbankRescan(); return; }
-  auto selected = soundbank::cyclePreset(entries,
+  auto selected = soundbank::cyclePreset(entries, presetOrder,
     pendingInstrument == instrument ? pendingBank : (soundbankBusy() && target == instrument ? bankId : i.chip.soundfont.bank),
     pendingInstrument == instrument ? pendingPreset : (soundbankBusy() && target == instrument ? presetId : i.chip.soundfont.preset), direction);
   if (selected.first >= 0)
@@ -237,6 +255,7 @@ void soundbankPoll() {
     if (target < 0) {
       if (!r.error.empty()) { status = scanError = r.error; return; }
       entries = std::move(r.banks);
+      presetOrder = soundbank::presetSequence(entries);
       scanned = true;
       status = std::to_string(entries.size()) + " USER banks";
       return;

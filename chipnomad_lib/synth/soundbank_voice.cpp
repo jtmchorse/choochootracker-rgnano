@@ -24,6 +24,12 @@ void SoundbankVoice::kill() {
     l.envelope.kill();
   }
 }
+void SoundbankVoice::stopImmediately() {
+  kill();
+  lastOutput_ = transitionOffset_ = {};
+  transitionFrames_ = 0;
+  transitionPending_ = false;
+}
 bool SoundbankVoice::active() const {
   if (transitionFrames_ || (transitionPending_ &&
                            (lastOutput_[0] != 0 || lastOutput_[1] != 0))) return true;

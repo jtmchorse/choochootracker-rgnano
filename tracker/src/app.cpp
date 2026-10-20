@@ -6,6 +6,8 @@
 #include "corelib_file.h"
 #include "common.h"
 #include "audio_manager.h"
+#include "audio_input_manager.h"
+#include "corelib/corelib_audio.h"
 #include "app.h"
 #include "screens.h"
 #include "screens/selection_popup.h"
@@ -24,7 +26,9 @@
 #include "screens/screen_quick_help.h"
 #include "screens/screen_instrument.h"
 #include "midi/midi_router.h"
+#include "link/link_client.h"
 #include "midi/midi_backend_desktop.h"
+#include <math.h>
 #ifdef ANDROID_BUILD
 #include "midi/midi_backend_android.h"
 #elif defined(WEB_BUILD)
@@ -73,6 +77,120 @@ static bool monitorNeeded(void) {
     screenScopeRows(currentScreen) != 0;
 }
 static uint32_t midiCCAppliedSerial[PROJECT_MAX_MIDI_CC_MAPPINGS];
+// MIDI clock slave mode (Project screen "Clock source"): last-applied
+// serials for transport state and measured tempo, same exactly-once
+// pattern as midiCCAppliedSerial above.
+static uint32_t clockTransportAppliedSerial;
+static uint32_t clockBpmAppliedSerial;
+static float midiClockBaseTickRate;
+static uint64_t midiClockPhaseLastPulse;
+// Ableton Link mode: last-applied serials for the session tempo and
+// transport state published by the Link client (same exactly-once
+// pattern as clockBpmAppliedSerial/clockTransportAppliedSerial).
+static uint32_t linkBpmAppliedSerial;
+static uint32_t linkTransportAppliedSerial;
+// Link phase follower: Link owns the shared musical timeline, while the
+// tracker advances at its audio device's actual clock. Once per 4/4 bar we
+// measure the difference and slew the next bar by at most two percent. This
+// never skips/repeats a tracker tick or publishes a Link session change.
+static float linkPhaseBaseTickRate;
+static uint64_t linkPhaseLastCorrectionTick;
+static int linkPhaseFollowing;
+
+static void resetLinkPhaseFollowing(void) {
+  linkPhaseBaseTickRate = 0.0f;
+  linkPhaseLastCorrectionTick = 0;
+  linkPhaseFollowing = 0;
+}
+
+static void resetMidiClockPhaseFollowing(void) {
+  midiClockBaseTickRate = 0.0f;
+  midiClockPhaseLastPulse = 0;
+}
+
+static double wrapMidiClockPhaseTicks(double ticks) {
+  ticks = fmod(ticks, 96.0);
+  if (ticks > 48.0) ticks -= 96.0;
+  if (ticks < -48.0) ticks += 96.0;
+  return ticks;
+}
+
+// MIDI Clock and tracker playback both advance at 24 ticks per beat. Correct
+// phase once per bar with a small bounded slew, matching the Link follower
+// while avoiding jitter-driven retiming of delay/reverb on every F8 byte.
+static void updateMidiClockPhaseFollowing(void) {
+  if (appSettings.clockSource != ClockSource::midiClock) {
+    resetMidiClockPhaseFollowing();
+    return;
+  }
+  const PlaybackStatus* playback = chipnomadGetPlaybackStatus(chipnomadState);
+  if (!playback->isPlaying) return;
+  const uint64_t pulses = midiRouterGetClockPulseCount(chipnomadState->midiRouter);
+  if (pulses < 96 || pulses - midiClockPhaseLastPulse < 96) return;
+  if (midiClockBaseTickRate <= 0.0f) return;
+  const double phaseError = wrapMidiClockPhaseTicks((double)pulses - (double)playback->linkPhaseTicks);
+  double correction = phaseError / 96.0;
+  if (correction > 0.02) correction = 0.02;
+  if (correction < -0.02) correction = -0.02;
+  chipnomadState->project.tickRate = midiClockBaseTickRate * (float)(1.0 + correction);
+  audioProjectDirty = 1;
+  midiClockPhaseLastPulse = pulses;
+}
+
+static double wrapLinkPhaseTicks(double ticks) {
+  ticks = fmod(ticks, 96.0); // 24 tracker ticks/beat, four beats/bar.
+  if (ticks >= 48.0) ticks -= 96.0;
+  if (ticks < -48.0) ticks += 96.0;
+  return ticks;
+}
+
+static void updateLinkPhaseFollowing(void) {
+  if (linkPhaseBaseTickRate <= 0.0f) return;
+  if (linkClientGetStatus(chipnomadState->linkClient, NULL) != LinkStatus::connected) {
+    // Keep the last session tempo while discovery is in progress. A peer can
+    // appear without changing Link's tempo serial, so clearing the base rate
+    // here would leave phase following disabled after a no-peers -> connected
+    // transition.
+    linkPhaseFollowing = 0;
+    linkPhaseLastCorrectionTick = 0;
+    return;
+  }
+
+  const PlaybackStatus* playback = chipnomadGetPlaybackStatus(chipnomadState);
+  if (!playback || !playback->isPlaying || playback->linkPhaseTickMicros == 0) {
+    linkPhaseFollowing = 0;
+    return;
+  }
+
+  uint64_t capturedAtMicros = 0;
+  const double capturedBeat = linkClientGetSessionBeat(chipnomadState->linkClient, &capturedAtMicros);
+  if (capturedAtMicros == 0) return;
+
+  // The session beat was captured on the UI thread. Project it back to the
+  // precise audio tick timestamp so the UI frame cadence cannot modulate the
+  // correction.
+  const int64_t elapsedMicros = (int64_t)capturedAtMicros - (int64_t)playback->linkPhaseTickMicros;
+  const double beatAtTick = capturedBeat -
+    (double)elapsedMicros * (double)linkPhaseBaseTickRate / (24.0 * 1000000.0);
+
+  if (!linkPhaseFollowing) {
+    linkPhaseFollowing = 1;
+    linkPhaseLastCorrectionTick = playback->linkPhaseTicks;
+    return;
+  }
+  if (playback->linkPhaseTicks - linkPhaseLastCorrectionTick < 96) return;
+
+  // Positive error means the Link timeline has moved ahead, so make the
+  // following bar faster. A bounded correction avoids any audible jump.
+  const double phaseErrorTicks = wrapLinkPhaseTicks(beatAtTick * 24.0 -
+                                                     (double)playback->linkPhaseTicks);
+  double correction = phaseErrorTicks / 96.0;
+  if (correction > 0.02) correction = 0.02;
+  if (correction < -0.02) correction = -0.02;
+  chipnomadState->project.tickRate = linkPhaseBaseTickRate * (float)(1.0 + correction);
+  audioProjectDirty = 1;
+  linkPhaseLastCorrectionTick = playback->linkPhaseTicks;
+}
 
 // Port indices aren't saved (see common.h's AppSettings comment): this
 // resolves the saved device name back to whatever live port currently has
@@ -244,6 +362,26 @@ static void applyLoopRange(void) {
 }
 
 /**
+* @brief Queue a song start, aligned to the Link session when Link is the
+*        clock source and we are connected (T41). Receiver-only: this never
+*        pushes tempo or transport to peers - linkClientRequestBeatAtLaunch
+*        only aligns OUR timeline to the next quantum boundary (local
+*        requestBeatAtTime + commit of our own state). Returns 0 if no
+*        timed start was queued (caller should start immediately), 1 if a
+*        timed start was queued.
+*/
+static int queueLinkAlignedSongStart(int songRow, int chainRow, int loop) {
+  if (appSettings.clockSource != ClockSource::link) return 0;
+  uint32_t serial = 0;
+  if (linkClientGetStatus(chipnomadState->linkClient, &serial) != LinkStatus::connected) return 0;
+  const uint64_t launchTime = linkClientRequestBeatAtLaunch(chipnomadState->linkClient, 4);
+  if (launchTime == 0) return 0;
+  chipnomadQueuePlaybackStartSongAtTime(chipnomadState, songRow, chainRow, loop, launchTime);
+  screenMessage(MESSAGE_TIME, "Link: waiting for downbeat");
+  return 1;
+}
+
+/**
 * @brief Handle play/stop key commands
 *
 * @param keys Pressed keys
@@ -270,7 +408,8 @@ static int inputPlayback(int keys, int tapCount) {
 
     if (playbackLevel == ScreenPlaybackLevel::song) {
       int startRow = range.enabled ? range.startSongRow : *pSongRow;
-      chipnomadQueuePlaybackStartSong(chipnomadState, startRow, 0, 1);
+      if (!queueLinkAlignedSongStart(startRow, 0, 1))
+        chipnomadQueuePlaybackStartSong(chipnomadState, startRow, 0, 1);
       applyLoopRange();
     } else if (playbackLevel == ScreenPlaybackLevel::chain) {
       int startRow = range.enabled ? range.startChainRow : *pChainRow;
@@ -295,11 +434,13 @@ static int inputPlayback(int keys, int tapCount) {
 
     if (playbackLevel == ScreenPlaybackLevel::song) {
       int startRow = range.enabled ? range.startSongRow : *pSongRow;
-      chipnomadQueuePlaybackStartSong(chipnomadState, startRow, 0, 1);
+      if (!queueLinkAlignedSongStart(startRow, 0, 1))
+        chipnomadQueuePlaybackStartSong(chipnomadState, startRow, 0, 1);
       applyLoopRange();
     } else if (playbackLevel == ScreenPlaybackLevel::chain || playbackLevel == ScreenPlaybackLevel::phrase) {
       int startChainRow = range.enabled ? range.startChainRow : *pChainRow;
-      chipnomadQueuePlaybackStartSong(chipnomadState, *pSongRow, startChainRow, 1);
+      if (!queueLinkAlignedSongStart(*pSongRow, startChainRow, 1))
+        chipnomadQueuePlaybackStartSong(chipnomadState, *pSongRow, startChainRow, 1);
       applyLoopRange();
     }
     return 1;
@@ -495,11 +636,30 @@ void appSetup(void) {
   if (getenv("RGNANO_AUTOPLAY")) chipnomadQueuePlaybackStartSong(chipnomadState, 0, 0, 1);
 #endif
 
+  // Audio input: enumerate capture devices and re-arm the ones saved in
+  // settings (Phase 4). Monitor state comes from settings too.
+  audioInputManager.reconfigureRate(appSettings.audioSampleRate);
+  audioInputManager.enumerate();
+  syncArmedDevicesFromSettings();
+  audioInputManager.setMonitor(appSettings.audioInputMonitor);
+
   int savedInputPort = findMidiPortByName(1, appSettings.midiInputDeviceName);
   if (savedInputPort >= 0 && midiRouterOpenInput(savedInputPort) == 0) appSettings.midiInputDevice = savedInputPort;
   int savedOutputPort = findMidiPortByName(0, appSettings.midiOutputDeviceName);
   if (savedOutputPort >= 0 && midiRouterOpenOutput(savedOutputPort) == 0) appSettings.midiOutputDevice = savedOutputPort;
   midiRouterSetChannelInstrumentMap(chipnomadState->midiRouter, appSettings.midiChannelInstrument);
+  midiRouterSetClockMode(chipnomadState->midiRouter,
+    appSettings.clockSource == ClockSource::midiClock ? MidiClockMode::slave : MidiClockMode::off);
+  // Ableton Link: restore the saved selection. Connect happens on demand
+  // (Project screen Connect button / entering Link mode), not at startup,
+  // so a cold launch never touches the network.
+  if (appSettings.clockSource == ClockSource::link) {
+    linkClientSelect(chipnomadState->linkClient);
+  } else {
+    linkClientDeselect(chipnomadState->linkClient);
+  }
+  resetLinkPhaseFollowing();
+  resetMidiClockPhaseFollowing();
 
   screenSetup(&screenTitle, 0);
 }
@@ -619,6 +779,24 @@ void appDraw(void) {
 * @param value Event value
 * @param userdata Arbitraty event data
 */
+
+// An audio device was unplugged or its stream died (SDL_AUDIODEVICEREMOVED).
+// Audio interfaces often take the output down with them, so rebuild the whole
+// audio handler: stop any active capture recording, drop armed inputs, close
+// and re-enumerate capture, then reopen the output device. The helper box
+// shows an animated notice while the restart runs.
+static void handleAudioDeviceRemoved(int isCapture) {
+  (void)isCapture; // both capture loss and output loss get the same rebuild
+  screenNotifyAudioRestart();
+  audioInputManagerStopRecording();
+  audioInputManager.disarmAll();
+  audioInputCleanup();
+  audioInputRefreshDevices();
+  audioInputManager.enumerate();
+  syncArmedDevicesFromSettings();
+  audioManager.restart();
+}
+
 void appOnEvent(MainLoopEventData eventData) {
   static int dPadMask = keyLeft | keyRight | keyUp | keyDown;
   static int doubleTapMask = keyEdit | keyOpt | keyUnmapped | keyPlay;
@@ -852,6 +1030,82 @@ void appOnEvent(MainLoopEventData eventData) {
           }
         }
       }
+
+      // MIDI clock slave mode: transport (Start/Continue/Stop) always
+      // drives song playback - there is deliberately no separate UI toggle
+      // (the Project screen's play button keeps working alongside it).
+      // Tempo: the measured BPM is applied to the project's tick rate via
+      // the regular project-refresh path. projectModified stays 0 (following
+      // a clock isn't a user edit), matching how CC mappings mutate project
+      // state; the Project screen's Tempo row shows the live value while
+      // slaved.
+      int clockRunning = 0; uint32_t clockTransportSerial = 0;
+      if (midiRouterGetClockTransport(chipnomadState->midiRouter, &clockRunning, &clockTransportSerial) &&
+          clockTransportSerial != clockTransportAppliedSerial) {
+        clockTransportAppliedSerial = clockTransportSerial;
+        if (clockRunning) {
+          chipnomadQueuePlaybackStartSongIfStopped(chipnomadState, *pSongRow, 0, 1);
+          resetMidiClockPhaseFollowing();
+        } else {
+          chipnomadQueuePlaybackStop(chipnomadState);
+          resetMidiClockPhaseFollowing();
+        }
+      }
+      float clockBpm = 0; uint32_t clockBpmSerial = 0;
+      if (midiRouterGetClockBpm(chipnomadState->midiRouter, &clockBpm, &clockBpmSerial) &&
+          clockBpmSerial != clockBpmAppliedSerial) {
+        clockBpmAppliedSerial = clockBpmSerial;
+        // BPM -> Hz: 24 ticks/beat, so tickRate = BPM * 24 / 60 = BPM * 0.4.
+        midiClockBaseTickRate = clockBpm * 0.4f;
+        chipnomadState->project.tickRate = midiClockBaseTickRate;
+        audioProjectDirty = 1;
+      }
+      updateMidiClockPhaseFollowing();
+
+      // Ableton Link mode: follow the session tempo published by the Link
+      // client (receiver-only - we never push tempo back). Same
+      // serial-bumped exactly-once pattern as the MIDI clock block above.
+      // Poll drives the connecting -> connected/noPeers status resolution
+      // (3s discovery threshold); cheap, so run it every UI frame while
+      // Link is the selected clock source.
+      if (appSettings.clockSource == ClockSource::link) {
+        linkClientPoll(chipnomadState->linkClient);
+      }
+      if (appSettings.clockSource == ClockSource::link) {
+        uint32_t linkBpmSerial = 0;
+        const float linkBpm = linkClientGetSessionTempo(chipnomadState->linkClient, &linkBpmSerial);
+        if (linkBpm > 0.0f && linkBpmSerial != linkBpmAppliedSerial) {
+          linkBpmAppliedSerial = linkBpmSerial;
+          // BPM -> Hz: tickRate = BPM * 0.4 (24 ticks per beat).
+          linkPhaseBaseTickRate = linkBpm * 0.4f;
+          chipnomadState->project.tickRate = linkPhaseBaseTickRate;
+          linkPhaseFollowing = 0;
+          audioProjectDirty = 1;
+        }
+        updateLinkPhaseFollowing();
+      } else {
+        resetLinkPhaseFollowing();
+      }
+      // Link transport follow (start/stop sync): the session's play
+      // state drives song playback, mirroring the MIDI clock block
+      // above. The serial bumps only on transport change, so each
+      // session start/stop is applied exactly once. A manual local stop
+      // while the session keeps playing stays stopped until the session
+      // itself stops and starts again (the serial does not move while
+      // the session state is unchanged).
+      if (appSettings.clockSource == ClockSource::link) {
+        int linkPlaying = 0; uint32_t linkTransportSerial = 0;
+        linkClientGetTransport(chipnomadState->linkClient, &linkPlaying, &linkTransportSerial);
+        if (linkTransportSerial != linkTransportAppliedSerial) {
+          linkTransportAppliedSerial = linkTransportSerial;
+          if (linkPlaying && !chipnomadGetPlaybackStatus(chipnomadState)->isPlaying) {
+            if (!queueLinkAlignedSongStart(*pSongRow, 0, 1))
+              chipnomadQueuePlaybackStartSong(chipnomadState, *pSongRow, 0, 1);
+          } else if (!linkPlaying && chipnomadGetPlaybackStatus(chipnomadState)->isPlaying) {
+            chipnomadQueuePlaybackStop(chipnomadState);
+          }
+        }
+      }
       for (int i = 0; i < PROJECT_MAX_MIDI_CC_MAPPINGS; ++i) {
         MidiCCMapping& mapping = chipnomadState->project.midiCCMappings[i];
         int globalTrack = mapping.destination >= midiCCDestinationTrackMute &&
@@ -935,6 +1189,9 @@ void appOnEvent(MainLoopEventData eventData) {
     }
     break;
   }
+  case MainLoopEvent::audioDeviceRemoved:
+    handleAudioDeviceRemoved(eventData.data.value);
+    break;
   case MainLoopEvent::exit:
     // Auto-save the current project and settings on exit
     projectSave(&chipnomadState->project, getAutosavePath());

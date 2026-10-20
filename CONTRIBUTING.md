@@ -17,6 +17,7 @@ Please do not turn it into a conventional DAW. Features that need a mouse-first 
 - Preserve the MIT license wherever possible. Do not copy code or assets with incompatible terms.
 - Add or update tests for behavior changes. Run `make -f Makefile.test -j4` from `tracker` for engine or playback changes.
 - Update `docs/USER_MANUAL.md` when a user-facing behavior changes.
+- When changing the user manual, use the `choochootracker-user-manual` skill so it stays clear and useful to musicians.
 - Explain what changed, how you tested it, and any limitations in the pull request description.
 - Test your changes on real hardware. Windows is good, Portmaster/Android are better. Try to break your own code in controlled environment before users do it in the wild.
 
@@ -27,6 +28,25 @@ If an agent wrote some or all of a change, that is fine. Review the result befor
 Thorough human testing is strongly encouraged. Hunt for edge cases, do stupid things. If it breaks, it's probably not ready for PR.
 
 ## Getting started
+
+Clone with submodules (Ableton Link and Asio are pulled in as git submodules
+rather than vendored):
+
+```sh
+git clone --recurse-submodules https://github.com/<you>/ChooChooTracker.git
+# or, for an existing checkout:
+git submodule update --init chipnomad_lib/external/ableton_link chipnomad_lib/external/asio
+```
+
+### Ableton Link
+
+The Ableton Link submodule is required only for authorised official
+ChooChooTracker builds. This repository, its MIT license and its releases do
+not grant a license to Ableton Link. The authorisation held for official
+ChooChooTracker releases does not extend to forks, derivative works or other
+third-party distributions; their maintainers must obtain their own
+authorisation from Ableton before building or distributing a product that
+includes Ableton Link.
 
 Open an issue if you want to discuss a larger idea before writing code. For a small fix, a pull request with a short description is usually enough.
 

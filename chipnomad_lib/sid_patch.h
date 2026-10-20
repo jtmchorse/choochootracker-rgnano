@@ -12,5 +12,7 @@ enum SIDParameter {
 static_assert(sidParameterCount==25,"SID serialization field count");
 void initSIDPatch(InstrumentSID* patch);
 bool validSID(const InstrumentSID& patch);
+// A non-null reason identifies a base control owned by an embedded program.
+const char* sidImportedControlReason(const InstrumentSID& patch, int parameter);
 int loadSIDData(FILE* file,Instrument* instrument);
 void saveSIDData(FILE* file,const Instrument* instrument);

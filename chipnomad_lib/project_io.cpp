@@ -708,7 +708,8 @@ static bool readInsertFields(const char* line, const char* prefix, unsigned* val
 static int projectLoadInternal(FILE* file, Project* project) {
   char buf[128];
   int tempLinearPitch;
-  Project p;
+  auto owned = std::make_unique<Project>();
+  Project& p = *owned;
   projectInit(&p);
   p.signedTrackSpeed = 0; // Absent from old files: retain the legacy SPD map.
   p.perceptualEffects = 0;
@@ -873,7 +874,11 @@ static int projectLoadInternal(FILE* file, Project* project) {
     consumeLine(file);
   }
   line = peekLine(file);
-  if (line && sscanf(line, "- Delay: %hhu,%hhu,%hhu,%hhu,%hu", &p.delayReturn, &p.delayReverbSend,
+  if (line && sscanf(line, "- Delay: %hhu,%hhu,%hhu,%hhu,%hu,%hhu,%hhu,%hhu,%hhu,%hhu,%hhu", &p.delayReturn, &p.delayReverbSend,
+                     &p.delayTicks, &p.delayFeedback, &p.delayFilterCutoffHz, &p.delayAlgorithm,
+                     &p.tapeDivision, &p.tapeHeads, &p.tapeTone, &p.tapeFlutter, &p.tapeSpring) == 11) {
+    consumeLine(file);
+  } else if (line && sscanf(line, "- Delay: %hhu,%hhu,%hhu,%hhu,%hu", &p.delayReturn, &p.delayReverbSend,
                      &p.delayTicks, &p.delayFeedback, &p.delayFilterCutoffHz) == 5) {
     consumeLine(file);
   } else if (line && sscanf(line, "- Delay: %hhu,%hhu,%hhu,%hu", &p.delayReturn,
@@ -919,6 +924,11 @@ static int projectLoadInternal(FILE* file, Project* project) {
   if (p.delayReverbSend > 100) p.delayReverbSend = 100;
   if (p.delayFeedback > 95) p.delayFeedback = 95;
   if (p.delayTicks == 0) p.delayTicks = 1;
+  if (p.delayAlgorithm > 1) p.delayAlgorithm = 0;
+  if (p.tapeDivision > 6) p.tapeDivision = 2;
+  if (p.tapeHeads > 6) p.tapeHeads = 6;
+  if (p.tapeFlutter > 100) p.tapeFlutter = 100;
+  if (p.tapeSpring > 100) p.tapeSpring = 100;
   if (p.reverbFilterCutoffHz < 20) p.reverbFilterCutoffHz = 20;
   if (p.reverbHighpassCutoffHz < 20) p.reverbHighpassCutoffHz = 20;
   if (p.reverbAlgorithm > 1) p.reverbAlgorithm = 0;
@@ -1590,7 +1600,7 @@ static int projectSaveAYWavetables(FILE* file, Project* project) {
 
 static int projectSaveInternal(FILE* file, Project* project) {
   bool nativeChips = false;
-  for (const auto& instrument : project->instruments) nativeChips |= (instrument.type==InstrumentType::SID || instrument.type==InstrumentType::DX7 || isOPLL(instrument.type) || (isOPL(instrument.type) || isFourOp(instrument.type)) || isSimpleChip(instrument.type));
+  for (const auto& instrument : project->instruments) nativeChips |= (instrument.type==InstrumentType::Monk || instrument.type==InstrumentType::SID || instrument.type==InstrumentType::DX7 || isOPLL(instrument.type) || (isOPL(instrument.type) || isFourOp(instrument.type)) || isSimpleChip(instrument.type));
   for (const auto& phrase : project->phrases) for (const auto& row : phrase.rows) for (const auto& fx : row.fx) nativeChips |= fx.command >= fxFBR && fx.command < fxTotalCount;
   for (const auto& table : project->tables) for (const auto& row : table.rows) for (const auto& fx : row.fx) nativeChips |= fx.command >= fxFBR && fx.command < fxTotalCount;
   bool sourcePrograms=false;
@@ -1641,8 +1651,9 @@ static int projectSaveInternal(FILE* file, Project* project) {
   fprintf(file, "- Reverb: %hhu,%hhu,%hhu,%hu,%hu,%hhu,%hhu,%hhu,%hu\n", project->reverbReturn, project->reverbTime,
     project->reverbDamping, project->reverbFilterCutoffHz, project->reverbHighpassCutoffHz,
     project->reverbAlgorithm, project->beadsReverbTime, project->beadsReverbTone, project->beadsReverbHighpassCutoffHz);
-  fprintf(file, "- Delay: %hhu,%hhu,%hhu,%hhu,%hu\n", project->delayReturn, project->delayReverbSend,
-    project->delayTicks, project->delayFeedback, project->delayFilterCutoffHz);
+  fprintf(file, "- Delay: %hhu,%hhu,%hhu,%hhu,%hu,%hhu,%hhu,%hhu,%hhu,%hhu,%hhu\n", project->delayReturn, project->delayReverbSend,
+    project->delayTicks, project->delayFeedback, project->delayFilterCutoffHz, project->delayAlgorithm,
+    project->tapeDivision, project->tapeHeads, project->tapeTone, project->tapeFlutter, project->tapeSpring);
   fprintf(file, "- Tilt pivot: %hu\n", project->tiltPivotHz);
   // Optional field (Phase 4): only written when set, so older versions of
   // the format stay byte-identical for projects without the preference.
@@ -1841,7 +1852,7 @@ int instrumentSave(Project* project, const char* path, int instrumentIdx) {
     return 1;
   }
 
-  bool nativeFormat = (project->instruments[instrumentIdx].type==InstrumentType::SID || project->instruments[instrumentIdx].type==InstrumentType::DX7 || isOPLL(project->instruments[instrumentIdx].type) || (isOPL(project->instruments[instrumentIdx].type) || isFourOp(project->instruments[instrumentIdx].type)) || isSimpleChip(project->instruments[instrumentIdx].type));
+  bool nativeFormat = (project->instruments[instrumentIdx].type==InstrumentType::Monk || project->instruments[instrumentIdx].type==InstrumentType::SID || project->instruments[instrumentIdx].type==InstrumentType::DX7 || isOPLL(project->instruments[instrumentIdx].type) || (isOPL(project->instruments[instrumentIdx].type) || isFourOp(project->instruments[instrumentIdx].type)) || isSimpleChip(project->instruments[instrumentIdx].type));
   for (const auto& row : project->tables[instrumentIdx].rows) for (const auto& fx : row.fx) nativeFormat |= fx.command >= fxFBR && fx.command < fxTotalCount;
   bool absoluteLevels=false;
   for(const auto& row:project->tables[instrumentIdx].rows)for(const auto& fx:row.fx)absoluteLevels |= fx.command>=fxOL1&&fx.command<=fxFBK;
