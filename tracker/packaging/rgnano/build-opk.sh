@@ -12,6 +12,11 @@ DEST=${DEST:-/root/work/ccr}
 JOBS=${JOBS:-4}
 run() { pct exec "$CT" -- bash -lc "$1"; }
 
+# Required gate: these host tests must pass before an OPK is built. Named
+# targets only (the 8 known host failures stay out). Do not add a skip knob.
+echo "== gate: voice_alloc_check, engine lifetime, stretch/beads lifetime, export limiter =="
+make -C "$REPO/tracker" -f Makefile.test RGNANO=1 -j"$JOBS" opk-gate || { echo "GATE FAILED: no OPK built" >&2; exit 1; }
+
 if [ "${CLEAN:-0}" = 1 ]; then run "rm -rf $DEST"; fi
 run "mkdir -p $DEST"
 # The container cannot write host-created files, so stream a tar through it.

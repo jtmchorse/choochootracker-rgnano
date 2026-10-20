@@ -374,6 +374,60 @@ void masterLimiterNoAlloc() {
   std::free(p);
 }
 
+// --- 8 ---------------------------------------------------------------------
+// Regression (round 4.10): upstream per-family update functions began with
+// `if (!state->xVoices[0][0]) return;`. With lazy allocation that is NULL
+// whenever track 0 uses another family, so every other track of the family
+// kept power-on defaults (a held C4 drone). Track 0 = SID, the rest differ:
+// lazyRealtime must match eager block for block.
+std::vector<uint64_t> renderBlockHashes(ChipNomadVoiceMode mode, const Project* p, int blocks) {
+  int fd[2];
+  std::vector<uint64_t> h(blocks, 0);
+  if (pipe(fd)) return h;
+  pid_t pid = fork();
+  if (pid == 0) {
+    close(fd[0]);
+    ChipNomadState* s = makeState(mode, p);
+    playbackStartSong(&s->playbackState, 0, 0, 1);
+    std::vector<float> buf(kBlock * 2);
+    for (int b = 0; b < blocks; ++b) {
+      chipnomadRender(s, buf.data(), kBlock);
+      uint64_t x = 1469598103934665603ull;
+      const unsigned char* c = (const unsigned char*)buf.data();
+      for (size_t i = 0; i < buf.size() * sizeof(float); ++i) { x ^= c[i]; x *= 1099511628211ull; }
+      h[b] = x;
+    }
+    if (write(fd[1], h.data(), blocks * 8) != (ssize_t)(blocks * 8)) _exit(2);
+    _exit(0);
+  }
+  close(fd[1]);
+  ssize_t got = read(fd[0], h.data(), blocks * 8);
+  close(fd[0]);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  if (got != (ssize_t)(blocks * 8) || !WIFEXITED(status) || WEXITSTATUS(status) != 0) std::fill(h.begin(), h.end(), 0);
+  return h;
+}
+
+void mixedFamiliesMatchEager() {
+  std::printf("[8] track 0 family differs from the playing tracks: lazyRealtime == eager per block\n");
+  Project* p = newProject();
+  p->tracksCount = 4;
+  setTrack(p, 0, InstrumentType::SID, 36);
+  setTrack(p, 1, InstrumentType::Braids, 48);
+  setTrack(p, 2, InstrumentType::Plaits, 55);
+  setTrack(p, 3, InstrumentType::SegaPSG, 60);
+  const int blocks = 125;
+  auto e = renderBlockHashes(ChipNomadVoiceMode::eager, p, blocks);
+  auto l = renderBlockHashes(ChipNomadVoiceMode::lazyRealtime, p, blocks);
+  int first = -1;
+  for (int b = 0; b < blocks; ++b) if (e[b] != l[b]) { first = b; break; }
+  CHECK(e[blocks - 1] != 0, "eager render ran");
+  CHECK(first < 0, "first diverging block %d of %d (eager %016llx lazy %016llx)", first, blocks,
+        (unsigned long long)(first >= 0 ? e[first] : 0), (unsigned long long)(first >= 0 ? l[first] : 0));
+  std::free(p);
+}
+
 int main(int argc, char** argv) {
   // --no-demos: skip section 1 (needed under ASAN, which trips on a known
   // out-of-range table read inside the vendored Plaits six-op engine).
@@ -386,6 +440,7 @@ int main(int argc, char** argv) {
   pruneAndLeaks();
   threadedStress();
   masterLimiterNoAlloc();
+  mixedFamiliesMatchEager();
   std::printf("%s: %d checks, %d failures\n", gFailures ? "FAILED" : "PASSED", gChecks, gFailures);
   return gFailures ? 1 : 0;
 }

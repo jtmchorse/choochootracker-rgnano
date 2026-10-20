@@ -413,7 +413,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
 #ifdef RGNANO_BUILD
   CHECK(std::string(mockGfxCells[5], 7) == "FX lite");
   CHECK(screen->isCellValid(0, 3));
-  CHECK_FALSE(screen->isCellValid(0, 0));
+  CHECK(screen->isCellValid(0, 0));  // sample rate row is reachable (upstream behaviour)
 #else
   CHECK(std::string(mockGfxCells[5], 11) == "Audio Input");
   CHECK(std::string(mockGfxCells[5] + 23, 3) == "OFF");

@@ -140,11 +140,7 @@ static int audioEdit(int, int row, CellEditAction action) {
   if (settingsSave() != 0) screenMessage(MESSAGE_TIME_ERROR, "Could not save audio setting");
   return 1;
 }
-#ifdef RGNANO_BUILD
-static int audioCellValid(int, int row) { return row == 1 || row == 3; }  // sample rate row shown but fixed
-#else
 static int audioCellValid(int, int row) { return row == 0 || row == 1 || row == 3; }
-#endif
 static ScreenData audioData = {4, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, audioStatic, audioCursor, NULL, noHeader, noHeader, audioField, audioEdit, NULL, NULL, audioCellValid, NULL};
 
 static void controlsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "CONTROLS"); }

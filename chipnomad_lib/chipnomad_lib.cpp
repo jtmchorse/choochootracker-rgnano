@@ -2200,7 +2200,6 @@ void chipnomadCollectSoundbanks(ChipNomadState* state) {
   });
 }
 static void updateSoundbankVoices(ChipNomadState* state) {
-  if (!state->soundbankVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -2241,7 +2240,6 @@ static void updateSoundbankVoices(ChipNomadState* state) {
 }
 
 static void updateSampleVoices(ChipNomadState* state) {
-  if (!state->sampleVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; trackIdx++) {
@@ -2395,7 +2393,6 @@ static void updateSampleVoices(ChipNomadState* state) {
 }
 
 static void updateSCWFVoices(ChipNomadState* state) {
-  if (!state->scwfVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2482,7 +2479,6 @@ static void updateSCWFVoices(ChipNomadState* state) {
 }
 
 static void updateAChChidVoices(ChipNomadState* state) {
-  if (!state->achchidVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2531,7 +2527,6 @@ static void updateAChChidVoices(ChipNomadState* state) {
 }
 
 static void updateDrumSynthVoices(ChipNomadState* state) {
-  if (!state->drumSynthVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2584,7 +2579,6 @@ static void updateDrumSynthVoices(ChipNomadState* state) {
 }
 
 static void updateMMEVoices(ChipNomadState* state) {
-  if (!state->mmeVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2702,7 +2696,6 @@ static void updateMonkVoices(ChipNomadState* state) {
 }
 
 static void updateSinteredVoices(ChipNomadState* state) {
-  if (!state->sinteredVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2751,7 +2744,6 @@ static void updateSinteredVoices(ChipNomadState* state) {
 }
 
 static void updateBraidsVoices(ChipNomadState* state) {
-  if (!state->braidsVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
 
@@ -2843,7 +2835,6 @@ static void updateBraidsVoices(ChipNomadState* state) {
 }
 
 static void updatePlaitsVoices(ChipNomadState* state) {
-  if (!state->plaitsVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -2930,7 +2921,6 @@ static void updatePlaitsVoices(ChipNomadState* state) {
 }
 
 static void updatePlaitsAltVoices(ChipNomadState* state) {
-  if (!state->plaitsAltVoices[0][0]) return;
   Project* project = &state->audioProject;
   PlaybackState* playback = &state->playbackState;
   for (int trackIdx = 0; trackIdx < project->tracksCount; ++trackIdx) {
@@ -3102,7 +3092,6 @@ static void configureFMAmp(InstrumentFMAmp& amp, const PlaybackTrackState* track
 }
 
 static void updateOPLLVoices(ChipNomadState* state) {
-  if (!state->opllVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -3139,7 +3128,6 @@ int chipnomadQueueOPLLPreview(ChipNomadState* state, int track, const Instrument
   return state->audioCommands->pushCommand(11, track, patch ? 1 : 0, 0, 0, nullptr, patch);
 }
 static void updateOPLVoices(ChipNomadState* state) {
-  if (!state->oplVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -3176,7 +3164,6 @@ int chipnomadQueueOPLPreview(ChipNomadState* state,int track,InstrumentType type
   return state->audioCommands->pushCommand(12,track,patch?1:0,int(type),0,nullptr,nullptr,patch);
 }
 static void updateFourOpVoices(ChipNomadState* state) {
-  if (!state->fourOpVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -3213,7 +3200,6 @@ int chipnomadQueueFourOpPreview(ChipNomadState* state,int track,InstrumentType t
   return state->audioCommands->pushCommand(15,track,patch?1:0,int(type),0,nullptr,nullptr,nullptr,nullptr,nullptr,patch);
 }
 static void updateSimpleChipVoices(ChipNomadState* state) {
-  if (!state->simpleChipVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -3262,7 +3248,6 @@ int chipnomadQueueSimpleChipPreview(ChipNomadState* state,int track,InstrumentTy
 }
 
 static void updateDX7Voices(ChipNomadState* state) {
-  if (!state->dx7Voices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {
@@ -3300,7 +3285,6 @@ int chipnomadQueueDX7Preview(ChipNomadState* state,int track,const InstrumentDX7
 }
 
 static void updateSIDVoices(ChipNomadState* state) {
-  if (!state->sidVoices[0][0]) return;
   auto* project = &state->audioProject;
   auto* playback = &state->playbackState;
   for (int t = 0; t < project->tracksCount; ++t) {

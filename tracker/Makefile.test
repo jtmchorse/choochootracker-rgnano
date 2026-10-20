@@ -297,6 +297,15 @@ voice-alloc-check: $(VOICE_ALLOC_EXECUTABLE)
 	@$(VOICE_ALLOC_EXECUTABLE)
 -include $(HEAP_PROBE_OBJECTS:.o=.d) $(VOICE_ALLOC_OBJECTS:.o=.d)
 
+# Required release gate (build-opk.sh): named targets only, so the known host
+# failures elsewhere in run_tests cannot block a build and these cannot be waved off.
+.PHONY: opk-gate
+opk-gate: $(VOICE_ALLOC_EXECUTABLE) $(TEST_EXECUTABLE) $(STRETCH_LIFETIME_EXECUTABLE) $(BEADS_LIFETIME_EXECUTABLE)
+	@$(VOICE_ALLOC_EXECUTABLE)
+	@$(STRETCH_LIFETIME_EXECUTABLE)
+	@$(BEADS_LIFETIME_EXECUTABLE)
+	@$(TEST_EXECUTABLE) --test-case='Project voice pools*,export: limiter*'
+
 # Offline master-bus measurement / bounce (RG Nano clipping work):
 #   make -f Makefile.test master-measure [RGNANO=1]
 #   $(BUILD_DIR)/master_measure "packaging/common/projects/psy.cct" 32000 60 1 out.wav

@@ -14,6 +14,13 @@ libstdc++/libgcc), and copies the OPK back. The first run also builds the
 patched SDL2 (`build-sdl2.sh`, a few minutes). Knobs: `CT=113`, `JOBS=4`,
 `CLEAN=1` (fresh tree), `RGNANO_LTO=1` (passed through make, off by default).
 
+Before building, `build-opk.sh` runs `make -f Makefile.test RGNANO=1 opk-gate`
+and aborts if any of these fail: `voice_alloc_check` (lazy vs eager renders,
+including track-0-family-differs), `stretch_lifetime`, `beads_lifetime`, and the
+doctest cases `Project voice pools*` (engine lifetime) and `export: limiter*`
+(limiter off is bit-identical). The 8 known host failures in the full suite are
+not part of the gate. There is no skip switch.
+
 Inside the container the equivalent is
 `cd tracker && make -f Makefile.rgnano -j4 RGNano-deploy`
 (`make RGNano-deploy` through the top-level `makefile` works too).
