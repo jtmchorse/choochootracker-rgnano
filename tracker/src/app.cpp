@@ -516,6 +516,7 @@ static int autosaveCounter = 0;
 
 void appResetInputState(void) {
   pressedButtons = 0;
+  screenSetShiftHeld(0);
   tapTimerCount = 0;
   tapButton = 0;
   tapCount = 0;
@@ -891,6 +892,7 @@ void appOnEvent(MainLoopEventData eventData) {
     }
 
     pressedButtons |= value;
+    if (!rawInputActive) { screenSetShiftHeld(pressedButtons & keyShift); screenShiftMapUpdate(); }
 
     // Multi-tap detection
     if (value & doubleTapMask) {
@@ -965,6 +967,8 @@ void appOnEvent(MainLoopEventData eventData) {
     if (value == keyUnmapped && currentScreen != &screenKeyMapping) break;
 
     pressedButtons &= ~value;
+    screenSetShiftHeld(pressedButtons & keyShift);
+    screenShiftMapUpdate();
 
     appInput(0, pressedButtons, 0);
 

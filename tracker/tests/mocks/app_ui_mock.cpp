@@ -73,6 +73,7 @@ int mockAudioRestartNotificationFrames = 0;
 void screenNotifyAudioRestart(void) { mockAudioRestartNotificationFrames = 180; }
 int screenAudioRestartActive(void) { return mockAudioRestartNotificationFrames > 0; }
 void drawScreenMap(void) {}
+void screenShiftMapUpdate(void) {}
 ScreenPlaybackLevel screenGetPlaybackLevel(const AppScreen*) { return ScreenPlaybackLevel::none; }
 LoopRange screenGetLoopRange(const AppScreen*) { return {}; }
 void screenFullRedraw(ScreenData* screen) { mockScreenData = screen; }

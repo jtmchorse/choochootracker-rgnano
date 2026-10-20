@@ -12,6 +12,8 @@
 #include "utils.h"
 #include "copy_paste.h"
 #include "screen_instrument.h"
+#include "track_paging.h"
+#include "screen_layout.h"
 
 const AppScreen* currentScreen = NULL;
 static ScreenData* touchScreenData = NULL;
@@ -37,75 +39,103 @@ int screenAudioRestartActive(void) {
 static AppScreen const* pendingScreen;
 static int pendingScreenInput;
 
-void drawScreenMap() {
+static void drawScreenMapAt(int x0) {
   ScreenOverlayCoordinates overlay;
   // Native preset lists use the popup area through the footer.
   if (currentScreen == &screenSelectionPopup) return;
-  // Unsquashed grid screens show only 30 columns: the map sits at 34-39, so it
-  // is not drawn there (screens are reached with the d-pad combos instead).
-  if (gfxGetPresentUnsquashedCols() > 0) return;
   const static int smY = 15;
 
   const ColorScheme cs = appSettings.colorScheme;
   gfxSetBgColor(cs.background);
   gfxSetFgColor(cs.textInfo);
-  gfxClearRect(34, smY - 1, 6, 6);
+  gfxClearRect(x0, smY - 1, 6, 6);
 
   // Core screens
-  gfxPrint(34, smY + 1, "MSCPIT");
+  gfxPrint(x0, smY + 1, "MSCPIT");
 
   // Additional screens
   if (currentScreen == &screenMixer || (currentScreen == &screenInsertFX && screenInsertFXIsMaster())) {
-    gfxPrint(34, smY, "R");
-    gfxPrint(34, smY + 2, "D");
+    gfxPrint(x0, smY, "R");
+    gfxPrint(x0, smY + 2, "D");
   } else if (currentScreen == &screenSong || currentScreen == &screenProject || currentScreen == &screenSettings) {
-    gfxPrint(35, smY, "P");
+    gfxPrint(x0 + 1, smY, "P");
   } else if (currentScreen == &screenPhrase || currentScreen == &screenGroove) {
-    gfxPrint(37, smY, "G");
+    gfxPrint(x0 + 3, smY, "G");
   } else if (currentScreen == &screenInstrument || currentScreen == &screenSampleSettings || currentScreen == &screenFMEdit || currentScreen == &screenMonkEdit || currentScreen == &screenSIDEdit || currentScreen == &screenSoundFontEdit ||
              currentScreen == &screenInstrumentPool || currentScreen == &screenModulation ||
              (currentScreen == &screenInsertFX && !screenInsertFXIsMaster())) {
-    gfxPrint(38, smY - 1, "F");
-    gfxPrint(38, smY, "M");
-    gfxPrint(38, smY + 2, "P");
+    gfxPrint(x0 + 4, smY - 1, "F");
+    gfxPrint(x0 + 4, smY, "M");
+    gfxPrint(x0 + 4, smY + 2, "P");
   } else if (currentScreen == &screenTable || currentScreen == &screenAYWavetable) {
-    gfxPrint(39, smY + 2, "W");
+    gfxPrint(x0 + 5, smY + 2, "W");
   }
 
   // Show Settings below Song
   if (currentScreen == &screenSong || currentScreen == &screenProject || currentScreen == &screenSettings) {
-    gfxPrint(35, smY + 2, "S");
+    gfxPrint(x0 + 1, smY + 2, "S");
   }
 
   // Highlight current screen
   gfxSetFgColor(cs.textDefault);
   if (currentScreen == &screenMixer || (currentScreen == &screenInsertFX && screenInsertFXIsMaster())) {
     int page = screenMixerGetPage();
-    gfxPrint(34, smY + (page == 1 ? 0 : page == 2 ? 2 : 1), page == 1 ? "R" : page == 2 ? "D" : "M");
+    gfxPrint(x0, smY + (page == 1 ? 0 : page == 2 ? 2 : 1), page == 1 ? "R" : page == 2 ? "D" : "M");
   } else if (currentScreen == &screenSong) {
-    gfxPrint(35, smY + 1, "S");
+    gfxPrint(x0 + 1, smY + 1, "S");
   } else if (currentScreen == &screenChain) {
-    gfxPrint(36, smY + 1, "C");
+    gfxPrint(x0 + 2, smY + 1, "C");
   } else if (currentScreen == &screenPhrase) {
-    gfxPrint(37, smY + 1, "P");
+    gfxPrint(x0 + 3, smY + 1, "P");
   } else if (currentScreen == &screenInstrument || currentScreen == &screenFMEdit || currentScreen == &screenMonkEdit || currentScreen == &screenSIDEdit || currentScreen == &screenSoundFontEdit) {
-    gfxPrint(38, smY + 1, "I");
+    gfxPrint(x0 + 4, smY + 1, "I");
   } else if (currentScreen == &screenInstrumentPool) {
-    gfxPrint(38, smY + 2, "P");
+    gfxPrint(x0 + 4, smY + 2, "P");
   } else if (currentScreen == &screenModulation) {
-    gfxPrint(38, smY, "M");
+    gfxPrint(x0 + 4, smY, "M");
   } else if (currentScreen == &screenInsertFX) {
-    gfxPrint(38, smY - 1, "F");
+    gfxPrint(x0 + 4, smY - 1, "F");
   } else if (currentScreen == &screenTable) {
-    gfxPrint(39, smY + 1, "T");
+    gfxPrint(x0 + 5, smY + 1, "T");
   } else if (currentScreen == &screenAYWavetable) {
-    gfxPrint(39, smY + 2, "W");
+    gfxPrint(x0 + 5, smY + 2, "W");
   } else if (currentScreen == &screenProject) {
-    gfxPrint(35, smY, "P");
+    gfxPrint(x0 + 1, smY, "P");
   } else if (currentScreen == &screenGroove) {
-    gfxPrint(37, smY, "G");
+    gfxPrint(x0 + 3, smY, "G");
   } else if (currentScreen == &screenSettings) {
-    gfxPrint(35, smY + 2, "S");
+    gfxPrint(x0 + 1, smY + 2, "S");
+  }
+}
+
+// Squashed screens carry the map in the sidebar (cols 34-39). Unsquashed grid
+// screens have no room for it (screens are reached with d-pad combos); while
+// Shift is held it is drawn over the bottom right of the 30 column grid.
+static int overlayShown = 0;
+
+void drawScreenMap() {
+  if (gfxGetPresentUnsquashedCols() > 0) {
+    if (screenShiftMapActive() && currentScreen != &screenSelectionPopup) {
+      drawScreenMapAt(SHIFT_MAP_X);
+      overlayShown = 1;
+    }
+    return;
+  }
+  drawScreenMapAt(34);
+}
+
+// Call after screenSetShiftHeld. Draws on press (same frame), erases on release.
+void screenShiftMapUpdate(void) {
+  if (screenShiftMapActive()) {
+    if (currentScreen && currentScreen != &screenTitle) drawScreenMap();
+  } else if (overlayShown) {
+    overlayShown = 0;
+    if (currentScreen && gfxGetPresentUnsquashedCols() > 0) {
+      ScreenOverlayCoordinates overlay;
+      gfxSetBgColor(appSettings.colorScheme.background);
+      gfxClearRect(SHIFT_MAP_X, SHIFT_MAP_Y, SHIFT_MAP_W, SHIFT_MAP_H);
+      currentScreen->fullRedraw();
+    }
   }
 }
 

@@ -8,6 +8,13 @@ int screenVisibleRows(void);
 // 30 while a grid screen is presented unsquashed, else 40.
 int screenVisibleCols(void);
 int screenPresentCols(const AppScreen* screen, int wideOverlayOpen);
+// Shift-held map overlay for unsquashed grid screens: a 6x6 cell box at the bottom right.
+#define SHIFT_MAP_W 6
+#define SHIFT_MAP_H 6
+#define SHIFT_MAP_Y 14
+#define SHIFT_MAP_X (30 - SHIFT_MAP_W)
+void screenSetShiftHeld(int held);
+int screenShiftMapActive(void); // Shift held and the screen is presented 1:1
 // Modulation uses two blocks of eight fields, with a gap between them.
 int screenModulationRowY(int row);
 int screenModulationRowAt(int y);
