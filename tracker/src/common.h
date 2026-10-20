@@ -201,6 +201,10 @@ extern int autosaveLoadFailed;
 void initDefaultAppSettings(void);
 int settingsSave(void);
 int settingsLoad(void);
+// Audio rate the settings file asks for, with the one-time 32 kHz pin migration
+// (see common.cpp). Pure helper, plus a peek used by the RG Nano early audio open.
+int settingsResolveAudioRate(bool sawKey, int value, bool sawMarker, bool* migrated);
+int settingsPeekAudioRate(void);
 int saveTheme(const char* path);
 int loadTheme(const char* path);
 void resetToDefaultColors(void);

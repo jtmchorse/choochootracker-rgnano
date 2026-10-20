@@ -22,6 +22,8 @@
 #include "corelib_keymap.h"
 #ifdef RGNANO_BUILD
 #include "../platforms/shared/rgnano_keymap.h"
+extern "C" int rgnanoAudioRate(void) __attribute__((weak));  // absent in host test builds
+extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
 #endif
 #include "screens/screen_quick_help.h"
 #include "screens/screen_instrument.h"
@@ -538,6 +540,18 @@ int appTakeLimiterStats(float* minGain, float* meanReduction, unsigned* engagedF
 }
 
 void appSetup(void) {
+#ifdef RGNANO_BUILD
+  {
+    // The platform layer opened the device (probing at the saved rate first).
+    // If 48000 would not open it fell back to 32000: follow it in memory only,
+    // so a later settings save is the user's choice, not ours.
+    const int deviceRate = rgnanoAudioRate ? rgnanoAudioRate() : 0;
+    if (deviceRate && deviceRate != appSettings.audioSampleRate) {
+      rgnanoLog("settings: audioSampleRate %d -> %d in memory (device fallback, not saved)", appSettings.audioSampleRate, deviceRate);
+      appSettings.audioSampleRate = deviceRate;
+    }
+  }
+#endif
   // Registered before anything else touches MIDI: chipnomad_lib's engine
   // path (applyVoiceEvents/chipnomadMidiPanic) now goes through the router,
   // which does nothing until a backend is registered.

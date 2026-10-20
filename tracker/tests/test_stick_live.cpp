@@ -388,10 +388,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   CHECK(screen->rows == 4);
   screen->drawField(0, 0, CellState::focus);
   CHECK(std::string(mockGfxCells[2], 11) == "Sample rate");
-#ifndef RGNANO_BUILD
   CHECK(std::string(mockGfxCells[2] + 23, 6) == "48 kHz");
-#endif
-#ifndef RGNANO_BUILD  // RG Nano pins the rate to 32 kHz (row 0 not editable)
   REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
   CHECK(mockAudioReconfigureRate == 32000);
   CHECK(appSettings.audioSampleRate == 32000);
@@ -400,7 +397,6 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   mockAudioReconfigureResult = 1;
   REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
   CHECK(appSettings.audioSampleRate == 48000);
-#endif
   mockAudioReconfigureResult = 0;
   screen->drawField(0, 1, CellState::focus);
   CHECK(std::string(mockGfxCells[3], 11) == "Buffer size");
@@ -451,11 +447,10 @@ TEST_CASE_FIXTURE(StickLiveFixture, "audio buffer settings use supported sizes")
   }
 }
 
-// MERGE-REVIEW: RG Nano pins the rate to 32 kHz on every load (toggle adopted later).
-#ifndef RGNANO_BUILD
 TEST_CASE_FIXTURE(StickLiveFixture, "audio sample rate settings accept only 32 or 48 kHz") {
   struct StoredSetting { const char* text; int expected; };
-  for (const auto& setting : {StoredSetting{"audioSampleRate: 32000\n", 32000},
+  // audioRateChosen marks a file written after the 32 kHz pin was lifted.
+  for (const auto& setting : {StoredSetting{"audioRateChosen: 1\naudioSampleRate: 32000\n", 32000},
                               StoredSetting{"audioSampleRate: 48000\n", 48000},
                               StoredSetting{"audioSampleRate: 96000\n", 48000},
                               StoredSetting{"audioSampleRate: 0\n", 48000}}) {
@@ -464,15 +459,43 @@ TEST_CASE_FIXTURE(StickLiveFixture, "audio sample rate settings accept only 32 o
     CHECK(appSettings.audioSampleRate == setting.expected);
   }
 }
-#else
-TEST_CASE_FIXTURE(StickLiveFixture, "audio sample rate setting is pinned to 32 kHz on RG Nano") {
-  for (const char* text : {"audioSampleRate: 48000\n", "audioSampleRate: 96000\n", "audioSampleRate: 0\n"}) {
-    std::ofstream(realSettingsPath) << text;
-    REQUIRE(settingsLoad() == 0);
-    CHECK(appSettings.audioSampleRate == 32000);
-  }
-}
+
+TEST_CASE_FIXTURE(StickLiveFixture, "audio rate migration: absent key, pinned 32k, deliberate 32k") {
+  // Absent key: new default.
+  std::ofstream(realSettingsPath) << "audioBufferSize: 1024\n";
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.audioSampleRate == 48000);
+#ifdef RGNANO_BUILD
+  // 32000 with no marker was written by the pinned build: not a user choice.
+  std::ofstream(realSettingsPath) << "audioSampleRate: 32000\n";
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.audioSampleRate == 48000);
+  // Choosing 32 kHz afterwards survives a save and reload (marker written).
+  appSettings.audioSampleRate = 32000;
+  REQUIRE(settingsSave() == 0);
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.audioSampleRate == 32000);
+  // A save of the migrated 48000 stays 48000 and is not migrated again.
+  appSettings.audioSampleRate = 48000;
+  REQUIRE(settingsSave() == 0);
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.audioSampleRate == 48000);
 #endif
+}
+
+TEST_CASE("settingsResolveAudioRate rules") {
+  bool migrated = true;
+  CHECK(settingsResolveAudioRate(false, 0, false, &migrated) == 48000);
+  CHECK(!migrated);
+  CHECK(settingsResolveAudioRate(true, 32000, false, &migrated) == 48000);
+  CHECK(migrated);
+  CHECK(settingsResolveAudioRate(true, 32000, true, &migrated) == 32000);
+  CHECK(!migrated);
+  CHECK(settingsResolveAudioRate(true, 48000, false, &migrated) == 48000);
+  CHECK(!migrated);
+  CHECK(settingsResolveAudioRate(true, 44100, true, &migrated) == 48000);
+  CHECK(settingsResolveAudioRate(true, 32000, false, NULL) == 48000);
+}
 }
 
 TEST_SUITE("MIDI settings") {

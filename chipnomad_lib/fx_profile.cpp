@@ -1,4 +1,5 @@
 #include "fx_profile.h"
+#include "insert_fx.h"
 #include <atomic>
 #include <stdio.h>
 #include <time.h>
@@ -58,10 +59,24 @@ void chipnomadGetFxProfile(FxProfile* out, bool reset) {
   out->shedModule = shedModule.load(std::memory_order_relaxed);
 }
 
-int fxProfileFormat(const FxProfile& p, int callbacks, char* out, unsigned size) {
+static_assert(FxProfile::insertSlots == insertModuleCount, "every insert needs an FX profile slot");
+
+// The overload governor measures each slot's real wall time (insert_fx.cpp,
+// Governor), so there is no static cost table to maintain; what it needs is a
+// slot per insert so the cost is recorded, named and shed-reportable. Formant
+// (id 16) had none and was silently dropped. Tape echo and the spring tank are
+// master-delay algorithms and are counted in "dly".
+// ESTIMATE (2026-10-20): formant costs about like the parametric EQ ("eq"), a
+// short bank of band-pass filters per sample; no on-device figure yet, read
+// "form=" from the astat fx line.
+const char* fxProfileModuleName(int module) {
   static const char* const names[FxProfile::insertSlots] = {
       "off", "comp", "dist", "dbl", "tape", "ott", "chor", "flng", "phsr",
-      "rot", "sat", "crush", "destr", "eq", "gate", "beads"};
+      "rot", "sat", "crush", "destr", "eq", "gate", "beads", "form"};
+  return module >= 0 && module < FxProfile::insertSlots ? names[module] : "?";
+}
+
+int fxProfileFormat(const FxProfile& p, int callbacks, char* out, unsigned size) {
   if (!out || size == 0) return 0;
   out[0] = 0;
   if (callbacks < 1) callbacks = 1;
@@ -72,7 +87,7 @@ int fxProfileFormat(const FxProfile& p, int callbacks, char* out, unsigned size)
     if (!ns || used + 24 >= size) return;
     used += (unsigned)snprintf(out + used, size - used, "%s=%u ", name, (unsigned)(ns / 1000 / (uint64_t)callbacks));
   };
-  for (int i = 1; i < FxProfile::insertSlots; ++i) add(names[i], p.insertNs[i]);
+  for (int i = 1; i < FxProfile::insertSlots; ++i) add(fxProfileModuleName(i), p.insertNs[i]);
   add("rev", p.reverbNs);
   add("brev", p.beadsReverbNs);
   add("dly", p.delayNs);
@@ -82,6 +97,6 @@ int fxProfileFormat(const FxProfile& p, int callbacks, char* out, unsigned size)
                                frames ? (unsigned)(p.skippedFrames * 100 / frames) : 0u);
   if (p.shedEvents && used + 24 < size)
     used += (unsigned)snprintf(out + used, size - used, " shed=%u(last %s)", (unsigned)p.shedEvents,
-                               p.shedModule < FxProfile::insertSlots ? names[p.shedModule] : "?");
+                               fxProfileModuleName((int)p.shedModule));
   return (int)used;
 }

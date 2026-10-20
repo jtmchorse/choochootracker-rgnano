@@ -21,6 +21,9 @@ void rgnanoLog(const char* format, ...) __attribute__((format(printf, 1, 2)));
 // First call in main(): creates the data dir + log, seeds bundled content on
 // first run, then opens audio BEFORE video/evdev/tty are touched.
 void rgnanoPlatformEarlyInit(void);
+// Engine rate the audio device was actually opened at (after the 48000 -> 32000
+// probe fallback), or 0 before the first open. Main thread.
+int rgnanoAudioRate(void);
 void rgnanoPlatformShutdown(void);
 
 // Logical canvas the UI renders into (default 480x320, override with

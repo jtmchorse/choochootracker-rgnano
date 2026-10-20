@@ -49,13 +49,45 @@ static void rgnanoLogLibm() {
 static char settingsPath[PATH_LENGTH + 32];
 static char autosavePath[PATH_LENGTH + 32];
 static char lineBuffer[1024];
-#ifdef RGNANO_BUILD
-// RG Nano: one Cortex-A7. 32 kHz is what the speaker/USB DAC path was proven
-// at, and every engine renders correctly at it.
-static const int kAudioSampleRate = 32000;
-#else
+// Default for every build including the RG Nano. On the RG Nano the platform
+// layer probes the device at the requested rate first and drops the in-memory
+// setting to 32000 when 48000 will not open (see rgnano_platform.cpp).
 static const int kAudioSampleRate = 48000;
-#endif
+
+// Rate the settings file asks for. absent key -> 48000 (new default). The
+// pinned RG Nano build always wrote "audioSampleRate: 32000" even though the
+// user never chose it, so an explicit 32000 with no audioRateChosen marker is
+// migrated to 48000 once (like the mixVolume migration). Every save writes the
+// marker, so a 32000 picked afterwards in Settings > Audio is kept.
+int settingsResolveAudioRate(bool sawKey, int value, bool sawMarker, bool* migrated) {
+  if (migrated) *migrated = false;
+  if (!sawKey || (value != 32000 && value != 48000)) return kAudioSampleRate;
+  if (!sawMarker && value == 32000) {
+    if (migrated) *migrated = true;
+    return kAudioSampleRate;
+  }
+  return value;
+}
+
+// Reads just the two audio-rate lines of settings.txt so the RG Nano can open
+// the device at the right rate before settingsLoad() runs.
+int settingsPeekAudioRate(void) {
+  char dir[PATH_LENGTH];
+  if (fileGetDefaultDirectory(dir, PATH_LENGTH) != 0) return kAudioSampleRate;
+  char path[PATH_LENGTH + 32];
+  snprintf(path, sizeof(path), "%s%ssettings.txt", dir, PATH_SEPARATOR_STR);
+  FILE* f = fopen(path, "r");
+  if (!f) return kAudioSampleRate;
+  bool sawKey = false, sawMarker = false;
+  int value = 0;
+  char buf[256];
+  while (fgets(buf, sizeof(buf), f)) {
+    if (strncmp(buf, "audioSampleRate: ", 17) == 0) { sawKey = sscanf(buf + 17, "%d", &value) == 1; }
+    else if (strncmp(buf, "audioRateChosen: ", 17) == 0) sawMarker = true;
+  }
+  fclose(f);
+  return settingsResolveAudioRate(sawKey, value, sawMarker, NULL);
+}
 
 static int defaultAudioBufferSize(void) {
 #ifdef WEB_BUILD
@@ -286,6 +318,7 @@ int settingsSave(void) {
   fprintf(file, "screenWidth: %d\n", appSettings.screenWidth);
   fprintf(file, "screenHeight: %d\n", appSettings.screenHeight);
   fprintf(file, "audioSampleRate: %d\n", appSettings.audioSampleRate);
+  fprintf(file, "audioRateChosen: 1\n");
   fprintf(file, "audioBufferSize: %d\n", appSettings.audioBufferSize);
   fprintf(file, "aySampleDithering: %d\n", appSettings.aySampleDithering);
   fprintf(file, "doubleTapFrames: %d\n", appSettings.doubleTapFrames);
@@ -416,13 +449,15 @@ int settingsLoad(void) {
   FILE* file = fopen(settingsPath, "r");
   if (file == NULL) {
 #ifdef RGNANO_BUILD
-    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d (defaults)", settingsPath,
-              (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d (defaults)", settingsPath,
+              (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize,
+              appSettings.audioSampleRate);
     rgnanoLogLibm();
 #endif
     return 1;
   }
   bool sawMasterLimiter = false;
+  bool sawRateKey = false, sawRateMarker = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
     char* line = lineBuffer;
@@ -462,6 +497,9 @@ int settingsLoad(void) {
       sscanf(line + 14, "%d", &appSettings.screenHeight);
     } else if (strncmp(line, "audioSampleRate: ", 17) == 0) {
       sscanf(line + 17, "%d", &appSettings.audioSampleRate);
+      sawRateKey = true;
+    } else if (strncmp(line, "audioRateChosen: ", 17) == 0) {
+      sawRateMarker = true;
     } else if (strncmp(line, "audioBufferSize: ", 17) == 0) {
       sscanf(line + 17, "%d", &appSettings.audioBufferSize);
     } else if (strncmp(line, "aySampleDithering: ", 19) == 0) {
@@ -690,6 +728,12 @@ int settingsLoad(void) {
   }
 
   fclose(file);
+  bool rateMigrated = false;
+#ifdef RGNANO_BUILD
+  appSettings.audioSampleRate = settingsResolveAudioRate(sawRateKey, appSettings.audioSampleRate, sawRateMarker, &rateMigrated);
+#else
+  appSettings.audioSampleRate = settingsResolveAudioRate(sawRateKey, appSettings.audioSampleRate, true, NULL);
+#endif
 #ifdef RGNANO_BUILD
   // One-time migration for a settings.txt written before the master limiter
   // existed (it has no masterLimiter line): the old 100% default becomes the
@@ -697,17 +741,13 @@ int settingsLoad(void) {
   // the next save writes masterLimiter so this never runs twice.
   const bool migrated = !sawMasterLimiter && appSettings.mixVolume >= 0.99f;
   if (migrated) appSettings.mixVolume = 0.5f;
-  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d rateKey=%s rateMigrated=%s", settingsPath,
             migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
-            appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
+            appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize,
+            appSettings.audioSampleRate, sawRateKey ? "yes" : "no", rateMigrated ? "yes" : "no");
   rgnanoLogLibm();
 #else
   (void)sawMasterLimiter;
-#endif
-  if (appSettings.audioSampleRate != 32000 && appSettings.audioSampleRate != 48000)
-    appSettings.audioSampleRate = kAudioSampleRate;
-#ifdef RGNANO_BUILD
-  appSettings.audioSampleRate = kAudioSampleRate;  // RG Nano: pinned to 32 kHz (DAC path); the 32/48 toggle is adopted later
 #endif
   // 4,906 was the legacy platform default; other values are rounded to the
   // nearest choice exposed by the audio settings screen.

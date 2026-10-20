@@ -92,7 +92,6 @@ static int audioBufferIndex(int value) {
 }
 static int audioEdit(int, int row, CellEditAction action) {
 #ifdef RGNANO_BUILD
-  if (row == 0) return 0;  // MERGE-REVIEW: sample rate pinned to 32 kHz on RG Nano (toggle adopted later)
   if (row == 3) {
     uint8_t value = (uint8_t)appSettings.fxLite;
     if (action == CellEditAction::tap || action == CellEditAction::doubleTap) value ^= 1;
@@ -133,7 +132,7 @@ static int audioEdit(int, int row, CellEditAction action) {
     return 1;
   }
   if (!audioManager.reconfigure || audioManager.reconfigure(rate, size) != 0) {
-    screenMessage(MESSAGE_TIME_ERROR, row == 0 ? "Audio rate failed" : "Audio buffer failed");
+    screenMessage(MESSAGE_TIME_ERROR, row == 0 ? "Rate failed, reverted" : "Audio buffer failed");
     return 1;
   }
   appSettings.audioSampleRate = rate;

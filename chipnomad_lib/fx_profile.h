@@ -19,11 +19,11 @@ bool fxLiteEnabled();
 // Per-callback cost accumulated by effect type. Counters are written by the
 // audio thread only; chipnomadGetFxProfile may be called from any thread.
 struct FxProfile {
-  enum { insertSlots = 16 };  // indexed by InsertModule (insertBeads = 15)
+  enum { insertSlots = 17 };  // indexed by InsertModule (insertFormant = 16); a static_assert in fx_profile.cpp keeps it in step
   uint64_t insertNs[insertSlots];
   uint64_t reverbNs;       // master Clouds reverb send
   uint64_t beadsReverbNs;  // master Beads-algorithm reverb send
-  uint64_t delayNs;        // master delay send
+  uint64_t delayNs;        // master delay send (tape echo and the spring tank run inside it)
   uint64_t skippedFrames;  // insert frames bypassed by the silence skip
   uint64_t processedFrames;
   // Overload governor (live engines only): how many times an insert was
@@ -52,6 +52,8 @@ uint32_t fxShedModule();
 // Call it once per window with the same `cb` count as the render_us average
 // (use reset=true so the next window starts clean). Not wired here because
 // that file is owned by the limiter work.
+// Short log name of an InsertModule id ("?" when out of range).
+const char* fxProfileModuleName(int module);
 int fxProfileFormat(const FxProfile& profile, int callbacks, char* out, unsigned size);
 
 // Internal hooks used by the effect code.

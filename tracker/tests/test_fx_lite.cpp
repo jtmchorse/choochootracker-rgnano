@@ -1,3 +1,4 @@
+#include <string>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -196,4 +197,30 @@ TEST_SUITE("fx lite") {
     REQUIRE(settingsSave() == 0);
     fxLiteSet(savedFlag);
   }
+}
+
+// Every insert id has a named profile slot, so the astat fx line and the
+// overload governor can see it (formant, id 16, used to fall off the end).
+#include "insert_fx.h"
+TEST_CASE("fx profile table covers every insert id") {
+  CHECK((int)FxProfile::insertSlots == (int)insertModuleCount);
+  for (int m = 1; m < insertModuleCount; ++m) {
+    const char* name = fxProfileModuleName(m);
+    REQUIRE(name != nullptr);
+    CHECK(std::string(name) != "?");
+    CHECK(std::string(name) != "");
+    for (int o = 1; o < m; ++o) CHECK(std::string(name) != std::string(fxProfileModuleName(o)));
+    FxProfile p = {};
+    p.insertNs[m] = 5000000;  // 5 ms over 1 callback
+    char line[256];
+    fxProfileFormat(p, 1, line, sizeof(line));
+    CHECK(std::string(line).find(std::string(name) + "=5000") != std::string::npos);
+  }
+  CHECK(std::string(fxProfileModuleName(insertModuleCount)) == "?");
+  FxProfile shed = {};
+  shed.shedEvents = 1;
+  shed.shedModule = insertFormant;
+  char line[256];
+  fxProfileFormat(shed, 1, line, sizeof(line));
+  CHECK(std::string(line).find("last form") != std::string::npos);
 }

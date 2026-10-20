@@ -377,7 +377,11 @@ struct ProbeWinner {
   int devRate = 0;    // rate the device accepted
   int reqRate = 0;    // rate the engine asked for when probing
 };
-static ProbeWinner probeWinner;
+// One cached winner per requested engine rate (32000 / 48000), so a failed
+// runtime switch can roll back to the other rate without probing again.
+static ProbeWinner probeWinners[2];
+static ProbeWinner& winnerFor(int rate) { return probeWinners[rate == 48000 ? 1 : 0]; }
+static bool card1HungEver = false;  // a hung card1 open leaves a D-state child: never touch it again
 
 static bool runProbe(int rate, int period) {
   long long begun = nowUs();
@@ -385,10 +389,10 @@ static bool runProbe(int rate, int period) {
   bool card1 = access("/proc/asound/card1", F_OK) == 0 || getenv("RGNANO_AUDIO_PROBE_FORCE_CARD1");
   rgnanoLog("audio probe: card1 %s, probing out of process (timeout %d ms each)", card1 ? "present" : "absent", kProbeTimeoutMs);
   std::vector<Cand> cands;
-  if (card1) { cands.push_back({"plughw:1,0", rate}); cands.push_back({"plughw:1,0", 48000}); }
+  if (card1) { cands.push_back({"plughw:1,0", rate}); if (rate != 48000) cands.push_back({"plughw:1,0", 48000}); }
   cands.push_back({"default", rate});
   cands.push_back({"plughw:0,0", rate});
-  bool card1Hung = false;
+  bool card1Hung = card1HungEver;
   bool dacFailed = false;  // some DAC candidate (plughw:1,0 or the default routed there) did not work
   for (const Cand& c : cands) {
     // A hung card1 open leaves a D-state child on that device; the default
@@ -401,15 +405,16 @@ static bool runProbe(int rate, int period) {
     ProbeResult r = probeAlsa(c.name, c.rate, period);
     rgnanoLog("audio probe: '%s' %d Hz -> %s in %lld ms (%s)", c.name, c.rate,
               r.ok ? "OK" : (r.timedOut ? "HANG" : (r.crashed ? "CRASH" : "fail")), (nowUs() - t0) / 1000, r.detail.c_str());
-    if ((r.timedOut || r.crashed) && strcmp(c.name, "plughw:1,0") == 0) card1Hung = true;
+    if ((r.timedOut || r.crashed) && strcmp(c.name, "plughw:1,0") == 0) card1Hung = card1HungEver = true;
     if (!r.ok && card1 && (strcmp(c.name, "plughw:1,0") == 0 || strcmp(c.name, "default") == 0)) dacFailed = true;
     if (r.ok) {
       if (card1 && dacFailed && strcmp(c.name, "plughw:0,0") == 0)
         rgnanoLog("audio probe: the USB DAC (card1) is UNUSABLE on this device; the built-in speaker (plughw:0,0) is in use");
-      probeWinner.valid = true;
-      probeWinner.name = c.name;
-      probeWinner.devRate = c.rate;
-      probeWinner.reqRate = rate;
+      ProbeWinner& w = winnerFor(rate);
+      w.valid = true;
+      w.name = c.name;
+      w.devRate = c.rate;
+      w.reqRate = rate;
       rgnanoLog("audio probe: winner '%s' at %d Hz, total probe delay %lld ms", c.name, c.rate, (nowUs() - begun) / 1000);
       return true;
     }
@@ -586,7 +591,7 @@ void rgnanoStatsAddLimiter(float minGain, float meanReduction, unsigned engagedF
 static void logFxProfile(unsigned callbacks) {
   FxProfile fp;
   chipnomadGetFxProfile(&fp, true);
-  char fx[200];
+  char fx[256];
   fxProfileFormat(fp, (int)callbacks, fx, sizeof(fx));
   rgnanoLog("astat fx us/cb: %s", fx);
 }
@@ -624,8 +629,8 @@ void rgnanoStatsTick(int playing) {
     startAudio = lastAudio = (long long)audioCpuNs.load() / 1000;
     const int rate = cbRate.load(), frames = cbFrames.load();
     char mixBuf[48]; mixTag(mixBuf, sizeof(mixBuf));
-    rgnanoLog("astat: playback started; callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s | %s",
-              frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)", mixBuf);
+    rgnanoLog("astat: playback started; rate=%d callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s | %s",
+              audioRate, frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)", mixBuf);
     return;
   }
   if (!wasPlaying) return;
@@ -647,9 +652,9 @@ void rgnanoStatsTick(int playing) {
     char mixBuf[48]; mixTag(mixBuf, sizeof(mixBuf));
     if (span < 1.0) span = 1.0;
     if (aCpu < 0) aCpu = 0;  // audio thread was replaced by a buffer-size reopen
-    rgnanoLog("astat %s: cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
+    rgnanoLog("astat %s: rate=%d cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
               "clip=%u peak=%.1fdBFS | limiter %s | %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
-              tag, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
+              tag, audioRate, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
               a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf, mixBuf,
               100.0 * pCpu / span, 100.0 * aCpu / span, 100.0 * mCpu / span);
   };
@@ -743,7 +748,11 @@ static SDL_AudioDeviceID tryOpen(const char* label, int rate, int samples) {
   return attempt->device;
 }
 
-static bool openAudio(int rate, int samples) {
+// allowFallback: first open of a session only. When nothing opens at 48000 the
+// probe is repeated at 32000 and the engine rate becomes 32000 (the caller
+// reads it back with rgnanoAudioRate()). A runtime change never falls back: it
+// fails so the caller can revert the setting.
+static bool openAudio(int rate, int samples, bool allowFallback) {
   const char* forced = getenv("RGNANO_AUDIO_DEVICE");  // ALSA PCM name, skips the probe
   const char* drv = getenv("SDL_AUDIODRIVER");
   bool probeSkipped = (drv && drv[0] && strcmp(drv, "alsa") != 0);  // dummy/test drivers
@@ -755,17 +764,28 @@ static bool openAudio(int rate, int samples) {
   } else if (probeSkipped) {
     rgnanoLog("audio: SDL_AUDIODRIVER=%s, probe skipped", drv);
   } else {
-    if (!probeWinner.valid && !runProbe(rate, samples)) {
+    bool probed = winnerFor(rate).valid || runProbe(rate, samples);
+    if (!probed && allowFallback && rate == 48000 && runProbe(32000, samples)) {
+      rgnanoLog("audio: 48000 not available on %s, using 32000", winnerFor(32000).name.c_str());
+      rate = 32000;
+      probed = true;
+    }
+    if (!probed) {
+      if (!allowFallback) {
+        rgnanoLog("audio: probe found no device at %d Hz, refusing the change", rate);
+        return false;
+      }
       rgnanoLog("audio: NO DEVICE. Running silent with a software clock");
       audioFailed = true;
       audioRate = rate;
       audioSamples = samples;
       return false;
     }
-    name = probeWinner.name;
+    const ProbeWinner& winner = winnerFor(rate);
+    name = winner.name;
     // Native rate worked: let the plug layer resample other rates. Only the
     // fallback rate (48000) needs the engine-to-device bridge.
-    devRate = (probeWinner.devRate == probeWinner.reqRate) ? rate : probeWinner.devRate;
+    devRate = (winner.devRate == winner.reqRate) ? rate : winner.devRate;
   }
   if (!name.empty()) setenv("AUDIODEV", name.c_str(), 1);
   unsetenv("SDL_AUDIO_DEVICE_NAME");
@@ -827,6 +847,8 @@ static void startSink(int rate, int samples) {
   });
 }
 
+int rgnanoAudioRate(void) { return (audioDevice || audioFailed) ? audioRate : 0; }
+
 int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize) {
   if ((audioDevice || audioFailed) && audioRate == sampleRate && audioSamples == bufferSize) {
     audioCallbackPtr.store(callback, std::memory_order_release);
@@ -841,8 +863,15 @@ int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize) {
     return 0;
   }
   rgnanoLog("audio: (re)configure %d Hz, %d frames", sampleRate, bufferSize);
+  const bool rateChange = audioRate != 0 && audioRate != sampleRate;
   rgnanoAudioClose();
-  if (!openAudio(sampleRate, bufferSize)) {
+  if (!openAudio(sampleRate, bufferSize, audioRate == 0)) {
+    if (rateChange) {
+      // The new rate would not open: no software clock, the caller reverts.
+      audioFailed = false;
+      rgnanoLog("audio: %d Hz did not open, change refused", sampleRate);
+      return 1;
+    }
     audioCallbackPtr.store(callback, std::memory_order_release);
     audioRate = sampleRate;
     audioSamples = bufferSize;
@@ -887,8 +916,9 @@ void rgnanoPlatformEarlyInit(void) {
   }
   // Audio before anything else touches the tty or the evdev nodes: that is the
   // order round 2 used when the open worked.
-  rgnanoLog("early init: opening audio first (32000 Hz, 1024 frames)");
-  openAudio(32000, 1024);
+  const int wantRate = settingsPeekAudioRate();
+  rgnanoLog("early init: opening audio first (%d Hz requested by settings, 1024 frames)", wantRate);
+  openAudio(wantRate, 1024, true);
   seedAssets();
   logSync = false;
 }
