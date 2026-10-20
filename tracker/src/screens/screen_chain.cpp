@@ -1,3 +1,4 @@
+#include "track_paging.h"
 #include "screens.h"
 #include "common.h"
 #include "corelib_gfx.h"
@@ -380,7 +381,8 @@ const AppScreen screenChain = {
   .fullRedraw = fullRedraw,
   .draw = draw,
   .onInput = onInput,
-  .getPlaybackLevel = getPlaybackLevel
+  .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };
 
 LoopRange chainScreenGetLoopRange(void) {

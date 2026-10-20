@@ -6,6 +6,7 @@
 #include "fx_profile.h"
 #include "corelib_file.h"
 #include "common.h"
+#include "corelib_gfx.h"
 #include <SDL2/SDL.h>
 #include <algorithm>
 #include <atomic>
@@ -1049,6 +1050,11 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
     prevValid = false;
   }
   const bool fast = (w == 320 && h == 240 && RGNANO_PHYSICAL_W == 240 && RGNANO_PHYSICAL_H == 240);
+  // Grid screens (Song, Chain, Phrase) are shown 1:1: the left 240 canvas
+  // pixels, no squash. A mode change invalidates the cached rows.
+  static bool prevUnsquashed = false;
+  const bool unsquashed = fast && gfxGetPresentUnsquashedCols() > 0;
+  if (unsquashed != prevUnsquashed) { prevUnsquashed = unsquashed; prevValid = false; }
   // Changed destination rows [rowLo, rowHi). Fast path: vertical is 1:1, so source
   // row y maps to destination row y and only changed rows are converted. Generic
   // path: any change reconverts the whole frame.
@@ -1058,11 +1064,12 @@ void rgnanoPresent(const uint32_t* argb, int w, int h, unsigned readbackUs) {
     for (int y = 0; y < 240; y++) {
       const uint32_t* s = argb + (size_t)y * 320;
       uint32_t* p = prevSrc.data() + (size_t)y * 320;
-      bool ch = !prevValid || rgnanoscale::rowsDiffer(s, p, 320);
+      bool ch = !prevValid || rgnanoscale::rowsDiffer(s, p, unsquashed ? 240 : 320);
       rowChanged[y] = ch;
       if (ch) {
         memcpy(p, s, 320 * 4);
-        rgnanoscale::squashRow320to240(s, frame565 + y * RGNANO_PHYSICAL_W);
+        if (unsquashed) rgnanoscale::copyRow240(s, frame565 + y * RGNANO_PHYSICAL_W);
+        else rgnanoscale::squashRow320to240(s, frame565 + y * RGNANO_PHYSICAL_W);
         changedRows++;
       }
     }

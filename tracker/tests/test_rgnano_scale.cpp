@@ -65,3 +65,15 @@ TEST_CASE("rgnano rowsDiffer ignores alpha and finds single changes") {
   b[319] ^= 1;
   CHECK(rgnanoscale::rowsDiffer(a.data(), b.data(), 320));
 }
+
+TEST_CASE("RG Nano present: unsquashed row copy is the left 240 pixels 1:1") {
+  std::vector<uint32_t> src(320);
+  for (int x = 0; x < 320; x++) src[x] = 0xFF000000u | ((x * 3 & 0xFF) << 16) | ((x * 5 & 0xFF) << 8) | (x * 7 & 0xFF);
+  std::vector<uint16_t> out(240, 0);
+  rgnanoscale::copyRow240(src.data(), out.data());
+  for (int x = 0; x < 240; x++) {
+    uint32_t p = src[x];
+    uint16_t want = (uint16_t)((((p >> 16) & 0xF8) << 8) | (((p >> 8) & 0xFC) << 3) | ((p & 0xFF) >> 3));
+    CHECK(out[x] == want);
+  }
+}

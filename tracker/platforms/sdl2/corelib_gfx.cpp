@@ -26,7 +26,7 @@
 #define TEXT_COLS (40)
 #define TEXT_ROWS (20)
 
-#define CHAR_X(x) ((x) * charW + offsetX)
+#define CHAR_X(x) ((x) * charW + offsetX + gfxGetPixelOffsetX())
 #define CHAR_Y(y) (((y) + gfxGetContentRowOffset()) * charH + offsetY)
 
 #ifdef TOUCH_INPUT
@@ -914,7 +914,7 @@ void gfxCursor(int x, int y, int w) {
 void gfxRect(int x, int y, int w, int h) {
   int cx = CHAR_X(x);
   int cy = CHAR_Y(y);
-  int cw = w * charW;
+  int cw = w * charW + gfxGetRectExtraWidth();
   int ch = h * charH;
   setColor(fgColor);
 

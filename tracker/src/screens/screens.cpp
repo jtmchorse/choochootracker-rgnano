@@ -41,6 +41,9 @@ void drawScreenMap() {
   ScreenOverlayCoordinates overlay;
   // Native preset lists use the popup area through the footer.
   if (currentScreen == &screenSelectionPopup) return;
+  // Unsquashed grid screens show only 30 columns: the map sits at 34-39, so it
+  // is not drawn there (screens are reached with the d-pad combos instead).
+  if (gfxGetPresentUnsquashedCols() > 0) return;
   const static int smY = 15;
 
   const ColorScheme cs = appSettings.colorScheme;
@@ -112,9 +115,43 @@ void screenSetup(const AppScreen* screen, int input) {
   pendingScreenInput = input;
 }
 
+// Grid screens present 1:1 in their own width; anything that draws wider than
+// that over them (character picker, FX picker) forces the squashed canvas.
+static void updatePresentMode(void) {
+  gfxSetPresentUnsquashedCols(screenPresentCols(currentScreen, charEditIsOpen() || fxEditIsOpen()));
+}
+
+// One status line of at most `cols` characters; longer text scrolls through
+// the window like the audio-restart notice.
+static void drawStatusLine(const char* text) {
+  const int cols = screenVisibleCols();
+  const int length = (int)strlen(text);
+  gfxClearRect(0, 19, 40, 1);
+  if (length <= cols) {
+    gfxPrint(0, 19, text);
+    return;
+  }
+  static char lastText[41];
+  static int frame;
+  if (strcmp(lastText, text) != 0) {
+    snprintf(lastText, sizeof(lastText), "%s", text);
+    frame = 0;
+  }
+  const int period = length + 3;
+  if (++frame >= period * 2) frame = 0;
+  char window[41];
+  for (int i = 0; i < cols; ++i) {
+    const int pos = (frame / 2 + i) % period;
+    window[i] = pos < length ? text[pos] : ' ';
+  }
+  window[cols] = '\0';
+  gfxPrint(0, 19, window);
+}
+
 void screenDraw() {
   if (pendingScreen != NULL) {
     currentScreen = pendingScreen;
+    updatePresentMode();
     gfxSetContentRowOffset(screenScopeRows(currentScreen));
     currentScreen->setup(pendingScreenInput);
     gfxSetBgColor(appSettings.colorScheme.background);
@@ -129,6 +166,7 @@ void screenDraw() {
 
   // The character picker owns the whole canvas.  Live screen updates (for
   // example an instrument waveform during playback) must not paint over it.
+  updatePresentMode();
   if (charEditIsOpen()) return;
 
   currentScreen->draw();
@@ -148,11 +186,12 @@ void screenDraw() {
     if (++audioRestartAnimationFrame >= period * 2) audioRestartAnimationFrame = 0;
     const int offset = audioRestartAnimationFrame / 2;
     char window[41];
-    for (int i = 0; i < 40; ++i) {
+    const int cols = screenVisibleCols();
+    for (int i = 0; i < cols; ++i) {
       const int pos = (offset + i) % period;
       window[i] = pos < textLength ? noticeText[pos] : ' ';
     }
-    window[40] = '\0';
+    window[cols] = '\0';
     gfxSetFgColor(appSettings.colorScheme.textValue);
     gfxClearRect(0, 19, 40, 1);
     gfxPrint(0, 19, window);
@@ -160,8 +199,7 @@ void screenDraw() {
       && currentScreen != &screenTitle
       ) {
     gfxSetFgColor(appSettings.colorScheme.textDefault);
-    gfxClearRect(0, 19, 40, 1);
-    gfxPrint(0, 19, messageBuffer);
+    drawStatusLine(messageBuffer);
   }
 
   if (messageTimer >= 0) {

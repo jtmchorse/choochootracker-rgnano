@@ -23,5 +23,28 @@ int screenModulationRowAt(int y) {
 }
 
 ScreenOverlayCoordinates::ScreenOverlayCoordinates()
-  : previous_(gfxGetContentRowOffset()) { gfxSetContentRowOffset(0); }
-ScreenOverlayCoordinates::~ScreenOverlayCoordinates() { gfxSetContentRowOffset(previous_); }
+  : previous_(gfxGetContentRowOffset()), previousPx_(gfxGetPixelOffsetX()), previousExtra_(gfxGetRectExtraWidth()) {
+  gfxSetContentRowOffset(0);
+  gfxSetPixelOffsetX(0);
+  gfxSetRectExtraWidth(0);
+}
+ScreenOverlayCoordinates::~ScreenOverlayCoordinates() {
+  gfxSetContentRowOffset(previous_);
+  gfxSetPixelOffsetX(previousPx_);
+  gfxSetRectExtraWidth(previousExtra_);
+}
+
+// Columns the current screen draws into: grid screens are limited to their
+// unsquashed width while presented 1:1, everything else uses the whole canvas.
+int screenVisibleCols(void) {
+  int cols = gfxGetPresentUnsquashedCols();
+  return cols > 0 ? cols : 40;
+}
+
+// Columns presented 1:1 for `screen` (0 = squashed 40 column canvas). A grid
+// screen falls back to the squashed canvas while something wider than its
+// region is drawn over it (character picker, FX picker).
+int screenPresentCols(const AppScreen* screen, int wideOverlayOpen) {
+  int cols = screen ? screen->gridCols : 0;
+  return wideOverlayOpen ? 0 : cols;
+}

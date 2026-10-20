@@ -164,6 +164,19 @@ static int songColX(int col) {
   return 3 + slot * (paged ? SONG_PAGED_PITCH : 3);
 }
 
+// Pixel offset for a track column (extra gap between columns; 0 when paged).
+// Cursor, selection, markers, headers and cells all go through this.
+static int songColOffset(int col) {
+  int paged = songPaged();
+  int slot = trackSlot(col, songPage(), paged);
+  return slot < 0 ? 0 : songColOffsetPx(slot, paged);
+}
+
+struct SongColShift {
+  explicit SongColShift(int col) { gfxSetPixelOffsetX(songColOffset(col)); }
+  ~SongColShift() { gfxSetPixelOffsetX(0); }
+};
+
 // Tracks 1-4 / 5-8 label in the header, plus a marker when a track on the
 // other page is playing (its play marker is not on screen).
 static void drawPageIndicator(void) {
@@ -212,6 +225,7 @@ static void drawField(int col, int row, CellState state) {
   int x = songColX(col);
   if (x < 0) return; // Track is on the other page
 
+  SongColShift shift(col);
   int chain = chipnomadState->project.song[row][col];
   int isHighlighted = chipnomadState->project.songHighlight[row][col];
 
@@ -234,6 +248,7 @@ static void drawColHeader(int col, CellState state) {
   static char digit[2] = "0";
   int x = songColX(col);
   if (x < 0) return;
+  SongColShift shift(col);
   const ColorScheme cs = appSettings.colorScheme;
 
   gfxSetFgColor((state == CellState::focus) ? cs.textDefault : cs.textInfo);
@@ -244,6 +259,7 @@ static void drawColHeader(int col, CellState state) {
 static void drawCursor(int col, int row) {
   int x = songColX(col);
   if (x < 0) return;
+  SongColShift shift(col);
   gfxCursor(x, 3 + row - screen.topRow, 2);
 }
 
@@ -267,7 +283,12 @@ static void drawSelection(int col1, int row1, int col2, int row2) {
   if (y2 < 3) return;
   if (y2 > (3 + 15)) y2 = (3 + 15);
 
+  // The selection starts at col1's shifted x and spans the extra gap pixels of
+  // every column boundary it crosses.
+  SongColShift shift(col1);
+  gfxSetRectExtraWidth(songColOffset(col2) - songColOffset(col1));
   gfxRect(x, y, w, (y2 - y) + 1);
+  gfxSetRectExtraWidth(0);
 }
 
 static void fullRedraw(void) {
@@ -279,6 +300,7 @@ static void draw(void) {
   for (int c = 0; c < chipnomadState->project.tracksCount; c++) {
     int cx = songColX(c);
     if (cx < 0) continue; // Other page
+    SongColShift shift(c);
     gfxClearRect(cx - 1, 3, 1, screenVisibleRows());
     const PlaybackTrackState* track = &chipnomadGetPlaybackStatus(chipnomadState)->tracks[c];
     if (track->songRow != EMPTY_VALUE_16) {
@@ -803,7 +825,8 @@ const AppScreen screenSong = {
   .fullRedraw = fullRedraw,
   .draw = draw,
   .onInput = onInput,
-  .getPlaybackLevel = getPlaybackLevel
+  .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };
 
 LoopRange songScreenGetLoopRange(void) {
