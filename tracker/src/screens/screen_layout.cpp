@@ -48,3 +48,7 @@ int screenPresentCols(const AppScreen* screen, int wideOverlayOpen) {
   int cols = screen ? screen->gridCols : 0;
   return wideOverlayOpen ? 0 : cols;
 }
+
+static int shiftHeld = 0;
+void screenSetShiftHeld(int held) { shiftHeld = held ? 1 : 0; }
+int screenShiftMapActive(void) { return shiftHeld && gfxGetPresentUnsquashedCols() > 0; }

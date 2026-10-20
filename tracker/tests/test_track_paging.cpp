@@ -220,3 +220,43 @@ TEST_CASE_FIXTURE(PagingFixture, "track view migration through settings.txt: onc
   CHECK(appSettings.trackView == TRACK_VIEW_4X2);
 }
 #endif
+
+#ifdef RGNANO_BUILD
+TEST_CASE_FIXTURE(PagingFixture, "shift map overlay: set on Shift down, cleared on up, only on 1:1 screens") {
+  gfxSetPresentUnsquashedCols(GRID_SCREEN_COLS);
+  CHECK_FALSE(screenShiftMapActive());
+  padKey('k', true);
+  CHECK(screenShiftMapActive());
+  padKey('k', false);
+  CHECK_FALSE(screenShiftMapActive());
+  gfxSetPresentUnsquashedCols(0);   // squashed screen already has the sidebar map
+  padKey('k', true);
+  CHECK_FALSE(screenShiftMapActive());
+  padKey('k', false);
+}
+
+TEST_CASE_FIXTURE(PagingFixture, "shift map overlay: Shift chords still dispatch and the overlay stays up") {
+  gfxSetPresentUnsquashedCols(GRID_SCREEN_COLS);
+  mockPageMoves = 0;
+  padKey('k', true);
+  padKey('n', true);
+  CHECK(mockPageMoves == 1);
+  CHECK(screenShiftMapActive());
+  padKey('n', false);
+  CHECK(screenShiftMapActive());   // still held
+  padKey('k', false);
+  CHECK_FALSE(screenShiftMapActive());
+  gfxSetPresentUnsquashedCols(0);
+}
+
+TEST_CASE("shift map overlay: box fits in 240x240 and clear of the default cursor") {
+  CHECK(SHIFT_MAP_X >= 0);
+  CHECK((SHIFT_MAP_X + SHIFT_MAP_W) * 8 == 240);
+  CHECK((SHIFT_MAP_Y + SHIFT_MAP_H) * 8 <= 240);
+  // Default cursor is the top-left cell of the grid (row 0..), far from rows 14-19 x cols 24-29.
+  int cursorCol = 3, cursorRow = 2;
+  bool overlaps = cursorCol >= SHIFT_MAP_X && cursorCol < SHIFT_MAP_X + SHIFT_MAP_W &&
+                  cursorRow >= SHIFT_MAP_Y && cursorRow < SHIFT_MAP_Y + SHIFT_MAP_H;
+  CHECK_FALSE(overlaps);
+}
+#endif

@@ -160,6 +160,8 @@ void screenNotifyAudioRestart(void);
 int screenAudioRestartActive(void);
 void screensInitAll(void);
 void drawScreenMap(void);
+// Shift-held map overlay on unsquashed grid screens (visual only, never consumes keys).
+void screenShiftMapUpdate(void);
 enum ScreenPlaybackLevel screenGetPlaybackLevel(const AppScreen* screen);
 
 // Spreadsheet functions
