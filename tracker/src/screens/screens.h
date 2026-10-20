@@ -57,6 +57,7 @@ struct AppScreen {
   void (*draw)(void);
   int (*onInput)(int isKeyDown, int keys, int tapCount); // Return 1 if handled, 0 if not
   ScreenPlaybackLevel (*getPlaybackLevel)(void); // Return playback level for this screen
+  int gridCols; // 0 = full 40 column canvas (squashed on RG Nano); N = draws N columns, presented 1:1
 };
 
 struct ScreenData {
@@ -237,6 +238,7 @@ inline int fxEditInput(int keys, int taps, uint8_t* fx, uint8_t* last) {
 }
 #endif
 void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable);
+int fxEditIsOpen(void);  // FX picker is up (draws 35 columns, needs the squashed canvas)
 
 // Song screen "4x2" track view: move to the previous (-1) / next (+1) page.
 void songPageMove(int dir);

@@ -643,7 +643,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Play FPS steps through 10/15/20/30 and pers
 TEST_CASE_FIXTURE(StickLiveFixture, "Track view setting toggles between 8 and 4x2 and persists") {
 #ifdef RGNANO_BUILD
   const int row = 8;
-  CHECK(appSettings.trackView == 1);
+  CHECK(appSettings.trackView == 0);
 #else
   const int row = 7;
   CHECK(appSettings.trackView == 0);

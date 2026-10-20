@@ -4,6 +4,7 @@
 #include "common.h"
 #include "corelib_gfx.h"
 #include "screens/screens.h"
+#include "screens/screen_layout.h"
 #include <algorithm>
 #include <cmath>
 
@@ -23,7 +24,7 @@ static Bitmap* sized(Bitmap*& bitmap, int columns, int rows) {
 void scopeDisplayDraw(void) {
   if (!chipnomadState || currentScreen == &screenTitle) return;
   ScreenOverlayCoordinates overlay;
-  if (screenScopeRows(currentScreen) && sized(scope, 40, 2)) {
+  if (screenScopeRows(currentScreen) && sized(scope, screenVisibleCols(), 2)) {
     const float* samples = monitorDisplayMixSamples();
     int w = scope->widthPixels, h = scope->heightPixels;
     float range = 0.25f;

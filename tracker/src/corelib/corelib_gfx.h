@@ -70,6 +70,18 @@ void gfxUpdateScreen(void);
 // Offset page content below persistent UI. Overlays explicitly use zero.
 void gfxSetContentRowOffset(int rows);
 int gfxGetContentRowOffset(void);
+// Pixel x offset added to every cell x (text, cursor, rects). Lets a screen
+// space columns by a few pixels without changing the cell grid. Default 0.
+void gfxSetPixelOffsetX(int px);
+int gfxGetPixelOffsetX(void);
+// Extra pixel width added to the next gfxRect calls (selection across shifted
+// columns). Default 0; sticky until reset.
+void gfxSetRectExtraWidth(int px);
+int gfxGetRectExtraWidth(void);
+// Present mode: nonzero = the left `cols` cells are shown 1:1 (RG Nano, no 4:3
+// squash); 0 = the whole canvas, squashed. Read by the platform presenter.
+void gfxSetPresentUnsquashedCols(int cols);
+int gfxGetPresentUnsquashedCols(void);
 
 // All following functions take coordinates in characters, assuming a 40x20 screen
 

@@ -628,7 +628,11 @@ int drawFXList(int visibleGroupIdx, int y) {
   return y + rows;
 }
 
+static int fxPickerOpen;
+int fxEditIsOpen(void) { return fxPickerOpen; }
+
 void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable) {
+  fxPickerOpen = 1;
   gfxClearRect(0, 0, 35, 20);
   // The phrase screen reserves the bottom row for messages.  Do not leave a
   // stale insert hint there: it can overwrite the second row of Fxx entries.
@@ -745,6 +749,7 @@ void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable) {
 
 int fxEditInput(int keys, int tapCount, FXCell* fx, FXCell* lastFX) {
   if (keys == 0) {
+    fxPickerOpen = 0;
     // Selection complete - update the FX value
     FXGroup* group = getVisibleGroup(currentGroup, getCurrentInstrumentType());
     const FXName* item = group ? visibleFXAt(group, currentIdx) : NULL;

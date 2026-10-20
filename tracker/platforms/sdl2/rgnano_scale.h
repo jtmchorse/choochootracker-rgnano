@@ -118,6 +118,13 @@ static inline void squashRow320to240(const uint32_t* src, uint16_t* dst) {
   }
 }
 
+// Unsquashed present: the left 240 source pixels of a 320 wide row map 1:1 to
+// the 240 wide panel (Song, Chain, Phrase). Same RGB565 packing as the squash.
+static inline void copyRow240(const uint32_t* src, uint16_t* dst) {
+  const uint32_t M = 0x00FF00FFu;
+  for (int i = 0; i < 240; i++) dst[i] = pack565(src[i] & M, (src[i] >> 8) & 0xFF);
+}
+
 // True when any word of the two rows differs. No early out: branch-free OR
 // accumulation is faster than a data-dependent exit on an in-order core and the
 // rows are only 1280 bytes.

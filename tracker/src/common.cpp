@@ -1,6 +1,7 @@
 #include "common.h"
 #include "corelib/corelib_file.h"
 #include "corelib/corelib_gfx.h"
+#include "track_paging.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -138,11 +139,8 @@ void initDefaultAppSettings(void) {
   appSettings.fxLite = 0;
 #endif
   fxLiteSet(appSettings.fxLite != 0);
-#ifdef RGNANO_BUILD
-  appSettings.trackView = 1;
-#else
-  appSettings.trackView = 0;
-#endif
+  appSettings.trackView = 0;  // TRACK_VIEW_ALL: 8 columns; "4x2" stays an option
+  appSettings.trackViewVersion = TRACK_VIEW_SETTINGS_VERSION;
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
     visual.mode = TrackVisualMode::detailed;
@@ -305,6 +303,7 @@ int settingsSave(void) {
   fprintf(file, "playFps: %d\n", appSettings.playFps);
   fprintf(file, "fxLite: %d\n", appSettings.fxLite);
   fprintf(file, "trackView: %d\n", appSettings.trackView);
+  fprintf(file, "trackViewVersion: %d\n", appSettings.trackViewVersion);
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -423,6 +422,7 @@ int settingsLoad(void) {
     return 1;
   }
   bool sawMasterLimiter = false;
+  bool sawTrackViewVersion = false;
 
   while (fgets(lineBuffer, sizeof(lineBuffer), file) != NULL) {
     char* line = lineBuffer;
@@ -500,6 +500,8 @@ int settingsLoad(void) {
       sscanf(line + 9, "%d", &appSettings.playFps);
     } else if (strncmp(line, "fxLite: ", 8) == 0) {
       sscanf(line + 8, "%d", &appSettings.fxLite);
+    } else if (strncmp(line, "trackViewVersion: ", 18) == 0) {
+      sawTrackViewVersion = sscanf(line + 18, "%d", &appSettings.trackViewVersion) == 1;
     } else if (strncmp(line, "trackView: ", 11) == 0) {
       sscanf(line + 11, "%d", &appSettings.trackView);
     } else if (strncmp(line, "stickLiveMode: ", 15) == 0) {
@@ -697,12 +699,17 @@ int settingsLoad(void) {
   // the next save writes masterLimiter so this never runs twice.
   const bool migrated = !sawMasterLimiter && appSettings.mixVolume >= 0.99f;
   if (migrated) appSettings.mixVolume = 0.5f;
-  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
-            migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", (int)(appSettings.mixVolume * 100.0f + .5f),
+  // Round 4.8 made 4x2 the default and wrote trackView 1 with no marker. A
+  // file without trackViewVersion and trackView 1 goes back to 8 columns once;
+  // the next save writes the marker, so a later deliberate 4x2 is kept.
+  const bool trackViewMigrated = trackViewMigrate(&appSettings.trackView, &appSettings.trackViewVersion, sawTrackViewVersion);
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s trackViewMigrated=%s trackView=%d mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d", settingsPath,
+            migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", trackViewMigrated ? "yes" : "no", appSettings.trackView, (int)(appSettings.mixVolume * 100.0f + .5f),
             appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize);
   rgnanoLogLibm();
 #else
   (void)sawMasterLimiter;
+  (void)sawTrackViewVersion;
 #endif
   if (appSettings.audioSampleRate != 32000 && appSettings.audioSampleRate != 48000)
     appSettings.audioSampleRate = kAudioSampleRate;
