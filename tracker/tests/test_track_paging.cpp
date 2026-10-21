@@ -4,6 +4,9 @@
 #include "app_ui_mock.h"
 #include "corelib_file.h"
 #include "track_paging.h"
+#include "screens.h"
+#include "screen_layout.h"
+#include <algorithm>
 #include "corelib_gfx.h"
 #include "../platforms/shared/rgnano_keymap.h"
 
@@ -258,5 +261,54 @@ TEST_CASE("shift map overlay: box fits in 240x240 and clear of the default curso
   bool overlaps = cursorCol >= SHIFT_MAP_X && cursorCol < SHIFT_MAP_X + SHIFT_MAP_W &&
                   cursorRow >= SHIFT_MAP_Y && cursorRow < SHIFT_MAP_Y + SHIFT_MAP_H;
   CHECK_FALSE(overlaps);
+}
+#endif
+
+// TABLE and MODULATION present 1:1 like SONG, CHAIN and PHRASE (gridCols is set in
+// the real screen structs, which the unit-test build replaces with mocks).
+// Instrument and AY wavetable stay squashed (34 columns: 32 step editor / preview).
+// The screens are mocked in the unit-test build, so the layout is checked
+// through the shared column maps (the screens also static_assert them).
+TEST_CASE("grid screens: widest TABLE row fits 30 columns, columns do not overlap") {
+  int right = 0;
+  for (int c = 0; c < TABLE_COLUMNS; ++c) {
+    right = std::max(right, screenTableColumnX(c) + screenTableColumnW(c));
+    if (c > 0) CHECK(screenTableColumnX(c) >= screenTableColumnX(c - 1) + screenTableColumnW(c - 1));
+  }
+  CHECK(right == 30);
+  for (int m = 0; m < 4; ++m) {
+    right = std::max(right, screenTableMarkerX(m) + 1);
+    // marker cell is free: no column covers it
+    for (int c = 0; c < TABLE_COLUMNS; ++c)
+      CHECK((screenTableMarkerX(m) < screenTableColumnX(c) || screenTableMarkerX(m) >= screenTableColumnX(c) + screenTableColumnW(c)));
+  }
+  CHECK(right <= GRID_SCREEN_COLS);
+  CHECK(screenTableColumnX(0) >= 1);   // row number sits in column 0
+}
+
+TEST_CASE("grid screens: widest MODULATION row fits 30 columns") {
+  CHECK(MOD_COL_RIGHT_VAL + MOD_TYPE_W <= GRID_SCREEN_COLS);
+  CHECK(MOD_COL_RIGHT_VAL + MOD_DEST_W_RIGHT <= GRID_SCREEN_COLS);
+  CHECK(MOD_COL_RIGHT_VAL + MOD_VALUE_W <= GRID_SCREEN_COLS);
+  CHECK(MOD_COL_LEFT_VAL + MOD_DEST_W_LEFT <= MOD_COL_RIGHT_X);
+  CHECK(MOD_COL_LEFT_VAL + MOD_TYPE_W + 1 <= MOD_COL_RIGHT_X);
+}
+
+#ifdef RGNANO_BUILD
+// The Shift overlay keys off the presented column count, so any screen with
+// gridCols = 30 (TABLE, MODULATION included) gets it; a screen with an FX
+// picker open is squashed and carries the sidebar map instead.
+TEST_CASE_FIXTURE(PagingFixture, "grid screens: Shift map follows gridCols for converted screens") {
+  AppScreen converted = {};
+  converted.gridCols = GRID_SCREEN_COLS;
+  gfxSetPresentUnsquashedCols(screenPresentCols(&converted, 0));
+  padKey('k', true);
+  CHECK(screenShiftMapActive());
+  padKey('k', false);
+  gfxSetPresentUnsquashedCols(screenPresentCols(&converted, 1));   // picker open
+  padKey('k', true);
+  CHECK_FALSE(screenShiftMapActive());
+  padKey('k', false);
+  gfxSetPresentUnsquashedCols(0);
 }
 #endif

@@ -491,7 +491,7 @@ static int screenTouchCellAt(int col, int row, int* targetCol, int* targetRow) {
   if (currentScreen == &screenModulation) {
     int field = screenModulationRowAt(row);
     if (field < 0 || col < 0 || col >= 33) return 0;
-    int column = col < 17 ? 0 : 1;
+    int column = col < 16 ? 0 : 1;
     if (touchScreenData->isCellValid && !touchScreenData->isCellValid(column, field)) return 0;
     if (targetCol) *targetCol = column;
     if (targetRow) *targetRow = field;
