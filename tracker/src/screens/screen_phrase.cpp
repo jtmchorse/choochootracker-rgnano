@@ -1,3 +1,4 @@
+#include "piano_roll.h"
 #include "track_paging.h"
 #include "screens.h"
 #include "common.h"
@@ -130,9 +131,17 @@ static int getColumnCount(int row) {
   return 9;
 }
 
+// Note under the cursor when it is on a note cell, else -1 (no highlight).
+static int pianoRollCursorNote(void) {
+  if (screen.cursorCol != 0 || screen.cursorRow < 0 || screen.cursorRow >= 16) return -1;
+  uint8_t n = phraseRows[screen.cursorRow].note;
+  return n < NOTE_OFF ? n : -1;
+}
+
 static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
   gfxPrintf(0, 0, "PHRASE %03X%c", phraseIdx, isPhraseUsedElsewhere(&chipnomadState->project, phraseIdx, chipnomadState->project.song[*pSongRow][*pSongTrack], *pChainRow) ? '*' : ' ');
+  pianoRollDraw(pianoRollCursorNote(), 1);
 }
 
 static void fullRedraw(void) {
@@ -252,6 +261,7 @@ static void selectionUpdateHint(void) {
 
 static void draw(void) {
   if (isFxEdit) return;
+  pianoRollDraw(pianoRollCursorNote(), 0);
 
   // Rotating combo hints while a selection is active: only when no other
   // message (action feedback, error) is showing. The selectMode 1->0
