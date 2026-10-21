@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "../../chipnomad_lib/playback_modulation.h"
 #include "../../chipnomad_lib/playback.h"
+#include "../../chipnomad_lib/playback_instruments.h"
 #include <initializer_list>
 #include <string.h>
 #include <stdio.h>
@@ -1618,5 +1619,60 @@ TEST_CASE("syncLFO retains its legacy multiplied period") {
 }
 
 // Tests are run automatically by doctest
+
+// Hash every tick of an additive LFO (bit-identical regression for shapes the
+// syncLFO volume fix must not touch). FNV-1a over outValue and the volume
+// offset the engine derives from it.
+static uint32_t lfoStreamHash(ModulationType type, LFOShape shape, int amount, int p3, int p4, int ticks) {
+  Modulation mod = {};
+  mod.type = type; mod.destination = 1; mod.amount = (int8_t)amount;
+  mod.p1 = (uint8_t)shape; mod.p2 = (uint8_t)LFOTrigger::free; mod.p3 = (uint8_t)p3; mod.p4 = (uint8_t)p4;
+  PlaybackModState st;
+  playbackModInit(&st, &mod);
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < ticks; i++) {
+    playbackModNext(&st);
+    int16_t off = 0; uint8_t vol = 15;
+    playbackApplyVolumeModulation(&st, &off, &vol, 15);
+    uint32_t v[3] = {(uint32_t)(uint16_t)st.outValue, (uint32_t)(uint16_t)off, vol};
+    for (uint32_t x : v) { h ^= x; h *= 16777619u; }
+  }
+  return h;
+}
+
+TEST_CASE("LFO sine and triangle streams stay bit-identical") {
+  CHECK(lfoStreamHash(ModulationType::LFO, LFOShape::sin, 127, 200, 0, 600) == 0x6400f2f9u);
+  CHECK(lfoStreamHash(ModulationType::LFO, LFOShape::tri, 100, 37, 0, 600) == 0x464a0ed8u);
+  CHECK(lfoStreamHash(ModulationType::SlowLFO, LFOShape::sin, 90, 40, 0, 600) == 0x07b46102u);
+}
+
+// Tick at which a syncLFO ramp-up on AY volume first reaches 14 of the AY maximum 15.
+static int syncRampTicksToFull(int ticks, int mult) {
+  Modulation mod = {};
+  mod.type = ModulationType::SLFO; mod.destination = 1; mod.amount = 127;
+  mod.p1 = (uint8_t)LFOShape::rampUp; mod.p2 = (uint8_t)LFOTrigger::hold; mod.p3 = (uint8_t)ticks; mod.p4 = (uint8_t)mult;
+  PlaybackModState st;
+  playbackModInit(&st, &mod);
+  int period = ticks * (mult ? mult : 1), first = -1, prev = 0;
+  for (int i = 0; i < period + 4; i++) {
+    playbackModNext(&st);
+    int16_t off = 0; uint8_t vol = 0;
+    playbackApplyVolumeModulation(&st, &off, &vol, 15);
+    CHECK(vol >= prev);
+    prev = vol;
+    if (vol >= 14 && first < 0) first = i;
+  }
+  return first;
+}
+
+TEST_CASE("syncLFO ramp up on AY volume spans the whole period") {
+  // Before the fix the ramp was scaled by 127 and clamped at 15, so it
+  // saturated after about 12 percent of the period and then held.
+  int shortRamp = syncRampTicksToFull(24, 1);
+  int longRamp = syncRampTicksToFull(24, 8);
+  CHECK(shortRamp >= 24 * 9 / 10 - 2);
+  CHECK(longRamp >= 192 * 9 / 10 - 2);
+  CHECK(longRamp > shortRamp * 6);
+}
 
 } // TEST_SUITE("modulation")

@@ -14,8 +14,10 @@ int16_t playbackApplyVolumeEnvelope(PlaybackModState* mod, int maxVolume, int* s
     return -1;
   }
 
-  // Volume modulation scale uses absolute volume values, hence the range is 127
-  int16_t scaledVolume = playbackModScaleToRange(mod->outValue, 127);
+  // Volume modulation scale uses absolute volume values, hence the range is 127.
+  // syncLFO replaces the volume like an envelope, so it must span the engine's own
+  // range: scaling by 127 and clamping to 15 saturated an AY ramp after ~12% of its period.
+  int16_t scaledVolume = playbackModScaleToRange(mod->outValue, mod->modulation->type == ModulationType::SLFO ? maxVolume : 127);
 
   uint8_t volume;
   if (scaledVolume < 0) {

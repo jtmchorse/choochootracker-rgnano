@@ -98,7 +98,37 @@ static int makeStandin(const char* out) {
   return rc;
 }
 
+// LFO ramp probe: one sustained note, volume LFO (slot 1) on the chosen engine.
+//   master_measure --make-lfo out.cct <period> <shape> <trigger> <braids|ay>
+static int makeLfo(const char* out, int period, int shape, int trigger, const char* eng, ModulationType mt = ModulationType::LFO, int mult = 0) {
+  Project* p = (Project*)malloc(sizeof(Project));
+  projectInitAY(p);
+  p->chipsCount = 8;
+  p->tracksCount = 8;
+  bool ay = !strcmp(eng, "ay");
+  setupTrack(p, 0, ay ? InstrumentType::AY1 : InstrumentType::Braids, "lfo");
+  setNote(p, 0, 0, 48);
+  p->phrases[0].rows[0].volume = (mt == ModulationType::SLFO) ? 0x7F : 0;
+  p->chains[0].rows[0].phrase = 0;
+  for (int r = 1; r < 8; ++r) p->chains[0].rows[r].phrase = 1;
+  phraseClear(&p->phrases[1]);
+  Modulation* m = &p->instruments[0].modulation[1];
+  m->type = mt;
+  m->destination = 1;
+  m->amount = 127;
+  m->p1 = (uint8_t)shape; m->p2 = (uint8_t)trigger; m->p3 = (uint8_t)period; m->p4 = (uint8_t)mult; m->p5 = 0;
+  p->trackVolume[0] = 100;
+  int rc = projectSave(p, out);
+  if (rc) fprintf(stderr, "save failed: %s\n", projectFileError);
+  free(p);
+  return rc;
+}
+
 int main(int argc, char** argv) {
+  if (argc >= 7 && !strcmp(argv[1], "--make-lfo")) {
+    ModulationType mt = argc > 7 && !strcmp(argv[7], "sync") ? ModulationType::SLFO : argc > 7 && !strcmp(argv[7], "slow") ? ModulationType::SlowLFO : ModulationType::LFO;
+    return makeLfo(argv[2], atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), argv[6], mt, argc > 8 ? atoi(argv[8]) : 0);
+  }
   if (argc == 3 && !strcmp(argv[1], "--make-standin")) return makeStandin(argv[2]);
   if (argc < 5) { fprintf(stderr, "usage: %s project rate seconds limiter [out.wav] [mixVolume%%]\n", argv[0]); return 2; }
   const char* path = argv[1];
