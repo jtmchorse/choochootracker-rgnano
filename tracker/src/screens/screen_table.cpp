@@ -1,3 +1,5 @@
+#include "track_paging.h"
+#include "screen_layout.h"
 #include "screens.h"
 #include "common.h"
 #include "corelib_gfx.h"
@@ -36,7 +38,10 @@ static void drawCursor(int col, int row);
 static void drawSelection(int col1, int row1, int col2, int row2);
 static int onEdit(int col, int row, CellEditAction action);
 
-static int columnX[] = {3, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34};
+// 30 columns, presented 1:1: see screen_layout.h for the column map.
+#define columnX(col) screenTableColumnX(col)
+#define columnW(col) screenTableColumnW(col)
+#define markerX(m) screenTableMarkerX(m)
 
 static const char *retriggerModeName(TableRetriggerMode mode) {
   switch (mode) {
@@ -119,7 +124,7 @@ static void drawField(int col, int row, CellState state) {
     return;
   }
   row--;
-  int x = columnX[col];
+  int x = columnX(col);
   int y = 3 + row - tableTopRow();
 
   if (col == 0) {
@@ -156,7 +161,7 @@ static void drawRowHeader(int row, CellState state) {
   if (row == 0) return;
   const ColorScheme cs = appSettings.colorScheme;
   gfxSetFgColor((state == CellState::focus) ? cs.textDefault : cs.textInfo);
-  gfxPrintf(1, 2 + row - tableTopRow(), "%X", row - 1);
+  gfxPrintf(0, 2 + row - tableTopRow(), "%X", row - 1);
 }
 
 static void drawColHeader(int col, CellState state) {
@@ -165,26 +170,26 @@ static void drawColHeader(int col, CellState state) {
   switch (col) {
     case 0:
     case 1:
-      gfxPrint(3, 2, "P");
+      gfxPrint(1, 2, "P");
       break;
     case 2:
-      gfxPrint(7, 2, "V");
+      gfxPrint(4, 2, "V");
       break;
     case 3:
     case 4:
-      gfxPrint(10, 2, "FX1");
+      gfxPrint(7, 2, "FX1");
       break;
     case 5:
     case 6:
-      gfxPrint(16, 2, "FX2");
+      gfxPrint(13, 2, "FX2");
       break;
     case 7:
     case 8:
-      gfxPrint(22, 2, "FX3");
+      gfxPrint(19, 2, "FX3");
       break;
     case 9:
     case 10:
-      gfxPrint(28, 2, "FX4");
+      gfxPrint(25, 2, "FX4");
       break;
   }
 }
@@ -197,7 +202,7 @@ static void drawCursor(int col, int row) {
   }
   row--;
   int width = 2;
-  int x = columnX[col];
+  int x = columnX(col);
 
   if (col == 0) {
     // Pitch flag
@@ -212,11 +217,10 @@ static void drawCursor(int col, int row) {
 
 static void drawSelection(int col1, int row1, int col2, int row2) {
   if (row1 == 0 || row2 == 0) return;
-  int x = columnX[col1];
-  int w = columnX[col2 + 1] - x - 1;
+  int x = columnX(col1);
+  int w = columnX(col2) + columnW(col2) - x;
   int y = 2 + row1 - tableTopRow();
   int h = row2 - row1 + 1;
-  if (col2 == 0 || col2 == 3 || col2 == 5 || col2 == 7  || col2 == 9) w++;
   gfxRect(x, y, w, h);
 }
 
@@ -227,11 +231,7 @@ static void fullRedraw(void) {
 static void draw(void) {
   if (isFxEdit) return;
 
-  gfxClearRect(2, 3, 1, screenVisibleRows());
-  gfxClearRect(9, 3, 1, screenVisibleRows());
-  gfxClearRect(15, 3, 1, screenVisibleRows());
-  gfxClearRect(21, 3, 1, screenVisibleRows());
-  gfxClearRect(27, 3, 1, screenVisibleRows());
+  for (int m = 0; m < 4; ++m) gfxClearRect(markerX(m), 3, 1, screenVisibleRows());
 
   const PlaybackTrackState* track = &chipnomadGetPlaybackStatus(chipnomadState)->tracks[*pSongTrack];
   const PlaybackTableState* pTable = NULL;
@@ -246,20 +246,11 @@ static void draw(void) {
   }
   if (pTable != NULL) {
     gfxSetFgColor(appSettings.colorScheme.playMarkers);
-    int row = pTable->rows[0];
-    if (row >= tableTopRow() && row < tableTopRow() + tableVisibleRows()) {
-      gfxPrint(2, 3 + row - tableTopRow(), ">");
-      gfxPrint(9, 3 + row - tableTopRow(), ">");
+    for (int m = 0; m < 4; ++m) {
+      int row = pTable->rows[m];
+      if (row >= tableTopRow() && row < tableTopRow() + tableVisibleRows())
+        gfxPrint(markerX(m), 3 + row - tableTopRow(), ">");
     }
-    row = pTable->rows[1];
-    if (row >= tableTopRow() && row < tableTopRow() + tableVisibleRows())
-      gfxPrint(15, 3 + row - tableTopRow(), ">");
-    row = pTable->rows[2];
-    if (row >= tableTopRow() && row < tableTopRow() + tableVisibleRows())
-      gfxPrint(21, 3 + row - tableTopRow(), ">");
-    row = pTable->rows[3];
-    if (row >= tableTopRow() && row < tableTopRow() + tableVisibleRows())
-      gfxPrint(27, 3 + row - tableTopRow(), ">");
   }
 
   screenDrawOverlays(&screen);
@@ -474,5 +465,6 @@ const AppScreen screenTable = {
   .fullRedraw = fullRedraw,
   .draw = draw,
   .onInput = onInput,
-  .getPlaybackLevel = getPlaybackLevel
+  .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };

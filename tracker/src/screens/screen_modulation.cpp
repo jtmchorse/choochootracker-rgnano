@@ -1,3 +1,5 @@
+#include "track_paging.h"
+#include "screen_layout.h"
 #include "screens.h"
 #include "common.h"
 #include "corelib_gfx.h"
@@ -13,10 +15,18 @@
 // 2..9 and 11..18 leave a gap between blocks and keep the message footer free.
 // Column 0 edits Mod1/Mod2; column 1 edits Mod3/Mod4.
 
-#define COL_LEFT_X    0
-#define COL_LEFT_VAL  7
-#define COL_RIGHT_X   17
-#define COL_RIGHT_VAL 24
+#define COL_LEFT_X    MOD_COL_LEFT_X
+#define COL_LEFT_VAL  MOD_COL_LEFT_VAL
+#define COL_RIGHT_X   MOD_COL_RIGHT_X
+#define COL_RIGHT_VAL MOD_COL_RIGHT_VAL
+// 30 columns presented 1:1. Longer destination names are cut in the cell and
+// the full name goes to the status line.
+#define DEST_W_LEFT   MOD_DEST_W_LEFT
+#define DEST_W_RIGHT  MOD_DEST_W_RIGHT
+static_assert(MOD_COL_RIGHT_VAL + MOD_TYPE_W <= GRID_SCREEN_COLS, "MODULATION right block must fit the 1:1 grid");
+static_assert(MOD_COL_RIGHT_VAL + MOD_DEST_W_RIGHT <= GRID_SCREEN_COLS, "MODULATION destination must fit the 1:1 grid");
+static_assert(MOD_COL_RIGHT_VAL + MOD_VALUE_W <= GRID_SCREEN_COLS, "MODULATION values must fit the 1:1 grid");
+static_assert(MOD_COL_LEFT_VAL + MOD_DEST_W_LEFT <= MOD_COL_RIGHT_X, "left destination must not reach the right block");
 
 #define ROW_TOTAL 16
 #define ROWS_PER_MOD 8
@@ -402,7 +412,20 @@ static void drawStatic(void) {
   }
 }
 
-static void hint(const Modulation* mod, int modRow) {
+static int destWidth(int col) { return col == 0 ? DEST_W_LEFT : DEST_W_RIGHT; }
+
+// Destination name clipped to its cell.
+static const char* destCellName(const char* name, int col) {
+  static char buf[16];
+  snprintf(buf, sizeof(buf), "%.*s", destWidth(col), name ? name : "");
+  return buf;
+}
+
+static void hint(const Modulation* mod, int modRow, int col = 0) {
+  if (modRow == 1) {
+    const char* full = instrumentModDestinationName(chipnomadState->project.instruments[cInstrument].type, mod->destination);
+    if (full && (int)strlen(full) > destWidth(col)) screenMessage(0, "Dest: %s", full);
+  }
   if (mod->type != ModulationType::Sequence ||
       mod->p1 != static_cast<uint8_t>(SequenceSource::tranceGate)) return;
   static const char* rateNames[] = {"1/2", "1/2T", "1/2.", "1/4", "1/4T", "1/4.",
@@ -432,14 +455,14 @@ static void drawCursor(int col, int row) {
   int modRow = getModRow(row);
   int modIdx = getModIndex(col, row);
   Modulation* mod = &chipnomadState->project.instruments[cInstrument].modulation[modIdx];
-  hint(mod, modRow);
+  hint(mod, modRow, col);
 
   switch (modRow) {
     case 0: gfxCursor(valX, y, strlen(mod->type == ModulationType::Sequence &&
                                       mod->p1 == static_cast<uint8_t>(SequenceSource::tranceGate) ? "TGATE" : modTypeName(mod->type))); break;
     case 1: {
       Instrument* inst = &chipnomadState->project.instruments[cInstrument];
-      gfxCursor(valX, y, strlen(instrumentModDestinationName(inst->type, mod->destination)));
+      gfxCursor(valX, y, strlen(destCellName(instrumentModDestinationName(inst->type, mod->destination), col)));
       break;
     }
     case 2: gfxCursor(valX, y, 2); break; // Amt
@@ -472,15 +495,15 @@ static void drawField(int col, int row, CellState state) {
 
   switch (modRow) {
     case 0: // Type (on header row)
-      gfxClearRect(valX, y, 8, 1);
+      gfxClearRect(valX, y, MOD_TYPE_W + (col == 0), 1);
       gfxPrint(valX, y, mod->type == ModulationType::Sequence &&
                          mod->p1 == static_cast<uint8_t>(SequenceSource::tranceGate) ? "TGATE" : modTypeName(mod->type));
       break;
     case 1: // Destination
-      gfxClearRect(valX, y, 8, 1);
+      gfxClearRect(valX, y, destWidth(col), 1);
       {
         Instrument* inst = &chipnomadState->project.instruments[cInstrument];
-        gfxPrint(valX, y, instrumentModDestinationName(inst->type, mod->destination));
+        gfxPrint(valX, y, destCellName(instrumentModDestinationName(inst->type, mod->destination), col));
       }
       break;
     case 2: // Amount
@@ -763,5 +786,6 @@ const AppScreen screenModulation = {
   .fullRedraw = fullRedraw,
   .draw = draw,
   .onInput = onInput,
-  .getPlaybackLevel = getPlaybackLevel
+  .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };

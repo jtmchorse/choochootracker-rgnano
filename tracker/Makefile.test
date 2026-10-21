@@ -93,6 +93,7 @@ TRACKER_SRC_SOURCES = src/screens/instrument_monk.cpp src/soundbank_library.cpp 
                       src/meter_display.cpp \
                       src/monitor_display.cpp \
                       src/piano_display.cpp \
+                      src/piano_roll.cpp \
                       src/screens/screen_settings.cpp \
                       src/screens/screen_settings_submenus.cpp \
                       src/screens/screen_midi.cpp \

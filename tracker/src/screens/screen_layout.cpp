@@ -11,6 +11,13 @@ int screenVisibleRows(void) {
   return currentScreen == &screenModulation ? 16 : 16 - screenScopeRows(currentScreen);
 }
 
+static const int tableColumnX[TABLE_COLUMNS] = {1, 2, 4, 7, 10, 13, 16, 19, 22, 25, 28};
+static const int tableColumnW[TABLE_COLUMNS] = {1, 2, 2, 3, 2, 3, 2, 3, 2, 3, 2};
+static const int tableMarkerX[4] = {6, 12, 18, 24};
+int screenTableColumnX(int col) { return tableColumnX[col]; }
+int screenTableColumnW(int col) { return tableColumnW[col]; }
+int screenTableMarkerX(int marker) { return tableMarkerX[marker]; }
+
 int screenModulationRowY(int row) {
   if (row < 0 || row >= 16) return -1;
   return row < 8 ? row + 2 : row + 3;
