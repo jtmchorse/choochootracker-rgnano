@@ -1,3 +1,4 @@
+#include "alsa_capture.h"
 #include "common.h"
 #include "corelib/corelib_file.h"
 #include "corelib/corelib_gfx.h"
@@ -366,10 +367,10 @@ int settingsSave(void) {
   // reboots/replugging - same policy as MIDI devices).
   fprintf(file, "audioInputDeviceCount: %d\n", appSettings.audioInputDeviceCount);
   for (int i = 0; i < appSettings.audioInputDeviceCount && i < AUDIO_INPUT_MAX_DEVICES; i++)
-    fprintf(file, "audioInputDeviceName.%d: %s\n", i, appSettings.audioInputDeviceNames[i]);
+    fprintf(file, "audioInputDeviceName.%d: %s\n", i, alsaCaptureKey(appSettings.audioInputDeviceNames[i]));
   for (int i = 0; i < AUDIO_INPUT_MAX_ARMED; i++) {
     if (appSettings.audioInputArmed[i] >= 0 && appSettings.audioInputArmed[i] < appSettings.audioInputDeviceCount)
-      fprintf(file, "audioInputArmed.%d: %s\n", i, appSettings.audioInputDeviceNames[appSettings.audioInputArmed[i]]);
+      fprintf(file, "audioInputArmed.%d: %s\n", i, alsaCaptureKey(appSettings.audioInputDeviceNames[appSettings.audioInputArmed[i]]));
   }
   fprintf(file, "audioInputMonitor: %d\n", appSettings.audioInputMonitor);
   fprintf(file, "recordingPath: %s\n", appSettings.recordingPath);

@@ -1,3 +1,4 @@
+#include <time.h>
 #include "soundbank_library.h"
 #include <string.h>
 #include <stdlib.h>
@@ -800,7 +801,41 @@ void appDraw(void) {
 // audio handler: stop any active capture recording, drop armed inputs, close
 // and re-enumerate capture, then reopen the output device. The helper box
 // shows an animated notice while the restart runs.
+#ifdef RGNANO_BUILD
+// RG Nano: the capture device vanished (or the armed input is gone after a
+// rescan). The platform has already closed ONLY the capture device; drop the
+// armed slots, tell the user, and leave playback running. See alsa_capture.h
+// for why the audio subsystem must never be re-initialised here.
+static void handleInputLost(void) {
+  audioInputManagerStopRecording();
+  audioInputManager.disarmAll();
+  audioInputManager.enumerate();
+  syncArmedDevicesFromSettings();
+  screenMessage(MESSAGE_TIME_ERROR, "Input device lost");
+}
+
+// Cheap /proc/asound poll (about once a second, only while an input is armed)
+// so unplugging the interface is noticed without waiting for an SDL event.
+static void pollInputLoss(void) {
+  if (audioInputManager.armedCount() == 0) return;
+  static struct timespec last;
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  if ((now.tv_sec - last.tv_sec) * 1000 + (now.tv_nsec - last.tv_nsec) / 1000000 < 1000) return;
+  last = now;
+  audioInputRefreshDevices();
+  if (audioInputTakeLost()) handleInputLost();
+}
+#endif
+
 static void handleAudioDeviceRemoved(int isCapture) {
+#ifdef RGNANO_BUILD
+  if (isCapture) {
+    audioInputRefreshDevices();
+    if (audioInputTakeLost() || audioInputManager.armedCount() > 0) handleInputLost();
+    return;
+  }
+#endif
   (void)isCapture; // both capture loss and output loss get the same rebuild
   screenNotifyAudioRestart();
   audioInputManagerStopRecording();
@@ -992,6 +1027,9 @@ void appOnEvent(MainLoopEventData eventData) {
     break;
   case MainLoopEvent::tick: {
     soundbankPoll();
+#ifdef RGNANO_BUILD
+    pollInputLoss();
+#endif
     {
       // Overload governor (live engines): tell the user why an insert went quiet.
       static uint32_t shedSeen = 0;

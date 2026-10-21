@@ -17,5 +17,6 @@ int audioInputSetup(AudioCaptureCallback* callback, int sampleRate, int bufferSi
 }
 void audioInputPause(int isPaused) { (void)isPaused; }
 int audioInputRefreshDevices(void) { return 1; }
+int audioInputTakeLost(void) { return 0; }
 
 void audioInputCleanup(void) {}

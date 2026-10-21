@@ -51,6 +51,12 @@ int rgnanoAudioAttach(AudioCallback* callback, int sampleRate, int bufferSize);
 void rgnanoAudioPause(int isPaused);
 void rgnanoAudioClose(void);
 
+// USB audio input (corelib_audio.cpp). Probe-guarded: a forked child tries
+// snd_pcm_open(capture) at `rate`, SIGKILLed after 2 s. 1 = usable.
+int rgnanoCaptureProbe(const char* alsaName, int rate, char* detail, int detailSize);
+// astat shows cap=on(<name>) / cap=off. NULL = off. Main thread.
+void rgnanoCaptureStatsName(const char* nameOrNull);
+
 #ifdef __cplusplus
 }
 #endif

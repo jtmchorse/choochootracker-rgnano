@@ -37,6 +37,9 @@ void audioInputCleanup(void);
 // performs SDL_QuitSubSystem/SDL_InitSubSystem(SDL_INIT_AUDIO) when needed).
 // Returns 0 on success.
 int audioInputRefreshDevices(void);
+// RG Nano: 1 once after a refresh found the open capture device gone (the
+// platform already closed it; playback is untouched). 0 everywhere else.
+int audioInputTakeLost(void);
 
 
 #ifdef __cplusplus
