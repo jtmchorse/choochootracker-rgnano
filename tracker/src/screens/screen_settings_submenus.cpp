@@ -42,19 +42,20 @@ static void drawAudioCpuLoad(void) {
 }
 
 static void audioStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "AUDIO"); }
-#ifndef RGNANO_BUILD
 static int audioInputArmedCount(void) {
   int count = 0;
   for (int i = 0; i < AUDIO_INPUT_MAX_ARMED; i++)
     if (appSettings.audioInputArmed[i] >= 0) count++;
   return count;
 }
-#endif
 
 static void audioCursor(int, int row) {
   if (row == 0) gfxCursor(23, 2, 6);
   else if (row == 1) gfxCursor(23, 3, appSettings.audioBufferSize >= 1024 ? 4 : 3);
   else if (row == 3) gfxCursor(23, 5, 3); // "OFF"/"ON" value width (Audio Input, or FX lite on RG Nano)
+#ifdef RGNANO_BUILD
+  else if (row == 4) gfxCursor(23, 6, 3); // Audio Input (row 3 is FX lite on RG Nano)
+#endif
 }
 static void audioField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
@@ -67,14 +68,19 @@ static void audioField(int, int row, CellState state) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxClearRect(23, 3, 4, 1);
     gfxPrintf(23, 3, "%d", appSettings.audioBufferSize);
-  } else if (row == 3) {
 #ifdef RGNANO_BUILD
-    // MERGE-REVIEW: RG Nano has no Audio Input row (capture is compiled out);
-    // the slot holds the FX lite toggle instead.
+  } else if (row == 4) {
+    // Audio Input follows FX lite (row 3) on RG Nano: 5 rows in total.
+    gfxSetFgColor(cs.textDefault); gfxPrint(0, 6, "Audio Input");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
+    gfxClearRect(23, 6, 3, 1);
+    gfxPrint(23, 6, audioInputArmedCount() > 0 ? "ON" : "OFF");
+  } else if (row == 3) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 5, "FX lite");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxPrint(23, 5, appSettings.fxLite ? "ON " : "OFF");
 #else
+  } else if (row == 3) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 5, "Audio Input");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
     gfxClearRect(23, 5, 3, 1);
@@ -100,6 +106,11 @@ static int audioEdit(int, int row, CellEditAction action) {
     fxLiteSet(value != 0);
     screenMessage(MESSAGE_TIME, "Beads engine changes on next play");
     if (settingsSave() != 0) screenMessage(MESSAGE_TIME_ERROR, "Could not save FX setting");
+    return 1;
+  }
+  if (row == 4) {
+    if (action != CellEditAction::tap) return 0;
+    screenSetup(&screenAudioInput, 0);
     return 1;
   }
 #else
@@ -140,8 +151,16 @@ static int audioEdit(int, int row, CellEditAction action) {
   if (settingsSave() != 0) screenMessage(MESSAGE_TIME_ERROR, "Could not save audio setting");
   return 1;
 }
+#ifdef RGNANO_BUILD
+static int audioCellValid(int, int row) { return row == 0 || row == 1 || row == 3 || row == 4; }
+#else
 static int audioCellValid(int, int row) { return row == 0 || row == 1 || row == 3; }
+#endif
+#ifdef RGNANO_BUILD
+static ScreenData audioData = {5, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, audioStatic, audioCursor, NULL, noHeader, noHeader, audioField, audioEdit, NULL, NULL, audioCellValid, NULL};
+#else
 static ScreenData audioData = {4, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, audioStatic, audioCursor, NULL, noHeader, noHeader, audioField, audioEdit, NULL, NULL, audioCellValid, NULL};
+#endif
 
 static void controlsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "CONTROLS"); }
 #ifdef TOUCH_INPUT

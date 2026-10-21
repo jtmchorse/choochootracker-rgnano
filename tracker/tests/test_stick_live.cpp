@@ -385,7 +385,11 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   mockAudioCpuLoad = 37;
   screenAudioSettings.fullRedraw();
   screen = mockScreenData;
+#ifdef RGNANO_BUILD
+  CHECK(screen->rows == 5);  // rate, buffer, CPU, FX lite, Audio Input
+#else
   CHECK(screen->rows == 4);
+#endif
   screen->drawField(0, 0, CellState::focus);
   CHECK(std::string(mockGfxCells[2], 11) == "Sample rate");
   CHECK(std::string(mockGfxCells[2] + 23, 6) == "48 kHz");
@@ -414,6 +418,10 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   CHECK(std::string(mockGfxCells[5], 7) == "FX lite");
   CHECK(screen->isCellValid(0, 3));
   CHECK(screen->isCellValid(0, 0));  // sample rate row is reachable (upstream behaviour)
+  screen->drawField(0, 4, CellState::normal);
+  CHECK(std::string(mockGfxCells[6], 11) == "Audio Input");
+  CHECK(std::string(mockGfxCells[6] + 23, 3) == "OFF");
+  CHECK(screen->isCellValid(0, 4));
 #else
   CHECK(std::string(mockGfxCells[5], 11) == "Audio Input");
   CHECK(std::string(mockGfxCells[5] + 23, 3) == "OFF");
@@ -727,6 +735,20 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Personal visual settings coexist and surviv
   CHECK(appSettings.trackVisuals[1].mode == TrackVisualMode::audio);
 }
 
+#ifdef RGNANO_BUILD
+TEST_CASE_FIXTURE(StickLiveFixture, "RG Nano: capture device removal never restarts playback") {
+  mockAudioRestartResult = 0;
+  mockAudioRestartCalls = 0;
+  mockAudioRestartNotificationFrames = 0;
+  MainLoopEventData event = {};
+  event.type = MainLoopEvent::audioDeviceRemoved;
+  event.data.value = 1; // capture device removed
+  appOnEvent(event);
+  CHECK(mockAudioRestartCalls == 0);
+  CHECK_FALSE(screenAudioRestartActive());
+}
+#endif
+
 TEST_CASE_FIXTURE(StickLiveFixture, "audio device removal restarts the audio handler and shows the notice") {
   // The disconnect path rebuilds everything audio: the output device is
   // reopened through AudioManager::restart, capture is torn down and
@@ -737,7 +759,13 @@ TEST_CASE_FIXTURE(StickLiveFixture, "audio device removal restarts the audio han
 
   MainLoopEventData event = {};
   event.type = MainLoopEvent::audioDeviceRemoved;
+#ifdef RGNANO_BUILD
+  // RG Nano: only an OUTPUT removal rebuilds audio. A capture removal must
+  // leave playback alone (see the next case).
+  event.data.value = 0;
+#else
   event.data.value = 1; // capture device removed
+#endif
   appOnEvent(event);
 
   CHECK(mockAudioRestartCalls == 1);

@@ -9,6 +9,7 @@
 #include "corelib_gfx.h"
 #include "corelib_input.h"
 #include "screens.h"
+#include "alsa_capture.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -162,7 +163,7 @@ void syncArmedDevicesFromSettings(void) {
     for (int live = 0; live < audioInputManager.deviceCount(); ++live) {
       char name[AUDIO_DEVICE_NAME_LENGTH + 1];
       if (audioInputManager.deviceName(live, name, sizeof(name)) == 0 &&
-          strcmp(name, appSettings.audioInputDeviceNames[saved]) == 0) {
+          strcmp(alsaCaptureKey(name), alsaCaptureKey(appSettings.audioInputDeviceNames[saved])) == 0) {
         wanted[wantedCount++] = live;
         break;
       }
@@ -218,11 +219,23 @@ static int onEdit(int col, int row, CellEditAction action) {
       screenFullRedraw(&screenAudioInputData);
       return 1;
     } else if (col == 1) {
+#ifdef RGNANO_BUILD
+      // Refresh: /proc/asound re-scan. The SDL audio subsystem is NOT
+      // restarted on the Nano (it owns the playback device).
+      audioInputRefreshDevices();
+      if (audioInputTakeLost()) {
+        audioInputManagerStopRecording();
+        audioInputManager.disarmAll();
+        screenMessage(MESSAGE_TIME_ERROR, "Input device lost");
+      }
+      audioInputManager.enumerate();
+#else
       // Refresh: restart the SDL audio subsystem for hot-plugged devices.
       audioInputManager.disarmAll();
       audioInputCleanup();
       audioInputRefreshDevices();
       audioInputManager.enumerate();
+#endif
       syncArmedDevicesFromSettings();
       screenFullRedraw(&screenAudioInputData);
       return 1;

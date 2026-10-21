@@ -426,6 +426,88 @@ static bool runProbe(int rate, int period) {
   return false;
 }
 
+
+// ---------------------------------------------------------------------------
+// USB capture probe. Same containment as the playback probe: a forked child
+// does the alsa-lib open at the engine rate; the parent waits 2 s then
+// SIGKILLs and abandons a D-state child. SDL is only touched by the parent,
+// after this returns 1.
+// ---------------------------------------------------------------------------
+static const int kCaptureProbeTimeoutMs = 2000;
+
+static void captureProbeChild(int wfd, const char* name, int rate) {
+  char msg[160];
+  ssize_t ignored;
+  snd_pcm_t* pcm = NULL;
+  int err = snd_pcm_open(&pcm, name, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
+  if (err < 0) {
+    snprintf(msg, sizeof(msg), "open: %s", snd_strerror(err));
+  } else {
+    snd_pcm_hw_params_t* hw;
+    snd_pcm_hw_params_alloca(&hw);
+    unsigned r = (unsigned)rate;
+    if ((err = snd_pcm_hw_params_any(pcm, hw)) < 0 ||
+        (err = snd_pcm_hw_params_set_access(pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0 ||
+        (err = snd_pcm_hw_params_set_format(pcm, hw, SND_PCM_FORMAT_S16_LE)) < 0 ||
+        (err = snd_pcm_hw_params_set_channels(pcm, hw, 2)) < 0 ||
+        (err = snd_pcm_hw_params_set_rate_near(pcm, hw, &r, 0)) < 0 ||
+        (err = snd_pcm_hw_params(pcm, hw)) < 0)
+      snprintf(msg, sizeof(msg), "hw_params: %s", snd_strerror(err));
+    else
+      snprintf(msg, sizeof(msg), "alsa-lib open ok rate=%u", r);
+    snd_pcm_close(pcm);
+  }
+  char out[200];
+  int n = snprintf(out, sizeof(out), "%c%s", err >= 0 ? '+' : '-', msg);
+  ignored = write(wfd, out, (size_t)n);
+  (void)ignored;
+  _exit(err >= 0 ? 0 : 1);
+}
+
+int rgnanoCaptureProbe(const char* alsaName, int rate, char* detail, int detailSize) {
+  auto setDetail = [&](const std::string& s) { snprintf(detail, (size_t)detailSize, "%s", s.c_str()); };
+  int fds[2];
+  if (pipe(fds) != 0) { setDetail("pipe failed"); return 0; }
+  fcntl(fds[0], F_SETFL, O_NONBLOCK);
+  pid_t pid = fork();
+  if (pid < 0) { close(fds[0]); close(fds[1]); setDetail("fork failed"); return 0; }
+  if (pid == 0) {
+    close(fds[0]);
+    captureProbeChild(fds[1], alsaName, rate);
+  }
+  close(fds[1]);
+  long long started = nowUs();
+  int status = 0;
+  bool exited = false;
+  while ((nowUs() - started) / 1000 < kCaptureProbeTimeoutMs) {
+    if (waitpid(pid, &status, WNOHANG) == pid) { exited = true; break; }
+    usleep(5000);
+  }
+  char buf[260];
+  ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+  buf[n > 0 ? n : 0] = 0;
+  close(fds[0]);
+  int ok = 0;
+  if (!exited) {
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, WNOHANG);
+    setDetail("TIMED OUT after 2000 ms, child killed and abandoned");
+  } else if (WIFSIGNALED(status)) {
+    setDetail("child killed by signal " + std::to_string(WTERMSIG(status)));
+  } else if (buf[0] == '+' && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    ok = 1;
+    setDetail(buf + 1);
+  } else {
+    setDetail(buf[0] ? buf + 1 : "child exited without a report");
+  }
+  rgnanoLog("capture: probe '%s' %d Hz -> %s in %lld ms (%s)", alsaName, rate, ok ? "OK" : "FAILED", (nowUs() - started) / 1000, detail);
+  return ok;
+}
+
+static std::string captureStatName;
+void rgnanoCaptureStatsName(const char* nameOrNull) { captureStatName = nameOrNull ? nameOrNull : ""; }
+static std::string capTag(void) { return captureStatName.empty() ? std::string("cap=off") : "cap=on(" + captureStatName + ")"; }
+
 // ---------------------------------------------------------------------------
 // In-process SDL open of the probe winner. SDL 2.30 ALSA (SDL_alsa_audio.c,
 // get_audio_device) opens the PCM named by $AUDIODEV when no device name is
@@ -630,8 +712,8 @@ void rgnanoStatsTick(int playing) {
     startAudio = lastAudio = (long long)audioCpuNs.load() / 1000;
     const int rate = cbRate.load(), frames = cbFrames.load();
     char mixBuf[48]; mixTag(mixBuf, sizeof(mixBuf));
-    rgnanoLog("astat: playback started; rate=%d callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s | %s",
-              audioRate, frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)", mixBuf);
+    rgnanoLog("astat: playback started; rate=%d callback %d frames @ %d Hz = %d us budget (%d ms); audio device %s | %s | %s",
+              audioRate, frames, rate, budgetUs.load(), rate ? frames * 1000 / rate : 0, audioDevice ? "open" : "NONE (software clock)", mixBuf, capTag().c_str());
     return;
   }
   if (!wasPlaying) return;
@@ -654,9 +736,9 @@ void rgnanoStatsTick(int playing) {
     if (span < 1.0) span = 1.0;
     if (aCpu < 0) aCpu = 0;  // audio thread was replaced by a buffer-size reopen
     rgnanoLog("astat %s: rate=%d cb=%u render_us avg=%llu max=%u budget=%d | over50%%=%u over80%%=%u over100%%=%u | late=%u maxgap_us=%u | "
-              "clip=%u peak=%.1fdBFS | limiter %s | %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
+              "clip=%u peak=%.1fdBFS | limiter %s | %s | %s | cpu proc=%.0f%% audio=%.0f%% main=%.0f%% (of 1 core)",
               tag, audioRate, a.calls, a.calls ? (unsigned long long)(a.sumRenderUs / a.calls) : 0ULL, a.maxRenderUs, budget,
-              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf, mixBuf,
+              a.over50, a.over80, a.over100, a.late, a.maxGapUs, a.clipped, dbfs(a.peak), limBuf, mixBuf, capTag().c_str(),
               100.0 * pCpu / span, 100.0 * aCpu / span, 100.0 * mCpu / span);
   };
   char tag[32];

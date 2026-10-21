@@ -101,6 +101,7 @@ TRACKER_SRC_SOURCES = src/screens/instrument_monk.cpp src/soundbank_library.cpp 
                       src/screens/screen_midi_cc.cpp \
                       src/string_utils.cpp \
                       src/audio_input_manager.cpp \
+                      src/alsa_capture.cpp \
                       src/screens/screen_audio_input.cpp \
                       src/common.cpp \
                       src/export_path.cpp \

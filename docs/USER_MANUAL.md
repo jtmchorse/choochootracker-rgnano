@@ -787,6 +787,8 @@ Unsupported WAV formats display an error. Convert unusual files to `PCM8`, `PCM1
 
 Open **Settings → Audio → Audio Input** before recording from a microphone or USB audio interface. The list shows the inputs currently available to the device. If an armed interface is disconnected, capture is interrupted and the audio handler restarts so the app can continue running. If you were recording, press **STOP** to finish the interrupted take. After reconnecting, select **[Refresh]** and check that the intended input is armed before recording again; reconnecting alone does not reliably re-arm it. **[List]** re-reads the current input list without restarting audio.
 
+On the RG Nano, inputs are listed as `card N: name` and remembered by name, so the choice survives the card number changing. Plug the USB hub, DAC and interface in before launching the app. **[Refresh]** re-scans the USB audio devices without restarting audio; if the armed interface has been unplugged, only the input is closed, playback keeps running and the screen shows "Input device lost".
+
 Select an input's **ARM** box to make it available to the Sampler recorder; its small meter shows the incoming level. Arm one interface at a time: this version opens only the first armed interface, even if several boxes are checked. Your selection is remembered by device name, so an unavailable interface stays unarmed rather than being replaced by another input. Press **OPT** to return to Audio settings.
 
 ##### Recording audio input

@@ -13,14 +13,123 @@ int audioSetup(AudioCallback* audioCallback, int sampleRate, int bufferSize) {
 void audioPause(int isPaused) { rgnanoAudioPause(isPaused); }
 void audioCleanup(void) { rgnanoAudioClose(); }
 
-// Audio input capture is compiled out on RG Nano (the Audio Input menu row is
-// hidden): inert stubs keep the shared input manager linking. MERGE-REVIEW.
-int audioInputDeviceCount(void) { return 0; }
-int audioInputDeviceName(int, char*, int) { return 1; }
-int audioInputSetup(AudioCaptureCallback*, int, int, int, int) { return 1; }
-void audioInputPause(int) {}
-void audioInputCleanup(void) {}
-int audioInputRefreshDevices(void) { return 1; }
+// Audio input capture on RG Nano (USB audio interface behind the hub).
+// Differences from the generic SDL path below, all deliberate:
+//  - devices come from a /proc/asound scan (alsa_capture.cpp), identified by
+//    their ALSA name, never by SDL index;
+//  - the open is probe-guarded: a forked child tries snd_pcm_open(capture) at
+//    the engine rate with a 2 s SIGKILL timeout; only on success does this
+//    process open the device through SDL's alsa driver (AUDIODEV=plughw:N,M,
+//    the same way playback does);
+//  - refresh NEVER calls SDL_QuitSubSystem(SDL_INIT_AUDIO): that subsystem also
+//    owns the playback device, so a re-init would kill playback. A vanished
+//    capture device only closes the capture device (see alsaCaptureRefresh).
+#include "alsa_capture.h"
+#include <cstring>
+#include <stdlib.h>
+static SDL_AudioDeviceID captureDevice = 0;
+static bool captureLostPending = false;
+
+static int scanProc(AlsaCaptureCard* out, int maxCards) { return alsaScanCaptureCards("/proc/asound", out, maxCards); }
+static void closeCaptureOnly(void) {
+  if (captureDevice) {
+    SDL_CloseAudioDevice(captureDevice);
+    captureDevice = 0;
+  }
+  rgnanoLog("capture: device closed");
+  rgnanoCaptureStatsName(NULL);
+}
+static const AlsaCaptureOps captureOps = {scanProc, closeCaptureOnly, NULL};
+
+int audioInputDeviceCount(void) {
+  int n = alsaCaptureRescan(captureOps);
+  rgnanoLog("capture: scan found %d capture card(s)", n);
+  return n;
+}
+
+int audioInputDeviceName(int index, char* buffer, int bufferSize) {
+  const AlsaCaptureCard* c = alsaCaptureCard(index);
+  if (!c) return 1;
+  alsaCaptureLabel(*c, buffer, bufferSize);
+  return 0;
+}
+
+static void sdlCaptureCallback(void* userdata, uint8_t* buffer, int bufferBytes) {
+  AudioCaptureCallback* cb = (AudioCaptureCallback*)userdata;
+  cb((const int16_t*)buffer, bufferBytes / (int)sizeof(int16_t) / 2, 2);
+}
+
+int audioInputSetup(AudioCaptureCallback* callback, int sampleRate, int bufferSize, int channels, int deviceIndex) {
+  const AlsaCaptureCard* c = alsaCaptureCard(deviceIndex);
+  if (!c) { rgnanoLog("capture: no capture card at index %d", deviceIndex); return 1; }
+  char alsaName[48];
+  alsaCaptureDeviceName(*c, alsaName, sizeof(alsaName));
+  rgnanoLog("capture: opening card %d '%s' as %s at %d Hz, %d frames", c->card, c->name, alsaName, sampleRate, bufferSize);
+  char detail[160] = "";
+  if (!rgnanoCaptureProbe(alsaName, sampleRate, detail, sizeof(detail))) {
+    rgnanoLog("capture: probe FAILED for %s (%s); SDL open not attempted", alsaName, detail);
+    return 1;
+  }
+  rgnanoLog("capture: probe ok for %s (%s); opening through SDL", alsaName, detail);
+  SDL_AudioSpec want, have;
+  SDL_zero(want);
+  want.freq = sampleRate;
+  want.format = AUDIO_S16;
+  want.channels = (Uint8)channels;
+  want.samples = (Uint16)bufferSize;
+  want.callback = sdlCaptureCallback;
+  want.userdata = (void*)callback;
+  SDL_zero(have);
+  // SDL's alsa driver opens $AUDIODEV when no device name is passed. Playback
+  // owns AUDIODEV, so point it at the capture PCM for this one open and put it
+  // back (both opens run on the UI thread).
+  const char* prev = getenv("AUDIODEV");
+  char saved[128];
+  snprintf(saved, sizeof(saved), "%s", prev ? prev : "");
+  const bool hadPrev = prev != NULL;
+  setenv("AUDIODEV", alsaName, 1);
+  unsetenv("SDL_AUDIO_DEVICE_NAME");
+  captureDevice = SDL_OpenAudioDevice(NULL, SDL_TRUE, &want, &have, 0);
+  if (hadPrev) setenv("AUDIODEV", saved, 1); else unsetenv("AUDIODEV");
+  if (captureDevice == 0) {
+    rgnanoLog("capture: SDL_OpenAudioDevice(capture) failed: %s", SDL_GetError());
+    return 1;
+  }
+  SDL_PauseAudioDevice(captureDevice, 0);
+  alsaCaptureSetOpenName(c->name);
+  rgnanoCaptureStatsName(c->name);
+  rgnanoLog("capture: open OK device=%u freq=%d ch=%d samples=%d", (unsigned)captureDevice, have.freq, have.channels, have.samples);
+  return 0;
+}
+
+int audioInputRefreshDevices(void) {
+  alsaCaptureRefresh(captureOps, false);
+  if (alsaCaptureTakeLost()) {
+    rgnanoLog("capture: armed input device vanished; capture closed, playback untouched");
+    captureLostPending = true;
+  }
+  return 0;
+}
+
+int audioInputTakeLost(void) {
+  bool v = captureLostPending;
+  captureLostPending = false;
+  return v ? 1 : 0;
+}
+
+void audioInputPause(int isPaused) {
+  if (captureDevice) SDL_PauseAudioDevice(captureDevice, isPaused ? 1 : 0);
+}
+
+void audioInputCleanup(void) {
+  alsaCaptureSetOpenName(NULL);
+  if (captureDevice) {
+    SDL_CloseAudioDevice(captureDevice);
+    captureDevice = 0;
+    rgnanoLog("capture: closed");
+  }
+  rgnanoCaptureStatsName(NULL);
+}
 #else
 #include <cstring>
 #ifdef WEB_BUILD
@@ -333,6 +442,8 @@ int audioInputRefreshDevices(void) {
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return 1;
   return 0;
 }
+
+int audioInputTakeLost(void) { return 0; }
 
 void audioInputPause(int isPaused) {
   if (captureDevice) SDL_PauseAudioDevice(captureDevice, isPaused ? 1 : 0);

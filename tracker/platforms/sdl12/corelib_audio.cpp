@@ -62,6 +62,7 @@ void audioInputPause(int isPaused) {
   (void)isPaused;
 }
 
+int audioInputTakeLost(void) { return 0; }
 int audioInputRefreshDevices(void) { return 1; }
 
 void audioInputCleanup(void) {
