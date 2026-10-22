@@ -7,6 +7,20 @@
 #include "corelib/corelib_file.h"
 #include <string.h>
 
+#ifdef RGNANO_BUILD
+// 30 columns: theme name (16) and the Save / Load / Reset buttons start at 13.
+#define CT_NAME_X 13
+#define CT_BTN_SAVE_X 13
+#define CT_BTN_LOAD_X 18
+#define CT_BTN_RESET_X 23
+#else
+#define CT_NAME_X 17
+#define CT_BTN_SAVE_X 17
+#define CT_BTN_LOAD_X 22
+#define CT_BTN_RESET_X 27
+#endif
+static_assert(CT_NAME_X + THEME_NAME_LENGTH <= 30 || CT_NAME_X == 17, "COLOR THEME name must fit 30 columns");
+static_assert(CT_BTN_RESET_X + 5 <= 30 || CT_BTN_RESET_X == 27, "COLOR THEME buttons must fit 30 columns");
 static int colorThemeColumnCount(int row);
 static void colorThemeDrawStatic(void);
 static void colorThemeDrawCursor(int col, int row);
@@ -158,14 +172,14 @@ void colorThemeDrawCursor(int col, int row) {
       gfxCursor(23, row + 2, 2); // B column
     }
   } else if (row == 10) {
-    gfxCursor(17 + col, 17, 1); // Theme name field
+    gfxCursor(CT_NAME_X + col, 17, 1); // Theme name field
   } else if (row == 11) {
     if (col == 0) {
-      gfxCursor(17, 18, 4); // Save
+      gfxCursor(CT_BTN_SAVE_X, 18, 4); // Save
     } else if (col == 1) {
-      gfxCursor(22, 18, 4); // Load
+      gfxCursor(CT_BTN_LOAD_X, 18, 4); // Load
     } else if (col == 2) {
-      gfxCursor(27, 18, 5); // Reset
+      gfxCursor(CT_BTN_RESET_X, 18, 5); // Reset
     }
   }
 }
@@ -209,16 +223,16 @@ void colorThemeDrawField(int col, int row, CellState state) {
     }
   } else if (row == 10) {
     // Theme name field
-    gfxClearRect(17, 17, THEME_NAME_LENGTH, 1);
-    gfxPrintf(17, 17, "%s", appSettings.themeName);
+    gfxClearRect(CT_NAME_X, 17, THEME_NAME_LENGTH, 1);
+    gfxPrintf(CT_NAME_X, 17, "%s", appSettings.themeName);
   } else if (row == 11) {
     // Buttons
     if (col == 0) {
-      gfxPrint(17, 18, "Save");
+      gfxPrint(CT_BTN_SAVE_X, 18, "Save");
     } else if (col == 1) {
-      gfxPrint(22, 18, "Load");
+      gfxPrint(CT_BTN_LOAD_X, 18, "Load");
     } else if (col == 2) {
-      gfxPrint(27, 18, "Reset");
+      gfxPrint(CT_BTN_RESET_X, 18, "Reset");
     }
   }
 }

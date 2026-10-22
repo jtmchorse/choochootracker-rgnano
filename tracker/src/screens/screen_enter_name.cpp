@@ -23,10 +23,10 @@ static int getColumnCount(int row) {
 
 static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
-  gfxPrint(0, 0, title);
+  gfxPrintf(0, 0, "%.30s", title);
 
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  gfxPrint(0, 3, prompt);
+  gfxPrintf(0, 3, "%.30s", prompt);
 }
 
 static void drawCursor(int col, int row) {

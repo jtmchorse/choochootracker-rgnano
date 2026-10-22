@@ -163,14 +163,32 @@ void rebuild() {
 }
 
 int columns(int row) { return row < int(rows.size()) ? std::max<int>(1, rows[row].cells.size()) : 1; }
-int cellX(int col) { return 8 + col * 8; }
 int valueWidth(const Field& f) {
   if (!f.names) return f.max > 15 ? 3 : 2;
   int w = 1;
   for (int i = f.min; i <= f.max; ++i) w = std::max<int>(w, strlen(f.names[i]));
   return w;
 }
-int valueX(const Field& f, int col) { return cellX(col) + (f.tag[0] ? 4 : 0); }
+// Characters the value actually prints: names as is, otherwise 1 or 2 hex digits.
+int printedWidth(const Field& f) { return f.names ? valueWidth(f) : (f.max > 15 ? 2 : 1); }
+#ifdef RGNANO_BUILD
+// 30 columns: labelled cells ("ALG 5") are packed one space apart by their printed
+// width (widest row, Arcade LFO, ends at column 29); operator columns (no tag)
+// use a fixed 5 column pitch so every row lines up under the S1..S4 header.
+bool taggedRow(int row) { return row >= 0 && row < int(rows.size()) && !rows[row].cells.empty() && rows[row].cells[0].tag[0]; }
+int cellLen(const Field& f) { return (f.tag[0] ? 4 : 0) + printedWidth(f); }
+int cellX(int col, int row) {
+  if (!taggedRow(row)) return 8 + col * 5;
+  int x = 8;
+  for (int c = 0; c < col; ++c) x += cellLen(rows[row].cells[c]) + 1;
+  return x;
+}
+int cellSpan(int col, int row) { return taggedRow(row) ? cellLen(rows[row].cells[col]) : 4; }
+#else
+int cellX(int col, int) { return 8 + col * 8; }
+int cellSpan(int, int) { return 8; }
+#endif
+int valueX(const Field& f, int col, int row) { return cellX(col, row) + (f.tag[0] ? 4 : 0); }
 int rowY(int row) { return 3 + row - data.topRow; }
 bool visible(int row) { return row >= data.topRow && row < data.topRow + screenVisibleRows(); }
 
@@ -227,7 +245,7 @@ void drawStatic() {
   gfxSetFgColor(cs.textInfo);
   gfxPrint(12, 0, instrumentTypeName(cur()->type));
   gfxPrint(0, 1, cur()->name);
-  for (size_t i = 0; i < header.size(); ++i) gfxPrint(cellX(i), 2, header[i]);
+  for (size_t i = 0; i < header.size(); ++i) gfxPrint(cellX(int(i), -1), 2, header[i]);
 }
 
 void drawRowHeader(int row, CellState state) {
@@ -241,18 +259,18 @@ void drawField(int col, int row, CellState state) {
   if (!visible(row) || row >= int(rows.size()) || col >= int(rows[row].cells.size())) return;
   const Field& f = rows[row].cells[col];
   int y = rowY(row);
-  gfxClearRect(cellX(col), y, 8, 1);
-  if (f.tag[0]) { gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(cellX(col), y, f.tag); }
+  gfxClearRect(cellX(col, row), y, cellSpan(col, row), 1);
+  if (f.tag[0]) { gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(cellX(col, row), y, f.tag); }
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
   int v = f.get();
-  if (f.names) gfxPrint(valueX(f, col), y, f.names[v]);
-  else gfxPrintf(valueX(f, col), y, f.max > 15 ? "%02X" : "%X", v);
+  if (f.names) gfxPrint(valueX(f, col, row), y, f.names[v]);
+  else gfxPrintf(valueX(f, col, row), y, f.max > 15 ? "%02X" : "%X", v);
 }
 
 void drawCursor(int col, int row) {
   if (!visible(row) || row >= int(rows.size()) || col >= int(rows[row].cells.size())) return;
   const Field& f = rows[row].cells[col];
-  gfxCursor(valueX(f, col), rowY(row), f.names ? valueWidth(f) : (f.max > 15 ? 2 : 1));
+  gfxCursor(valueX(f, col, row), rowY(row), printedWidth(f));
 }
 
 void drawColHeader(int, CellState) {}

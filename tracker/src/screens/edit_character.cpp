@@ -19,6 +19,12 @@ static const char* keyboardRowsLower[] = {
 };
 
 #define NUM_KEYBOARD_ROWS 4
+// Keyboard and hint are centred in the visible width (30 columns on RG Nano).
+#ifdef RGNANO_BUILD
+#define CHAR_PICKER_COLS 30
+#else
+#define CHAR_PICKER_COLS 40
+#endif
 
 static int currentRow = 1;  // Start at the QWERTY row
 static int currentCol = 0;
@@ -191,8 +197,8 @@ void updateCursorPosition() {
   int currRowLen = strlen(currRow_str);
 
   // Calculate x positions (with spacing between characters)
-  int prevXPos = (40 - (prevRowLen * 2 - 1)) / 2 + (prevCol * 2); // Double width for spacing
-  int currXPos = (40 - (currRowLen * 2 - 1)) / 2 + (currentCol * 2); // Double width for spacing
+  int prevXPos = (CHAR_PICKER_COLS - (prevRowLen * 2 - 1)) / 2 + (prevCol * 2); // Double width for spacing
+  int currXPos = (CHAR_PICKER_COLS - (currRowLen * 2 - 1)) / 2 + (currentCol * 2); // Double width for spacing
 
   // Clear previous cursor position and redraw character
   char prevCharStr[2] = {prevRow_str[prevCol], 0};
@@ -253,7 +259,7 @@ void charEditFullDraw(char startChar) {
     int rowLen = strlen(keyRow);
 
     // Center the row (accounting for spaces between characters)
-    int xPos = (40 - (rowLen * 2 - 1)) / 2; // Double width minus 1 for spacing
+    int xPos = (CHAR_PICKER_COLS - (rowLen * 2 - 1)) / 2; // Double width minus 1 for spacing
 
     // Draw each character in the row with spacing
     for (int col = 0; col < rowLen; col++) {
@@ -278,7 +284,7 @@ void charEditFullDraw(char startChar) {
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   const char* hint = isUppercase ? "SHIFT: lowercase" : "SHIFT: uppercase";
   int hintLen = strlen(hint);
-  int hintX = (40 - hintLen) / 2;
+  int hintX = (CHAR_PICKER_COLS - hintLen) / 2;
   gfxPrint(hintX, 18, hint);
 }
 

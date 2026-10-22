@@ -1,6 +1,7 @@
 #include "screen_layout.h"
 #include "screens.h"
 #include "corelib_gfx.h"
+#include "track_paging.h"
 
 int screenScopeRows(const AppScreen* screen) {
   return appSettings.persistentWaveform && screen == &screenSong ? 2 : 0;
@@ -60,8 +61,14 @@ int screenVisibleCols(void) {
 // screen falls back to the squashed canvas while something wider than its
 // region is drawn over it (character picker, FX picker).
 int screenPresentCols(const AppScreen* screen, int wideOverlayOpen) {
+#ifdef RGNANO_BUILD
+  // RG Nano presents every screen and picker 1:1; the squashed canvas is never used.
+  (void)screen; (void)wideOverlayOpen;
+  return GRID_SCREEN_COLS;
+#else
   int cols = screen ? screen->gridCols : 0;
   return wideOverlayOpen ? 0 : cols;
+#endif
 }
 
 static int shiftHeld = 0;

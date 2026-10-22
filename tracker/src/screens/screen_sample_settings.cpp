@@ -33,16 +33,28 @@ static constexpr int undoWidth = 6;
 static constexpr int fileGoX = 19;
 static constexpr int fileGoWidth = 3;
 // Region/Select rows carry two values: "START [] END []"
+#ifdef RGNANO_BUILD
+// RG Nano: 30 columns, so the Region / Select value pairs pack to START 7, value 13,
+// END 20, value 24 (the widest value, 6 characters, ends at column 29).
+static constexpr int markerLabelX = 7;   // "START"
+static constexpr int selValX = 13;
+static constexpr int selValWidth = 6;
+static constexpr int endLabelX = 20;     // "END"
+static constexpr int selEndValX = 24;
+static constexpr int kSettingsCols = 30;
+#else
 static constexpr int markerLabelX = 9;   // "START"
 static constexpr int selValX = 15;
 static constexpr int selValWidth = 6;
 static constexpr int endLabelX = 22;     // "END"
 static constexpr int selEndValX = 26;
+static constexpr int kSettingsCols = 32;
+#endif
 // A blank row separates the preview from the field block; the File row
 // stays above the message line (screen row 19). The two recording rows
 // (Input at y=2, REC at y=3) squeeze the preview to seven rows.
 static constexpr int previewRow = 4;
-static constexpr int previewWidth = 32;
+static constexpr int previewWidth = kSettingsCols;
 static constexpr int previewHeight = 7;
 static constexpr int fieldRow0 = 12;
 // Logical rows 0/1 are the recording rows (y=2/3); the editor field rows
@@ -181,18 +193,30 @@ static int recordInputDrops = -1; // -1 for track bounces
 // square, display-only), MON x=26/30.
 static constexpr int inputValueX = 6;
 static constexpr int inputValueWidth = 8;
+#ifdef RGNANO_BUILD
+static constexpr int inputMeterX = 15;
+static constexpr int inputMeterWidth = 2;
+static constexpr int monLabelX = 19;
+static constexpr int monValueX = 23;     // "[x]" prints 3 characters
+static constexpr int monValueWidth = 2;
+#else
 static constexpr int inputMeterX = 24;
 static constexpr int inputMeterWidth = 2;
 static constexpr int monLabelX = 26;
 static constexpr int monValueX = 30;
 static constexpr int monValueWidth = 2;
+#endif
 // Record row geometry (y=3): button x=0, CLEAR x=7, status x=14.
 static constexpr int recButtonX = 0;
 static constexpr int recButtonWidth = 6;
 static constexpr int clearButtonX = 7;
 static constexpr int clearButtonWidth = 6;
 static constexpr int recStatusX = 14;
-static constexpr int recStatusWidth = 18;
+static constexpr int recStatusWidth = kSettingsCols - 14;
+static_assert(recStatusX + recStatusWidth <= kSettingsCols, "SAMPLE EDIT status must fit");
+#ifdef RGNANO_BUILD
+static_assert(selEndValX + selValWidth <= kSettingsCols && monValueX + 3 <= kSettingsCols && undoX + undoWidth <= kSettingsCols, "SAMPLE EDIT fields must fit");
+#endif
 static void settingsDrawField(int col, int row, CellState state);
 
 static InstrumentSample* recordTargetSample(void) {
@@ -386,7 +410,7 @@ static void recordStartPlaybackIfArmed(void) {
 // completes, the editor's own preview takes over (re-seeded in
 // settingsRecordStop).
 static void recordUpdateWaveform(void) {
-  const int width = 32;
+  const int width = previewWidth;
   const int height = previewHeight;
   if (width != recordWaveformWidth || height != recordWaveformHeight) {
     gfxBitmapFree(recordWaveformBitmap);
@@ -939,13 +963,13 @@ static int settingsColumnCount(int row) {
 static void drawFilenameRow(void) {
   InstrumentSample* sample = currentSample();
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  gfxClearRect(0, 1, 32, 1);
+  gfxClearRect(0, 1, kSettingsCols, 1);
   int nameX = 0;
   if (sampleDirtyToDisk) {
     gfxPrint(0, 1, "*");
     nameX = 1;
   }
-  gfxPrint(nameX, 1, shortSampleFilename(sample->path, 32 - nameX));
+  gfxPrint(nameX, 1, shortSampleFilename(sample->path, kSettingsCols - nameX));
 }
 
 static void settingsDrawStatic(void) {
@@ -2329,7 +2353,7 @@ static void draw(void) {
       gfxSetFgColor(appSettings.colorScheme.textDefault);
       gfxClearRect(recStatusX, 3, recStatusWidth, 1);
       const char* base = strrchr(recordFilePath, PATH_SEPARATOR);
-      gfxPrint(recStatusX, 3, base ? base + 1 : recordFilePath);
+      gfxPrintf(recStatusX, 3, "%.*s", recStatusWidth, base ? base + 1 : recordFilePath);
     }
   } else if (recordState == RecordState::complete) {
     // Status text: frame count once the take is complete.

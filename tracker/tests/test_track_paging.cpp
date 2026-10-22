@@ -96,15 +96,26 @@ TEST_CASE("present mode: a grid screen is unsquashed unless a wide overlay is up
   grid.gridCols = GRID_SCREEN_COLS;
   AppScreen full = {};
   CHECK(screenPresentCols(&grid, 0) == 30);
+#ifdef RGNANO_BUILD
+  // RG Nano never uses the squashed canvas: pickers, overlays and plain screens are all 1:1.
+  CHECK(screenPresentCols(&grid, 1) == 30);
+  CHECK(screenPresentCols(&full, 0) == 30);
+  CHECK(screenPresentCols(nullptr, 0) == 30);
+#else
   CHECK(screenPresentCols(&grid, 1) == 0);   // FX picker / character picker: squashed canvas
   CHECK(screenPresentCols(&full, 0) == 0);   // Table, Instrument, Settings, popups, help
   CHECK(screenPresentCols(nullptr, 0) == 0);
+#endif
   CHECK(GRID_SCREEN_COLS * 8 == 240);        // 30 cells of 8 px fill the panel 1:1
   gfxSetPresentUnsquashedCols(30);
   CHECK(gfxGetPresentUnsquashedCols() == 30);
   CHECK(screenVisibleCols() == 30);
   gfxSetPresentUnsquashedCols(0);
+#ifdef RGNANO_BUILD
+  CHECK(screenVisibleCols() == 30);          // the flag cannot be cleared
+#else
   CHECK(screenVisibleCols() == 40);
+#endif
 }
 
 #ifdef RGNANO_BUILD
@@ -233,9 +244,9 @@ TEST_CASE_FIXTURE(PagingFixture, "shift map overlay: set on Shift down, cleared 
   CHECK(screenShiftMapActive());
   padKey('k', false);
   CHECK_FALSE(screenShiftMapActive());
-  gfxSetPresentUnsquashedCols(0);   // squashed screen already has the sidebar map
+  gfxSetPresentUnsquashedCols(0);   // no squashed canvas on RG Nano: the overlay stays available
   padKey('k', true);
-  CHECK_FALSE(screenShiftMapActive());
+  CHECK(screenShiftMapActive());
   padKey('k', false);
 }
 
@@ -363,7 +374,7 @@ TEST_CASE("grid screens: widest PROJECT row fits 30 columns, buttons do not over
 #ifdef RGNANO_BUILD
 // The Shift overlay keys off the presented column count, so any screen with
 // gridCols = 30 (TABLE, MODULATION included) gets it; a screen with an FX
-// picker open is squashed and carries the sidebar map instead.
+// picker open stays 1:1 on RG Nano too (no squashed canvas, no sidebar map).
 TEST_CASE_FIXTURE(PagingFixture, "grid screens: Shift map follows gridCols for converted screens") {
   AppScreen converted = {};
   converted.gridCols = GRID_SCREEN_COLS;
@@ -371,9 +382,9 @@ TEST_CASE_FIXTURE(PagingFixture, "grid screens: Shift map follows gridCols for c
   padKey('k', true);
   CHECK(screenShiftMapActive());
   padKey('k', false);
-  gfxSetPresentUnsquashedCols(screenPresentCols(&converted, 1));   // picker open
+  gfxSetPresentUnsquashedCols(screenPresentCols(&converted, 1));   // picker open: still 1:1
   padKey('k', true);
-  CHECK_FALSE(screenShiftMapActive());
+  CHECK(screenShiftMapActive());
   padKey('k', false);
   gfxSetPresentUnsquashedCols(0);
 }

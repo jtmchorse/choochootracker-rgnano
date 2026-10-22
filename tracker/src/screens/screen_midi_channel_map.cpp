@@ -8,6 +8,13 @@
 #include "midi/midi_router.h"
 #include <string.h>
 
+#ifdef RGNANO_BUILD
+// 30 columns: "CH 01" then "XX: name" from column 8 (name up to 15 characters).
+#define MCM_VALUE_X 8
+static_assert(MCM_VALUE_X + 22 <= 30, "MIDI CHANNEL MAP value column must fit 30 columns");
+#else
+#define MCM_VALUE_X 23
+#endif
 static int columnCount(int row) {
   return 1;
 }
@@ -18,7 +25,7 @@ static void drawStatic(void) {
 }
 
 static void drawCursor(int col, int row) {
-  gfxCursor(23, 2 + row, 20);
+  gfxCursor(MCM_VALUE_X, 2 + row, 20);
 }
 
 static void drawRowHeader(int row, CellState state) {
@@ -33,12 +40,12 @@ static void drawField(int col, int row, CellState state) {
   gfxPrintf(0, y, "CH %02d", row + 1);
 
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  gfxClearRect(23, y, 24, 1);
+  gfxClearRect(MCM_VALUE_X, y, 22, 1);
   int8_t instrument = appSettings.midiChannelInstrument[row];
   if (instrument < 0) {
-    gfxPrint(23, y, "OFF");
+    gfxPrint(MCM_VALUE_X, y, "OFF");
   } else {
-    gfxPrintf(23, y, "%s: %s", byteToHex((uint8_t)instrument), instrumentName(&chipnomadState->project, (uint8_t)instrument));
+    gfxPrintf(MCM_VALUE_X, y, "%s: %s", byteToHex((uint8_t)instrument), instrumentName(&chipnomadState->project, (uint8_t)instrument));
   }
 }
 

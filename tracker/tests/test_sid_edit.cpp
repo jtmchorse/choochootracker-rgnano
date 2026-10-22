@@ -9,6 +9,14 @@
 #include <string>
 #include <vector>
 
+// Cell positions: 8 columns per cell on the 40 column layout; on RG Nano (30 columns) cells are
+// packed from column 6 by their printed width.
+#ifdef RGNANO_BUILD
+static constexpr int kSidRight = 30, kSidPulseMark = 9, kSidCutMark = 17, kSidTgtValue = 10, kSidFixValue = 10, kSidMulTag = 15;
+#else
+static constexpr int kSidRight = 32, kSidPulseMark = 11, kSidCutMark = 19, kSidTgtValue = 12, kSidFixValue = 12, kSidMulTag = 16;
+#endif
+
 namespace {
 struct Editor {
   ChipNomadState* previous = chipnomadState;
@@ -108,7 +116,7 @@ TEST_CASE("SID editor bounds stay valid and every recipe parameter saves") {
       }
       e.table->drawField(col, row, CellState::focus);
       e.table->drawCursor(col, row);
-      CHECK(mockCursorX + mockCursorWidth <= 32);
+      CHECK(mockCursorX + mockCursorWidth <= kSidRight);
       for (int n = 0; n < 300; ++n) {
         e.table->onEdit(col, row, CellEditAction::decreaseBig);
         REQUIRE(validSID(p));
@@ -142,11 +150,11 @@ TEST_CASE("SID editor cutoff off sentinel and four digit fields render correctly
   CHECK(target == 65535);
   e.patch().value[sidFixedFrequency] = 65535;
   e.draw();
-  CHECK(std::string(mockGfxCells[8] + 12, 3) == "off");
-  CHECK(std::string(mockGfxCells[10] + 12, 4) == "FFFF");
-  CHECK(std::string(mockGfxCells[10] + 16, 3) == "MUL");
+  CHECK(std::string(mockGfxCells[8] + kSidTgtValue, 3) == "off");
+  CHECK(std::string(mockGfxCells[10] + kSidFixValue, 4) == "FFFF");
+  CHECK(std::string(mockGfxCells[10] + kSidMulTag, 3) == "MUL");
   for (int row = 3; row <= 12; ++row)
-    CHECK(std::string(mockGfxCells[row] + 32, 8) == "        ");
+    CHECK(std::string(mockGfxCells[row] + kSidRight, 8) == "        ");
 }
 
 TEST_CASE("SID editor protects program-owned controls while keeping other controls editable") {
@@ -155,8 +163,8 @@ TEST_CASE("SID editor protects program-owned controls while keeping other contro
   REQUIRE(validSID(e.patch()));
   auto before = e.patch();
   e.draw();
-  CHECK(mockGfxCells[6][11] == '*');
-  CHECK(mockGfxCells[3][11] == ' ');
+  CHECK(mockGfxCells[6][kSidPulseMark] == '*');
+  CHECK(mockGfxCells[3][kSidPulseMark] == ' ');
   for (int col = 0; col < 3; ++col) {
     CHECK(e.hint(col, 3) == "Pulse width: imported pulse macro");
     e.table->onEdit(col, 3, CellEditAction::increase);
@@ -211,7 +219,7 @@ TEST_CASE("SID editor FX markers follow matching active tracks without blocking 
   CHECK(e.hint(1, 4) == "Track 2: SCT active; editing preset");
   CHECK(e.hint(2, 4) == "Filter resonance: 0-F");
   e.draw();
-  CHECK(mockGfxCells[7][19] == '*');
+  CHECK(mockGfxCells[7][kSidCutMark] == '*');
   auto before = e.patch();
   e.table->onEdit(1, 4, CellEditAction::increase);
   screenInstrumentOPL.onEdit(0, 7, CellEditAction::increase);
@@ -229,7 +237,7 @@ TEST_CASE("SID editor FX markers follow matching active tracks without blocking 
   status.trackEnabled[1] = 1;
   status.isPlaying = 0;
   CHECK(e.hint(1, 4) == "Filter cutoff: 000-7FF");
-  CHECK(mockGfxCells[7][19] == ' ');
+  CHECK(mockGfxCells[7][kSidCutMark] == ' ');
   e.macro(5, 900);
   CHECK(e.hint(1, 4) == "Cutoff: imported filter macro");
 }

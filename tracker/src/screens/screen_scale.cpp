@@ -6,6 +6,16 @@
 
 static const char* const noteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
+#ifdef RGNANO_BUILD
+// 30 columns: tracks at 0, notes C-F# at 13, G-B at 21 ("C# [x]" is 6 wide).
+#define SCALE_NOTES1_X 13
+#define SCALE_NOTES2_X 21
+#else
+#define SCALE_NOTES1_X 17
+#define SCALE_NOTES2_X 28
+#endif
+static_assert(SCALE_NOTES2_X + 6 <= 30 || SCALE_NOTES2_X == 28, "SCALE second note column must fit 30 columns");
+
 static uint16_t activeMask() {
   Project* p = &chipnomadState->project;
   return p->scalePreset == scaleCustom ? p->scaleCustomMask : scalePresetMask(p->scalePreset);
@@ -30,7 +40,7 @@ static void drawStatic(void) {
   gfxPrint(0, 3, "Root");
   gfxPrint(0, 4, "Scale");
   gfxPrint(0, 6, "Tracks");
-  gfxPrint(17, 6, "Notes");
+  gfxPrint(SCALE_NOTES1_X, 6, "Notes");
 }
 
 static void drawCursor(int col, int row) {
@@ -38,8 +48,8 @@ static void drawCursor(int col, int row) {
   else if (row == 1) gfxCursor(8, 3, 2);
   else if (row == 2) gfxCursor(8, 4, strlen(scalePresetName(chipnomadState->project.scalePreset)));
   else if (col == 0) gfxCursor(8, row + 4, 3);
-  else if (col == 1) gfxCursor(20, row + 4, 3);
-  else gfxCursor(31, row + 4, 3);
+  else if (col == 1) gfxCursor(SCALE_NOTES1_X + 3, row + 4, 3);
+  else gfxCursor(SCALE_NOTES2_X + 3, row + 4, 3);
 }
 
 static void drawField(int col, int row, CellState state) {
@@ -58,7 +68,7 @@ static void drawField(int col, int row, CellState state) {
   } else if (row <= 8) {
     int note = row - 3 + (col == 2 ? 6 : 0);
     uint16_t mask = activeMask();
-    gfxPrintf(col == 1 ? 17 : 28, row + 4, "%2s [%c]", noteNames[note], (mask & (1u << noteBit(note))) ? 'x' : ' ');
+    gfxPrintf(col == 1 ? SCALE_NOTES1_X : SCALE_NOTES2_X, row + 4, "%2s [%c]", noteNames[note], (mask & (1u << noteBit(note))) ? 'x' : ' ');
   }
 }
 

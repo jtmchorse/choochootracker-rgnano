@@ -41,8 +41,10 @@ static int pendingScreenInput;
 
 static void drawScreenMapAt(int x0) {
   ScreenOverlayCoordinates overlay;
+#ifndef RGNANO_BUILD
   // Native preset lists use the popup area through the footer.
   if (currentScreen == &screenSelectionPopup) return;
+#endif
   const static int smY = 15;
 
   const ColorScheme cs = appSettings.colorScheme;
@@ -115,13 +117,15 @@ static int overlayShown = 0;
 
 void drawScreenMap() {
   if (gfxGetPresentUnsquashedCols() > 0) {
-    if (screenShiftMapActive() && currentScreen != &screenSelectionPopup) {
+    if (screenShiftMapActive()) {
       drawScreenMapAt(SHIFT_MAP_X);
       overlayShown = 1;
     }
     return;
   }
+#ifndef RGNANO_BUILD
   drawScreenMapAt(34);
+#endif
 }
 
 // Call after screenSetShiftHeld. Draws on press (same frame), erases on release.
@@ -145,10 +149,15 @@ void screenSetup(const AppScreen* screen, int input) {
   pendingScreenInput = input;
 }
 
-// Grid screens present 1:1 in their own width; anything that draws wider than
-// that over them (character picker, FX picker) forces the squashed canvas.
+// Grid screens present 1:1 in their own width; on other builds anything that draws wider than
+// that over them (character picker, FX picker) forces the squashed canvas. RG Nano never does.
 static void updatePresentMode(void) {
+#ifdef RGNANO_BUILD
+  // Every screen, picker and overlay is 30 columns wide: nothing selects the squashed canvas.
+  gfxSetPresentUnsquashedCols(GRID_SCREEN_COLS);
+#else
   gfxSetPresentUnsquashedCols(screenPresentCols(currentScreen, charEditIsOpen() || fxEditIsOpen()));
+#endif
 }
 
 // One status line of at most `cols` characters; longer text scrolls through

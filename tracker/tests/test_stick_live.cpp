@@ -30,7 +30,11 @@ char indicator() {
   chipnomadState->project.tracksCount = 0;
   appDraw();
   chipnomadState->project.tracksCount = tracks;
+#ifdef RGNANO_BUILD
+  return mockGfxCells[19][29];   // 30 column screen: last cell of the message row
+#else
   return mockGfxCells[19][39];
+#endif
 }
 
 struct StickLiveFixture {
@@ -586,6 +590,12 @@ TEST_CASE_FIXTURE(StickLiveFixture, "MIDI clock mode round-trips through setting
   CHECK(appSettings.clockSource == ClockSource::internal);
 }
 
+#ifdef RGNANO_BUILD
+static constexpr int kChannelMapX = 8;
+#else
+static constexpr int kChannelMapX = 23;
+#endif
+
 TEST_CASE_FIXTURE(StickLiveFixture, "screenMidiChannelMap cycles channel-to-instrument assignment") {
   screenMidiChannelMap.fullRedraw();
   REQUIRE(mockScreenData != nullptr);
@@ -594,13 +604,13 @@ TEST_CASE_FIXTURE(StickLiveFixture, "screenMidiChannelMap cycles channel-to-inst
 
   screen->drawField(0, 0, CellState::focus);
   CHECK(std::string(mockGfxCells[2], 5) == "CH 01");
-  CHECK(std::string(mockGfxCells[2] + 23, 3) == "OFF");
+  CHECK(std::string(mockGfxCells[2] + kChannelMapX, 3) == "OFF");
 
   REQUIRE(screen->onEdit(0, 0, CellEditAction::increase) == 1);
   CHECK(appSettings.midiChannelInstrument[0] == 0);
   screen->drawField(0, 0, CellState::focus);
   std::string expected = std::string(byteToHex(0)) + ": " + instrumentName(&chipnomadState->project, 0);
-  CHECK(std::string(mockGfxCells[2] + 23, expected.size()) == expected);
+  CHECK(std::string(mockGfxCells[2] + kChannelMapX, expected.size()) == expected);
 
   REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
   CHECK(appSettings.midiChannelInstrument[0] == -1); // back to OFF
