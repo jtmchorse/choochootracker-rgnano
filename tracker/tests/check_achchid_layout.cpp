@@ -30,7 +30,7 @@ void gfxPrintf(int x, int y, const char* format, ...) {
   va_end(args);
   gfxPrint(x, y, text);
 }
-void gfxCursor(int x, int, int width) { assert(x + width <= 34); }
+void gfxCursor(int x, int, int width) { assert(x + width <= 30); }
 void instrumentCommonDrawCursor(int, int) { assert(false); }
 void instrumentCommonDrawField(int, int, CellState) { assert(false); }
 const char* modelCatalogName(InstrumentType, int) { return ""; }
@@ -39,9 +39,8 @@ static void checkField(int row, const char* expected) {
   memset(cells, ' ', sizeof(cells));
   for (auto& line : cells) line[40] = '\0';
   drawField(1, row, CellState::focus);
-  // appDraw paints track status after screenDraw, starting at column 34.
-  gfxPrint(34, row + 4, " 5 ---");
-  cells[row + 4][34] = '\0';
+  // The page is presented 1:1 in 30 columns; nothing may be drawn past it.
+  cells[row + 4][30] = '\0';
   if (!strstr(cells[row + 4], expected)) {
     fprintf(stderr, "Expected %s, displayed [%s]\n", expected, cells[row + 4]);
     assert(false);

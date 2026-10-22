@@ -9,6 +9,14 @@
 #include <string.h>
 #include <stdio.h>
 
+// 1:1 grid layout (30 columns): oscillator values at 8, 303 filter labels at 15, values at 23.
+#define ACH_LEFT_VAL 8
+#define ACH_FILTER_X 15
+#define ACH_FILTER_VAL 23
+#define ACH_FILTER_VAL_W 7  // "20000Hz"
+#define ACH_MODEL_W 5       // "NN name" clipped: 8 + 3 + 5 = 16 < ACH_FILTER_X + 1
+static_assert(ACH_FILTER_VAL + ACH_FILTER_VAL_W <= 30, "AChChid filter values must fit the 1:1 grid");
+static_assert(ACH_LEFT_VAL + 3 + ACH_MODEL_W <= ACH_FILTER_X + 1, "AChChid model name must clear the filter labels");
 static int modelButtonDown;
 static Bitmap* previewBitmap;
 static InstrumentAChChid* instrument() { return &chipnomadState->project.instruments[cInstrument].chip.achchid; }
@@ -22,7 +30,7 @@ static int editLogarithmic16(CellEditAction action, uint16_t* value, uint16_t mi
   return handled;
 }
 static void drawPreview(const InstrumentAChChid* a) {
-  if (!previewBitmap) previewBitmap = gfxBitmapCreate(32, 3);
+  if (!previewBitmap) previewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
   renderAChChidPreview(previewBitmap, a);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(previewBitmap, 0, 16);
@@ -37,42 +45,42 @@ static int isCellValid(int col,int row) {
 }
 static void drawStatic() {
   instrumentCommonDrawStatic();
-  gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0,6,"OSCILLATOR"); gfxPrint(20,6,"303 FILTER");
+  gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0,6,"OSCILLATOR"); gfxPrint(ACH_FILTER_X,6,"303 FILTER");
   gfxSetFgColor(appSettings.colorScheme.textDefault); gfxPrint(0,7,"Wave");
   if (isBraids()) { gfxPrint(0,8,"Model"); gfxPrint(0,9,"Timbre"); gfxPrint(0,10,"Color"); gfxPrint(0,11,"Shaper"); } else gfxPrint(0,8,"Fine");
-  gfxPrint(20,7,"Cutoff"); gfxPrint(20,8,"Reso"); gfxPrint(20,9,"Env Mod"); gfxPrint(20,10,"Decay"); gfxPrint(20,11,"Accent");
+  gfxPrint(ACH_FILTER_X,7,"Cutoff"); gfxPrint(ACH_FILTER_X,8,"Reso"); gfxPrint(ACH_FILTER_X,9,"Env Mod"); gfxPrint(ACH_FILTER_X,10,"Decay"); gfxPrint(ACH_FILTER_X,11,"Accent");
   drawPreview(instrument());
 }
-// The track status panel starts at column 34; keep values and cursors before it.
+// Everything stays inside the 30 column grid.
 static void drawCursor(int col,int row) {
   if (row < 3) return instrumentCommonDrawCursor(col, row);
   InstrumentAChChid* a = instrument();
   if (!col) {
-    if (row == 3) gfxCursor(11, 7, strlen(a->wave == AChChidWave::square ? "Square" : a->wave == AChChidWave::saw ? "Saw" : "Braids"));
-    else if (row == 4) gfxCursor(11, 8, isBraids() ? 3 + min((int)strlen(modelCatalogName(InstrumentType::Braids, a->model)), 6) : 3);
-    else if (row >= 5 && row <= 7) gfxCursor(11, row + 4, 2);
+    if (row == 3) gfxCursor(ACH_LEFT_VAL, 7, strlen(a->wave == AChChidWave::square ? "Square" : a->wave == AChChidWave::saw ? "Saw" : "Braids"));
+    else if (row == 4) gfxCursor(ACH_LEFT_VAL, 8, isBraids() ? 3 + min((int)strlen(modelCatalogName(InstrumentType::Braids, a->model)), ACH_MODEL_W) : 3);
+    else if (row >= 5 && row <= 7) gfxCursor(ACH_LEFT_VAL, row + 4, 2);
   } else {
     char value[12];
-    snprintf(value, sizeof(value), "%u Hz", a->cutoff);
+    snprintf(value, sizeof(value), "%uHz", a->cutoff);
     int width = row == 3 ? (int)strlen(value) : row == 6 ? 6 : 2;
-    gfxCursor(28, row + 4, width);
+    gfxCursor(ACH_FILTER_VAL, row + 4, width);
   }
 }
 static void drawField(int col,int row,CellState state) {
   if(row<3) return instrumentCommonDrawField(col,row,state);
   InstrumentAChChid* a=instrument();
   gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);
-  if(!col && row==3) gfxPrint(11,7,a->wave==AChChidWave::square?"Square":a->wave==AChChidWave::saw?"Saw":"Braids");
-  else if(!isBraids() && row==4 && !col) gfxPrintf(11,8,"%+03d",a->fineTune);
-  else if(isBraids() && row==4 && !col) gfxPrintf(11,8,"%02u %.6s",a->model,modelCatalogName(InstrumentType::Braids,a->model));
-  else if(isBraids() && row==5 && !col) gfxPrint(11,9,byteToHex(controlFromRange(a->timbre,32767)));
-  else if(isBraids() && row==6 && !col) gfxPrint(11,10,byteToHex(controlFromRange(a->color,32767)));
-  else if(isBraids() && row==7 && !col) gfxPrint(11,11,byteToHex(a->saturation));
-  else if(col && row==3) gfxPrintf(28,7,"%u Hz",a->cutoff);
-  else if(col && row==4) gfxPrint(28,8,byteToHex(controlFromRange(a->resonance,100)));
-  else if(col && row==5) gfxPrint(28,9,byteToHex(controlFromRange(a->envMod,100)));
-  else if(col && row==6) gfxPrintf(28,10,"%4ums",a->decay);
-  else if(col && row==7) gfxPrint(28,11,byteToHex(controlFromRange(a->accent,100)));
+  if(!col && row==3) gfxPrint(ACH_LEFT_VAL,7,a->wave==AChChidWave::square?"Square":a->wave==AChChidWave::saw?"Saw":"Braids");
+  else if(!isBraids() && row==4 && !col) gfxPrintf(ACH_LEFT_VAL,8,"%+03d",a->fineTune);
+  else if(isBraids() && row==4 && !col) gfxPrintf(ACH_LEFT_VAL,8,"%02u %.5s",a->model,modelCatalogName(InstrumentType::Braids,a->model));
+  else if(isBraids() && row==5 && !col) gfxPrint(ACH_LEFT_VAL,9,byteToHex(controlFromRange(a->timbre,32767)));
+  else if(isBraids() && row==6 && !col) gfxPrint(ACH_LEFT_VAL,10,byteToHex(controlFromRange(a->color,32767)));
+  else if(isBraids() && row==7 && !col) gfxPrint(ACH_LEFT_VAL,11,byteToHex(a->saturation));
+  else if(col && row==3) gfxPrintf(ACH_FILTER_VAL,7,"%uHz",a->cutoff);
+  else if(col && row==4) gfxPrint(ACH_FILTER_VAL,8,byteToHex(controlFromRange(a->resonance,100)));
+  else if(col && row==5) gfxPrint(ACH_FILTER_VAL,9,byteToHex(controlFromRange(a->envMod,100)));
+  else if(col && row==6) gfxPrintf(ACH_FILTER_VAL,10,"%4ums",a->decay);
+  else if(col && row==7) gfxPrint(ACH_FILTER_VAL,11,byteToHex(controlFromRange(a->accent,100)));
 }
 static int onEdit(int col,int row,CellEditAction action) {
   if(row<3) return instrumentCommonOnEdit(col,row,action);

@@ -73,7 +73,7 @@ TEST_CASE("SID editor entry and return preserve quick controls and patch") {
   instrumentFMSetContext(0, InstrumentType::SID);
   CHECK(screenInstrumentOPL.getColumnCount(4) == 2);
   screenInstrumentOPL.drawField(1, 4, CellState::focus);
-  CHECK(std::string(mockGfxCells[7] + 28, 4) == "EDIT");
+  CHECK(std::string(mockGfxCells[7] + 25, 4) == "EDIT");
   screenInstrumentOPL.onEdit(1, 4, CellEditAction::tap);
   CHECK(currentScreen == &screenSIDEdit);
   CHECK(memcmp(&before, &e.patch(), sizeof(before)) == 0);

@@ -9,35 +9,32 @@
 #include "file_browser.h"
 #include "screen_enter_name.h"
 #include "copy_paste.h"
+#include "track_paging.h"
+#include "screen_layout.h"
 #include <string.h>
 
 // Wavetable preview dimensions (in characters)
-#define PREVIEW_WIDTH_CHARS 32
+#define PREVIEW_WIDTH_CHARS AYWT_PREVIEW_COLS
 #define PREVIEW_HEIGHT_CHARS 3
 
-// Screen layout:
+// Screen layout (30 columns, presented 1:1):
 // y 0:  AY_WAVETABLE
-// y 1:  (empty)
 // y 2:  Load   Save XXX wavetables          <- Row 0 (buttons + count)
-// y 3:  (empty)
-// y 4:     wavetable -2 (preview)
-// y 5:  LL wavetable -2 (preview)
-// y 6:     wavetable -1 (preview)
-// y 7:  MM wavetable -1 (preview)
-// y 8:     Current wavetable preview row 1
-// y 9:     Current wavetable preview row 2
-// y 10:    Current wavetable preview row 3
-// y 11: NN 0123456789ABCDEF0123456789ABCDEF  <- Row 1 (editor - 32 columns)
-// y 12:    wavetable +1 (preview)
-// y 13: OO wavetable +1 (preview)
-// y 14:    wavetable +2 (preview)
-// y 15: PP wavetable +2 (preview)
-// y 16:    wavetable +3 (preview)
-// y 17: QQ wavetable +3 (preview)
+// y 4-7:   wavetable -2 / -1 previews (2 lines each, index NN at the bottom line)
+// y 8-10:  current wavetable preview (3 lines)
+// y 11: NN 0123456789ABCDEF                 <- Row 1 (editor, steps 0-15)
+// y 12:    0123456789ABCDEF                 <- Row 1 (editor, steps 16-31)
+// y 13-18: wavetable +1 / +2 / +3 previews (2 lines each)
 //
 // Logical rows:
 // Row 0: Buttons (Load, Save, Count) - 3 columns
-// Row 1: Wavetable editor - 32 columns (starts at x=2, directly after the 2-char index)
+// Row 1: Wavetable editor - 32 steps wrapped 16 + 16 over two screen lines (x = 2 + step % 16,
+//        y = 11 + step / 16); Up/Down inside the editor jump between the two lines.
+
+static_assert(2 + AYWT_PREVIEW_COLS <= GRID_SCREEN_COLS, "AY wavetable previews must fit the 1:1 grid");
+static_assert(2 + AYWT_STEPS_PER_LINE <= GRID_SCREEN_COLS, "AY wavetable editor line must fit the 1:1 grid");
+static_assert(AYWT_STEPS_PER_LINE * AYWT_EDITOR_LINES == 32, "AY wavetable editor holds 32 steps");
+static_assert(16 + 10 <= GRID_SCREEN_COLS, "AY wavetable button row must fit the 1:1 grid");
 
 static int wavetableIdx = 0;
 static uint16_t wavetableSaveCount = 1;  // Number of wavetables to save (1-256), default 1
@@ -177,14 +174,15 @@ static void drawStatic(void) {
   // Update all previews
   updatePreviews();
 
-  // Clear all preview areas first (35 chars wide: 2 for index + 32 for data + 1 for safety)
+  // Clear all preview areas first (30 chars wide: 2 for index + 28 for data)
   gfxSetBgColor(cs.background);
-  gfxClearRect(0, 4, 35, 2);  // wavetable -2 (2 lines: y 4-5)
-  gfxClearRect(0, 6, 35, 2);  // wavetable -1 (2 lines: y 6-7)
-  gfxClearRect(0, 8, 35, 3);  // current wavetable preview (3 lines: y 8-10)
-  gfxClearRect(0, 12, 35, 2); // wavetable +1 (2 lines: y 12-13)
-  gfxClearRect(0, 14, 35, 2); // wavetable +2 (2 lines: y 14-15)
-  gfxClearRect(0, 16, 35, 2); // wavetable +3 (2 lines: y 16-17)
+  gfxClearRect(0, 4, GRID_SCREEN_COLS, 2);  // wavetable -2 (2 lines: y 4-5)
+  gfxClearRect(0, 6, GRID_SCREEN_COLS, 2);  // wavetable -1 (2 lines: y 6-7)
+  gfxClearRect(0, 8, GRID_SCREEN_COLS, 3);  // current wavetable preview (3 lines: y 8-10)
+  gfxClearRect(0, 11, GRID_SCREEN_COLS, AYWT_EDITOR_LINES);  // editor (y 11-12)
+  gfxClearRect(0, 13, GRID_SCREEN_COLS, 2); // wavetable +1 (2 lines: y 13-14)
+  gfxClearRect(0, 15, GRID_SCREEN_COLS, 2); // wavetable +2 (2 lines: y 15-16)
+  gfxClearRect(0, 17, GRID_SCREEN_COLS, 2); // wavetable +3 (2 lines: y 17-18)
 
   // Wavetable numbers on the left (2 characters wide)
   // Position at the bottom of each preview (aligned with preview bottom line)
@@ -215,13 +213,13 @@ static void drawStatic(void) {
   gfxSetFgColor(cs.textInfo);
 
   if (nextIdx1 <= 255) {
-    gfxPrintf(0, 13, "%02X", nextIdx1);  // Bottom line of +1 preview
+    gfxPrintf(0, 14, "%02X", nextIdx1);  // Bottom line of +1 preview
   }
   if (nextIdx2 <= 255) {
-    gfxPrintf(0, 15, "%02X", nextIdx2);  // Bottom line of +2 preview
+    gfxPrintf(0, 16, "%02X", nextIdx2);  // Bottom line of +2 preview
   }
   if (nextIdx3 <= 255) {
-    gfxPrintf(0, 17, "%02X", nextIdx3);  // Bottom line of +3 preview
+    gfxPrintf(0, 18, "%02X", nextIdx3);  // Bottom line of +3 preview
   }
 
   // Draw wavetable previews
@@ -238,13 +236,13 @@ static void drawStatic(void) {
     gfxDrawBitmap(previewBitmap, 2, 8);  // 3 lines: y 8-10
   }
   if (nextIdx1 <= 255 && previewBitmapNext1) {
-    gfxDrawBitmap(previewBitmapNext1, 2, 12);  // 2 lines: y 12-13
+    gfxDrawBitmap(previewBitmapNext1, 2, 13);  // 2 lines: y 13-14
   }
   if (nextIdx2 <= 255 && previewBitmapNext2) {
-    gfxDrawBitmap(previewBitmapNext2, 2, 14);  // 2 lines: y 14-15
+    gfxDrawBitmap(previewBitmapNext2, 2, 15);  // 2 lines: y 15-16
   }
   if (nextIdx3 <= 255 && previewBitmapNext3) {
-    gfxDrawBitmap(previewBitmapNext3, 2, 16);  // 2 lines: y 16-17
+    gfxDrawBitmap(previewBitmapNext3, 2, 17);  // 2 lines: y 17-18
   }
 }
 
@@ -279,8 +277,8 @@ static void drawCursor(int col, int row) {
       gfxCursor(12, 2, 3); // Count (3 hex digits)
     }
   } else if (row == 1) {
-    // Wavetable editor row at y=11, starts at x=2 (directly after 2-char index)
-    gfxCursor(2 + col, 11, 1);
+    // Wavetable editor: 16 steps per line from x=2, second line at y=12
+    gfxCursor(screenAYWavetableStepX(col), screenAYWavetableStepY(col), 1);
   }
 }
 
@@ -312,7 +310,7 @@ static void drawField(int col, int row, CellState state) {
     char hex[2];
     hex[0] = "0123456789ABCDEF"[value & 0x0F];
     hex[1] = '\0';
-    gfxPrint(2 + col, 11, hex);
+    gfxPrint(screenAYWavetableStepX(col), screenAYWavetableStepY(col), hex);
   }
 }
 
@@ -512,8 +510,21 @@ static int inputScreenNavigation(int keys, int tapCount) {
   return 0;
 }
 
+// Up/Down inside the editor move between its two 16-step lines (the first line's Up and the
+// second line's Down fall through to the usual row move: buttons above, nothing below).
+static int inputEditorLines(int keys) {
+  if (screen.cursorRow != 1) return 0;
+  if (keys == keyDown && screen.cursorCol < AYWT_STEPS_PER_LINE) screen.cursorCol += AYWT_STEPS_PER_LINE;
+  else if (keys == keyUp && screen.cursorCol >= AYWT_STEPS_PER_LINE) screen.cursorCol -= AYWT_STEPS_PER_LINE;
+  else return 0;
+  fullRedraw();
+  return 1;
+}
+
 static int onInput(int isKeyDown, int keys, int tapCount) {
   if (!isKeyDown) return 0;
+
+  if (inputEditorLines(keys)) return 1;
 
   // Handle screen navigation first
   if (inputScreenNavigation(keys, tapCount)) {
@@ -535,4 +546,5 @@ const AppScreen screenAYWavetable = {
   .draw = draw,
   .onInput = onInput,
   .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };

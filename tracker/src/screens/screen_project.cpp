@@ -1,4 +1,5 @@
 #include "screen_project.h"
+#include "track_paging.h"
 #include "common.h"
 #include "corelib/corelib_file.h"
 #include "corelib_gfx.h"
@@ -301,8 +302,8 @@ static void draw(void) {
     // MIDI clock: live followed tempo in the info color, as before.
     const ColorScheme cs = appSettings.colorScheme;
     gfxSetFgColor(cs.textInfo);
-    gfxClearRect(13, 11, 27, 1);
-    gfxPrintf(13, 11, "%u BPM", liveClockBpm());
+    gfxClearRect(PROJECT_VALUE_X, 11, PROJECT_VALUE_W, 1);
+    gfxPrintf(PROJECT_VALUE_X, 11, "%u BPM", liveClockBpm());
   } else {
     projectCommonDrawField(0, 6, focused ? CellState::focus : CellState::normal);
   }
@@ -340,11 +341,12 @@ void projectCommonDrawStatic(void) {
 
   gfxSetFgColor(cs.textDefault);
   gfxPrint(8, 0, appTitle);
-  gfxPrintf(0, 1, "v%s (%s)", appVersion, appBuild);
+  // Build date only ("Oct 21 2026"): the full date and time is 36 columns.
+  gfxPrintf(0, 1, "v%s (%.11s)", appVersion, appBuild);
 
   gfxPrint(0, 5, "File");
   gfxPrint(0, 6, "Title");
-  gfxPrint(0, 7, "Author");
+  gfxPrint(0, 7, "Auth.");
 
   gfxPrint(0, 9, "Linear pitch");
   gfxPrint(0, 10, "Clock source");
@@ -356,33 +358,33 @@ void projectCommonDrawStatic(void) {
 void projectCommonDrawCursor(int col, int row) {
   if (row == 0) {
     if (col == 0) {
-      gfxCursor(7, 3, 4); // Load
+      gfxCursor(screenProjectButtonX(0), 3, screenProjectButtonW(0)); // Load
     } else if (col == 1) {
-      gfxCursor(12, 3, 4); // Save
+      gfxCursor(screenProjectButtonX(1), 3, screenProjectButtonW(1)); // Save
     } else if (col == 2) {
-      gfxCursor(17, 3, 3); // New
+      gfxCursor(screenProjectButtonX(2), 3, screenProjectButtonW(2)); // New
     } else if (col == 3) {
-      gfxCursor(21, 3, 6); // Export
+      gfxCursor(screenProjectButtonX(3), 3, screenProjectButtonW(3)); // Export
     } else if (col == 4) {
-      gfxCursor(28, 3, 6); // Manage
+      gfxCursor(screenProjectButtonX(4), 3, screenProjectButtonW(4)); // Manage
     }
   } else if (row >= 1 && row <= 3) {
     // Text fields: file name, title, author
-    gfxCursor(7 + col, 4 + row, 1);
+    gfxCursor(PROJECT_TEXT_X + col, 4 + row, 1);
   } else if (row == 4) {
     // Linear pitch
-    gfxCursor(13, 9, 3);
+    gfxCursor(PROJECT_VALUE_X, 9, 3);
   } else if (row == 5) {
     // Clock source ("Internal" / "Midi Clock" / "Ableton Link")
-    gfxCursor(13, 10, 12);
+    gfxCursor(PROJECT_VALUE_X, 10, 12);
   } else if (row == 6) {
     // Tempo ("500.0 BPM"), or in Link mode the connect toggle whose
     // underline follows the label width.
     if (clockSourceMirror == 2) {
       const LinkStatus status = currentLinkStatus();
-      gfxCursor(13, 11, status == LinkStatus::connected || status == LinkStatus::connecting ? 12 : 9);
+      gfxCursor(PROJECT_LINK_X, 11, status == LinkStatus::connected || status == LinkStatus::connecting ? 12 : 9);
     } else {
-      gfxCursor(13, 11, 8);
+      gfxCursor(PROJECT_VALUE_X, 11, 8);
     }
   }
 }
@@ -392,40 +394,40 @@ void projectCommonDrawField(int col, int row, CellState state) {
 
   if (row == 0) {
     if (col == 0) {
-      gfxPrint(7, 3, "Load");
+      gfxPrint(screenProjectButtonX(0), 3, "Load");
     } else if (col == 1) {
-      gfxPrint(12, 3, "Save");
+      gfxPrint(screenProjectButtonX(1), 3, "Save");
     } else if (col == 2) {
-      gfxPrint(17, 3, "New");
+      gfxPrint(screenProjectButtonX(2), 3, "New");
     } else if (col == 3) {
-      gfxPrint(21, 3, "Export");
+      gfxPrint(screenProjectButtonX(3), 3, "Export");
     } else if (col == 4) {
-      gfxPrint(28, 3, "Manage");
+      gfxPrint(screenProjectButtonX(4), 3, "Manage");
     }
   } else if (row == 1) {
     // File name
-    gfxClearRect(7, 5, FILENAME_LENGTH, 1);
-    gfxPrintf(7, 5, "%s", appSettings.projectFilename);
+    gfxClearRect(PROJECT_TEXT_X, 5, FILENAME_LENGTH, 1);
+    gfxPrintf(PROJECT_TEXT_X, 5, "%s", appSettings.projectFilename);
   } else if (row == 2) {
     // Title
-    gfxClearRect(7, 6, PROJECT_TITLE_LENGTH, 1);
-    gfxPrintf(7, 6, "%s", chipnomadState->project.title);
+    gfxClearRect(PROJECT_TEXT_X, 6, PROJECT_TITLE_LENGTH, 1);
+    gfxPrintf(PROJECT_TEXT_X, 6, "%s", chipnomadState->project.title);
   } else if (row == 3) {
     // Author
-    gfxClearRect(7, 7, PROJECT_TITLE_LENGTH, 1);
-    gfxPrintf(7, 7, "%s", chipnomadState->project.author);
+    gfxClearRect(PROJECT_TEXT_X, 7, PROJECT_TITLE_LENGTH, 1);
+    gfxPrintf(PROJECT_TEXT_X, 7, "%s", chipnomadState->project.author);
   } else if (row == 4) {
     // Linear pitch
-    gfxPrint(13, 9, chipnomadState->project.linearPitch ? "ON " : "OFF");
+    gfxPrint(PROJECT_VALUE_X, 9, chipnomadState->project.linearPitch ? "ON " : "OFF");
   } else if (row == 5) {
     // Clock source: Internal / Midi Clock / Ableton Link
-    gfxClearRect(13, 10, 27, 1);
-    gfxPrint(13, 10,
+    gfxClearRect(PROJECT_VALUE_X, 10, PROJECT_VALUE_W, 1);
+    gfxPrint(PROJECT_VALUE_X, 10,
       clockSourceMirror == 2 ? "Ableton Link" :
       clockSourceMirror == 1 ? "Midi Clock"  :
       "Internal");
   } else if (row == 6) {
-    gfxClearRect(13, 11, 27, 1);
+    gfxClearRect(5, 11, 25, 1);
     if (clockSourceMirror == 2) {
       // Link mode: the row is the session connect/disconnect toggle. The
       // session owns the tempo (app.cpp applies it to the project), so no
@@ -434,7 +436,7 @@ void projectCommonDrawField(int col, int row, CellState state) {
       const char* label = (status == LinkStatus::connected) ? "[Disconnect]" :
                           (status == LinkStatus::connecting) ? "[Connecting]" :
                           "[Connect]";
-      gfxPrint(13, 11, label);
+      gfxPrint(PROJECT_LINK_X, 11, label);
       // Status message on the right, in the info color. While connected,
       // alternate between "connected" and the peer count roughly once a
       // second (phase kept by draw()) so both the link state and the
@@ -442,9 +444,9 @@ void projectCommonDrawField(int col, int row, CellState state) {
       gfxSetFgColor(appSettings.colorScheme.textInfo);
       if (status == LinkStatus::connected) {
         if (linkStatusShowPeers) {
-          gfxPrintf(26, 11, "Peers: %d", linkClientGetPeerCount(chipnomadState->linkClient));
+          gfxPrintf(PROJECT_LINK_STATUS_X, 11, "Peers: %d", linkClientGetPeerCount(chipnomadState->linkClient));
         } else {
-          gfxPrint(26, 11, "connected");
+          gfxPrint(PROJECT_LINK_STATUS_X, 11, "connected");
         }
       } else {
         const char* statusStr =
@@ -452,16 +454,16 @@ void projectCommonDrawField(int col, int row, CellState state) {
           status == LinkStatus::connecting ? "Wait..." :
           status == LinkStatus::noPeers    ? "No sess" :
           status == LinkStatus::error      ? "Err"     : "";
-        if (statusStr[0]) gfxPrint(26, 11, statusStr);
+        if (statusStr[0]) gfxPrint(PROJECT_LINK_STATUS_X, 11, statusStr);
       }
     } else if (clockSourceMirror == 1) {
       // Slaved to MIDI clock: read-only live tempo measured from the
       // incoming clock, shown in the info color (draw() refreshes it
       // every frame with the same color).
       gfxSetFgColor(appSettings.colorScheme.textInfo);
-      gfxPrintf(13, 11, "%u BPM", liveClockBpm());
+      gfxPrintf(PROJECT_VALUE_X, 11, "%u BPM", liveClockBpm());
     } else {
-      gfxPrintf(13, 11, "%u BPM", bpmValue);
+      gfxPrintf(PROJECT_VALUE_X, 11, "%u BPM", bpmValue);
     }
   }
 }
@@ -742,4 +744,12 @@ const AppScreen screenProject = {
   .draw = draw,
   .onInput = onInput,
   .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };
+
+// 1:1 grid fit: every PROJECT row ends within the 30 columns.
+static_assert(PROJECT_TEXT_X + FILENAME_LENGTH <= GRID_SCREEN_COLS, "PROJECT file name must fit the 1:1 grid");
+static_assert(PROJECT_TEXT_X + PROJECT_TITLE_LENGTH <= GRID_SCREEN_COLS, "PROJECT title and author must fit the 1:1 grid");
+static_assert(PROJECT_VALUE_X + PROJECT_VALUE_W <= GRID_SCREEN_COLS, "PROJECT value column must fit the 1:1 grid");
+static_assert(PROJECT_LINK_STATUS_X + 9 <= GRID_SCREEN_COLS, "PROJECT Link status text must fit the 1:1 grid");
+static_assert(PROJECT_LINK_X + 12 < PROJECT_LINK_STATUS_X, "PROJECT Link toggle must clear its status");

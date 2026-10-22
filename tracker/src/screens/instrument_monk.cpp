@@ -15,7 +15,7 @@ int held = 0;
 const int homeY[] = {2, 3, 6, 7, 9, 10, 11, 12, 14, 15};
 const int homeParameters[][2] = {{monkVowel, -1}, {monkVoice, monkBreath},
   {monkGlide, monkVibrato}, {monkVibRate, -1}, {monkUnison, monkDetune}, {monkSpread, -1}};
-const int commonX[] = {3, 12, 22, 31};
+const int commonX[] = {3, 12, MONK_VOL_LABEL_X + 4, MONK_PAN_LABEL_X + 4};
 void returnHome() { screenSetup(&screenInstrument, cInstrument); }
 void chooseBank(int value) {
   if (value >= monkBankUser && value <= monkBankAll) { current().chip.monk.factory = value; projectModified = 1; }
@@ -31,16 +31,16 @@ int homeColumns(int row) {
   return row == 0 ? 3 : row == 1 ? 4 : row == 3 ? 2 :
     row >= 4 && homeParameters[row - 4][1] >= 0 ? 2 : 1;
 }
-int homeX(int col, int row) { return row == 1 ? commonX[col] : row == 3 && col ? 29 : row < 4 ? 8 : col ? 31 : 11; }
-int homeWidth(int col, int row) { return row == 1 ? (col ? 2 : 3) : row == 2 ? 7 : row == 3 ? (col ? 4 : 19) : 2; }
+int homeX(int col, int row) { return row == 1 ? commonX[col] : row == 3 && col ? MONK_EDIT_X : row < 4 ? 8 : col ? MONK_COL2_VAL : 11; }
+int homeWidth(int col, int row) { return row == 1 ? (col ? 2 : 3) : row == 2 ? 7 : row == 3 ? (col ? 4 : MONK_PRESET_W) : 2; }
 void homeStatic() {
   gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrintf(0, 0, "INSTRUMENT %02X", cInstrument);
   gfxSetFgColor(appSettings.colorScheme.textDefault);
   gfxPrint(0, 2, "Type"); gfxPrint(0, 3, "TR"); gfxPrint(8, 3, "TIC");
-  gfxPrint(18, 3, "VOL"); gfxPrint(27, 3, "PAN");
+  gfxPrint(MONK_VOL_LABEL_X, 3, "VOL"); gfxPrint(MONK_PAN_LABEL_X, 3, "PAN");
   gfxPrint(0, homeY[2], "Bank"); gfxPrint(0, homeY[3], "Preset");
   for (int row = 4; row < 10; ++row) for (int col = 0; col < homeColumns(row); ++col)
-    gfxPrint(col ? 20 : 0, homeY[row], monkControls[homeParameters[row-4][col]].name);
+    gfxPrint(col ? MONK_COL2_X : 0, homeY[row], monkControls[homeParameters[row-4][col]].name);
   gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 8, "VOICE"); gfxPrint(0, 13, "UNISON");
 }
 void homeCursor(int col, int row) {
@@ -59,7 +59,7 @@ void homeField(int col, int row, CellState state) {
   } else if (row == 2) gfxPrint(x, y, m.factory == monkBankAll ? "ALL" : m.factory == monkBankFactory ? "FACTORY" : "USER");
   else if (row == 3) {
     if (col) gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textInfo);
-    gfxPrintf(x, y, col ? "EDIT" : "%.19s", current().name);
+    gfxPrintf(x, y, col ? "EDIT" : "%.17s", current().name);
   }
   else {
     gfxPrint(x, y, byteToHex(monkValue(m, homeParameters[row-4][col])));
@@ -68,7 +68,7 @@ void homeField(int col, int row, CellState state) {
       int nearest = (m.vowel * 4 + 127) / 255;
       for (int i = 0; i < 5; ++i) {
         gfxSetFgColor(i == nearest ? appSettings.colorScheme.textValue : appSettings.colorScheme.textInfo);
-        gfxPrint(16 + i * 4, y, vowels[i]);
+        gfxPrint(MONK_VOWEL_X + i * 3, y, vowels[i]);
       }
     }
   }
@@ -124,15 +124,15 @@ void drawStatic() {
   gfxPrint(0, 4, "VOICE"); gfxPrint(0, 9, "ENVELOPE"); gfxPrint(0, 13, "UNISON / LEVEL");
   gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(0, 2, "Name");
   for (int row = 1; row < 9; ++row) for (int col = 0; col < 2; ++col)
-    gfxPrint(col ? 20 : 0, rowY[row], monkControls[parameters[row-1][col]].name);
+    gfxPrint(col ? MONK_COL2_X : 0, rowY[row], monkControls[parameters[row-1][col]].name);
 }
-void cursor(int col, int row) { gfxCursor(row ? (col ? 31 : 11) : 8 + col, rowY[row], row ? 2 : 1); }
+void cursor(int col, int row) { gfxCursor(row ? (col ? MONK_COL2_VAL : 11) : 8 + col, rowY[row], row ? 2 : 1); }
 void field(int col, int row, CellState state) {
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
   if (!row) {
     char text[2] = {col < int(std::strlen(current().name)) ? current().name[col] : ' ', 0};
     gfxPrint(8 + col, rowY[0], text);
-  } else gfxPrint(col ? 31 : 11, rowY[row], byteToHex(monkValue(current().chip.monk, parameters[row-1][col])));
+  } else gfxPrint(col ? MONK_COL2_VAL : 11, rowY[row], byteToHex(monkValue(current().chip.monk, parameters[row-1][col])));
 }
 int edit(int col, int row, CellEditAction action) {
   if (row) return editParameter(parameters[row-1][col], action);
@@ -182,7 +182,8 @@ ScreenData screenInstrumentMonk = {
   .drawField = homeField, .onEdit = homeEdit, .onInput = homeInput, .onRawInput = nullptr,
   .isCellValid = nullptr, .getLoopRange = nullptr,
 };
-const AppScreen screenMonkEdit = {nullptr, editor::setup, editor::redraw, editor::draw, editor::input, editor::level};
+const AppScreen screenMonkEdit = {nullptr, editor::setup, editor::redraw, editor::draw, editor::input, editor::level, 30};
+static_assert(MONK_COL2_VAL + 2 <= 30 && MONK_PAN_LABEL_X + 6 <= 30 && MONK_EDIT_X + 4 <= 30 && 8 + MONK_PRESET_W < MONK_EDIT_X && MONK_VOWEL_X + 4 * 3 + 1 <= 30, "MONK pages must fit the 1:1 grid");
 
 bool instrumentMonkTouchCell(int col, int row, int* targetCol, int* targetRow) {
   if (currentScreen == &screenMonkEdit) {
@@ -191,8 +192,8 @@ bool instrumentMonkTouchCell(int col, int row, int* targetCol, int* targetRow) {
         if (col < 8 || col >= 8 + PROJECT_INSTRUMENT_NAME_LENGTH) return false;
         *targetCol = col - 8;
       } else {
-        if (col < 0 || col > 32 || (col > 12 && col < 20)) return false;
-        *targetCol = col >= 20;
+        if (col < 0 || col > 32 || (col > 12 && col < MONK_COL2_X)) return false;
+        *targetCol = col >= MONK_COL2_X;
       }
       *targetRow = field; return true;
     }
@@ -202,17 +203,17 @@ bool instrumentMonkTouchCell(int col, int row, int* targetCol, int* targetRow) {
     int column = 0;
     if (field == 1) {
       if (col < 0 || col > 32) return false;
-      column = col >= 27 ? 3 : col >= 18 ? 2 : col >= 8 ? 1 : 0;
+      column = col >= MONK_PAN_LABEL_X ? 3 : col >= MONK_VOL_LABEL_X ? 2 : col >= 8 ? 1 : 0;
     } else if (field == 2) {
       if (col < 8 || col > 14) return false;
     } else if (field == 3) {
-      if (col < 8 || col > 32 || col == 27 || col == 28) return false;
-      column = col >= 29;
+      if (col < 8 || col > 32 || col == MONK_EDIT_X - 1) return false;
+      column = col >= MONK_EDIT_X;
     } else if (field == 4) {
       if (col < 0 || col > 32) return false;
     } else {
-      if (col < 0 || col > 32 || (col > 12 && col < 20)) return false;
-      column = col >= 20;
+      if (col < 0 || col > 32 || (col > 12 && col < MONK_COL2_X)) return false;
+      column = col >= MONK_COL2_X;
       if (column >= homeColumns(field)) return false;
     }
     *targetCol = column; *targetRow = field; return true;

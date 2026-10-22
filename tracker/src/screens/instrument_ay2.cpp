@@ -35,8 +35,8 @@ static Bitmap* wavetablePreviewBitmap = NULL;
 
 #define COL_LEFT_X    0
 #define COL_LEFT_VAL  8
-#define COL_RIGHT_X   17
-#define COL_RIGHT_VAL 26
+#define COL_RIGHT_X   12
+#define COL_RIGHT_VAL 21
 
 #define ROW_TOTAL 13
 
@@ -343,13 +343,13 @@ static void drawField(int col, int row, CellState state) {
               int isYM = p->chipSetup.ay.isYM;
               renderAYWavetablePreview(wavetablePreviewBitmap, p->ayWavetables[*p1], isYM);
 
-              // Draw preview after the value (at x=29, 2 chars after value at x=26-27)
+              // Draw preview after the value (after the value)
               gfxSetFgColor(appSettings.colorScheme.textInfo);
-              gfxDrawBitmap(wavetablePreviewBitmap, 29, y);
+              gfxDrawBitmap(wavetablePreviewBitmap, COL_RIGHT_VAL + 3, y);
             }
           } else {
             // Clear preview area for non-wavetable types
-            gfxClearRect(29, y, 2, 1);
+            gfxClearRect(COL_RIGHT_VAL + 3, y, 2, 1);
           }
         } else {
           // Clear entire P1 area when not available
@@ -485,7 +485,7 @@ static int onEdit(int col, int row, CellEditAction action) {
             int y11 = rowToY(11);
             int y12 = rowToY(12);
             gfxClearRect(COL_RIGHT_X, y11, 14, 1);  // Clear label + value area for P1 (row 11)
-            gfxClearRect(29, y11, 2, 1);            // Clear wavetable preview area for P1
+            gfxClearRect(COL_RIGHT_VAL + 3, y11, 2, 1);            // Clear wavetable preview area for P1
             gfxClearRect(COL_RIGHT_X, y12, 14, 1);  // Clear label + value area for P2 (row 12)
 
             // Redraw all affected rows
@@ -544,7 +544,7 @@ static int onEdit(int col, int row, CellEditAction action) {
 
                     int y = rowToY(11);
                     gfxSetFgColor(appSettings.colorScheme.textInfo);
-                    gfxDrawBitmap(wavetablePreviewBitmap, 29, y);
+                    gfxDrawBitmap(wavetablePreviewBitmap, COL_RIGHT_VAL + 3, y);
                   }
                 }
               }

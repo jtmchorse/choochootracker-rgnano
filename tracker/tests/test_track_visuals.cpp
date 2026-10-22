@@ -120,7 +120,7 @@ TEST_CASE_FIXTURE(VisualFixture, "Boot screen Graphics row toggles and saves wit
   REQUIRE(table->onEdit(0, 6, CellEditAction::tap) == 1);
   table->drawField(0, 6, CellState::focus);
   CHECK(std::string(mockGfxCells[8], 11) == "Boot screen");
-  CHECK(std::string(mockGfxCells[8] + 23, 8) == "Night   ");
+  CHECK(std::string(mockGfxCells[8] + 22, 8) == "Night   ");
   REQUIRE(settingsLoad() == 0);
   CHECK(appSettings.bootScreenNight == 1);
   REQUIRE(table->onEdit(0, 6, CellEditAction::tap) == 1);

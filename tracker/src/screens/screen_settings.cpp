@@ -5,6 +5,7 @@
 #include "corelib_gfx.h"
 #include "corelib_mainloop.h"
 #include "screens.h"
+#include "track_paging.h"
 #include "support_report.h"
 #include "corelib_file.h"
 #include <string.h>
@@ -104,4 +105,5 @@ static ScreenData data = {
 static void fullRedraw(void) { screenFullRedraw(&data); }
 static int onInput(int isKeyDown, int keys, int taps) { if (keys == keyOpt || keys == (keyUp | keyShift)) { screenSetup(&screenSong, 0); return 1; } return screenInput(&data, isKeyDown, keys, taps); }
 static ScreenPlaybackLevel playbackLevel(void) { return ScreenPlaybackLevel::song; }
-const AppScreen screenSettings = {NULL, setup, fullRedraw, draw, onInput, playbackLevel};
+const AppScreen screenSettings = {NULL, setup, fullRedraw, draw, onInput, playbackLevel, GRID_SCREEN_COLS};
+static_assert(sizeof("Quit ChooChooTracker") - 1 <= GRID_SCREEN_COLS, "Settings rows must fit the 1:1 grid");

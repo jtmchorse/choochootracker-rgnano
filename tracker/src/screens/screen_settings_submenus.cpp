@@ -9,6 +9,7 @@
 #include "corelib_gfx.h"
 #include "file_browser.h"
 #include "screens.h"
+#include "track_paging.h"
 #include "waveform_display.h"
 #include <fx_profile.h>
 #include <string.h>
@@ -17,6 +18,14 @@ extern "C" void rgnanoLog(const char* format, ...) __attribute__((format(printf,
 #else
 #define rgnanoLog(...) ((void)0)
 #endif
+
+// 1:1 grid (30 columns): values start at 22 so the widest ("Software", "Original", 8) ends at 30.
+// Widest label is "AY Sample dithering" / "Hide pad w/ gamepad" (19), leaving a gap of 3.
+#define SETTINGS_VALUE_X 22
+#define SETTINGS_VALUE_MAX_W 8
+#define SETTINGS_LABEL_MAX_W 19
+static_assert(SETTINGS_VALUE_X + SETTINGS_VALUE_MAX_W <= GRID_SCREEN_COLS, "Settings values must fit the 1:1 grid");
+static_assert(SETTINGS_LABEL_MAX_W < SETTINGS_VALUE_X, "Settings labels must clear the values");
 
 static int columnCount(int) { return 1; }
 static void noHeader(int, CellState) {}
@@ -38,7 +47,7 @@ static void drawAudioCpuLoad(void) {
   if (load == displayedCpuLoad) return;
   displayedCpuLoad = load;
   gfxSetFgColor(appSettings.colorScheme.textInfo);
-  gfxPrintf(23, 4, "%03d%%", load);
+  gfxPrintf(SETTINGS_VALUE_X, 4, "%03d%%", load);
 }
 
 static void audioStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "AUDIO"); }
@@ -50,11 +59,11 @@ static int audioInputArmedCount(void) {
 }
 
 static void audioCursor(int, int row) {
-  if (row == 0) gfxCursor(23, 2, 6);
-  else if (row == 1) gfxCursor(23, 3, appSettings.audioBufferSize >= 1024 ? 4 : 3);
-  else if (row == 3) gfxCursor(23, 5, 3); // "OFF"/"ON" value width (Audio Input, or FX lite on RG Nano)
+  if (row == 0) gfxCursor(SETTINGS_VALUE_X, 2, 6);
+  else if (row == 1) gfxCursor(SETTINGS_VALUE_X, 3, appSettings.audioBufferSize >= 1024 ? 4 : 3);
+  else if (row == 3) gfxCursor(SETTINGS_VALUE_X, 5, 3); // "OFF"/"ON" value width (Audio Input, or FX lite on RG Nano)
 #ifdef RGNANO_BUILD
-  else if (row == 4) gfxCursor(23, 6, 3); // Audio Input (row 3 is FX lite on RG Nano)
+  else if (row == 4) gfxCursor(SETTINGS_VALUE_X, 6, 3); // Audio Input (row 3 is FX lite on RG Nano)
 #endif
 }
 static void audioField(int, int row, CellState state) {
@@ -62,29 +71,29 @@ static void audioField(int, int row, CellState state) {
   if (row == 0) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 2, "Sample rate");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrintf(23, 2, "%d kHz", appSettings.audioSampleRate / 1000);
+    gfxPrintf(SETTINGS_VALUE_X, 2, "%d kHz", appSettings.audioSampleRate / 1000);
   } else if (row == 1) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 3, "Buffer size");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxClearRect(23, 3, 4, 1);
-    gfxPrintf(23, 3, "%d", appSettings.audioBufferSize);
+    gfxClearRect(SETTINGS_VALUE_X, 3, 4, 1);
+    gfxPrintf(SETTINGS_VALUE_X, 3, "%d", appSettings.audioBufferSize);
 #ifdef RGNANO_BUILD
   } else if (row == 4) {
     // Audio Input follows FX lite (row 3) on RG Nano: 5 rows in total.
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 6, "Audio Input");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxClearRect(23, 6, 3, 1);
-    gfxPrint(23, 6, audioInputArmedCount() > 0 ? "ON" : "OFF");
+    gfxClearRect(SETTINGS_VALUE_X, 6, 3, 1);
+    gfxPrint(SETTINGS_VALUE_X, 6, audioInputArmedCount() > 0 ? "ON" : "OFF");
   } else if (row == 3) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 5, "FX lite");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrint(23, 5, appSettings.fxLite ? "ON " : "OFF");
+    gfxPrint(SETTINGS_VALUE_X, 5, appSettings.fxLite ? "ON " : "OFF");
 #else
   } else if (row == 3) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 5, "Audio Input");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxClearRect(23, 5, 3, 1);
-    gfxPrint(23, 5, audioInputArmedCount() > 0 ? "ON" : "OFF");
+    gfxClearRect(SETTINGS_VALUE_X, 5, 3, 1);
+    gfxPrint(SETTINGS_VALUE_X, 5, audioInputArmedCount() > 0 ? "ON" : "OFF");
 #endif
   } else {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 4, "CPU load");
@@ -172,21 +181,21 @@ static const int controlsKeyMappingRow = 3;
 #endif
 static const int controlsRows = controlsKeyMappingRow + 1;
 static void controlsCursor(int, int row) {
-  if (row < 3) gfxCursor(23, 2 + row, row < 2 ? 3 : 6);
+  if (row < 3) gfxCursor(SETTINGS_VALUE_X, 2 + row, row < 2 ? 3 : 6);
   else if (row == controlsKeyMappingRow) gfxCursor(0, 2 + row, 11);
 #ifdef TOUCH_INPUT
-  else gfxCursor(23, 2 + row, 3);
+  else gfxCursor(SETTINGS_VALUE_X, 2 + row, 3);
 #endif
 }
 static void controlsField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   gfxSetFgColor(cs.textDefault);
-  if (row == 0) { gfxPrint(0, 2, "Repeat delay"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(23, 2, "%03d", appSettings.keyRepeatDelay); }
-  else if (row == 1) { gfxPrint(0, 3, "Repeat speed"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(23, 3, "%03d", appSettings.keyRepeatSpeed); }
-  else if (row == 2) { gfxPrint(0, 4, "Stick live mode"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 4, appSettings.stickLiveMode == StickLiveMode::free ? "FREE  " : appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD  "); }
+  if (row == 0) { gfxPrint(0, 2, "Repeat delay"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(SETTINGS_VALUE_X, 2, "%03d", appSettings.keyRepeatDelay); }
+  else if (row == 1) { gfxPrint(0, 3, "Repeat speed"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(SETTINGS_VALUE_X, 3, "%03d", appSettings.keyRepeatSpeed); }
+  else if (row == 2) { gfxPrint(0, 4, "Stick live mode"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 4, appSettings.stickLiveMode == StickLiveMode::free ? "FREE  " : appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD  "); }
 #ifdef TOUCH_INPUT
-  else if (row == controlsHapticsRow) { gfxPrint(0, 5, "Touch haptics"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 5, appSettings.touchHaptics ? "ON " : "OFF"); }
-  else if (row == controlsHidePadRow) { gfxPrint(0, 6, "Hide pad w/ gamepad"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 6, appSettings.hideTouchPadWithGamepad ? "ON " : "OFF"); }
+  else if (row == controlsHapticsRow) { gfxPrint(0, 5, "Touch haptics"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 5, appSettings.touchHaptics ? "ON " : "OFF"); }
+  else if (row == controlsHidePadRow) { gfxPrint(0, 6, "Hide pad w/ gamepad"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 6, appSettings.hideTouchPadWithGamepad ? "ON " : "OFF"); }
 #endif
   else if (row == controlsKeyMappingRow) { gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(0, 2 + row, "Key mapping"); }
 }
@@ -219,21 +228,21 @@ static int controlsEdit(int, int row, CellEditAction action) {
 static ScreenData controlsData = {controlsRows, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, controlsStatic, controlsCursor, NULL, noHeader, noHeader, controlsField, controlsEdit, NULL, NULL, NULL, NULL};
 
 static void synthStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "SYNTHS"); }
-static void synthCursor(int, int row) { gfxCursor(23, 2 + row, row == 0 ? 6 : row == 1 ? 3 : row == 2 ? 6 : 4); }
+static void synthCursor(int, int row) { gfxCursor(SETTINGS_VALUE_X, 2 + row, row == 0 ? 6 : row == 1 ? 3 : row == 2 ? 6 : 4); }
 static void synthField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   gfxSetFgColor(cs.textDefault);
   if (row == 0) {
     static const char* names[] = {"LOW   ", "MEDIUM", "HIGH  ", "BEST  "};
-    gfxPrint(0, 2, "AY Quality"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 2, names[appSettings.quality]);
+    gfxPrint(0, 2, "AY Quality"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 2, names[appSettings.quality]);
   } else if (row == 1) {
-    gfxPrint(0, 3, "AY Sample dithering"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 3, appSettings.aySampleDithering ? "ON " : "OFF");
+    gfxPrint(0, 3, "AY Sample dithering"); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 3, appSettings.aySampleDithering ? "ON " : "OFF");
   } else {
     static const char* labels[] = {"Braids BITS", "Braids DRFT", "Braids SIGN"};
     static const char* bits[] = {"2 BIT ", "3 BIT ", "4 BIT ", "6 BIT ", "8 BIT ", "12 BIT", "16 BIT"};
     static const char* levels[] = {"OFF ", "LOW ", "MED ", "HIGH", "MAX "};
     gfxPrint(0, 2 + row, labels[row - 2]); gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrint(23, 2 + row, row == 2 ? bits[appSettings.braidsBits] : levels[row == 3 ? appSettings.braidsDrift : appSettings.braidsSignature]);
+    gfxPrint(SETTINGS_VALUE_X, 2 + row, row == 2 ? bits[appSettings.braidsBits] : levels[row == 3 ? appSettings.braidsDrift : appSettings.braidsSignature]);
   }
 }
 static int synthEdit(int, int row, CellEditAction action) {
@@ -252,14 +261,14 @@ static int synthEdit(int, int row, CellEditAction action) {
 static ScreenData synthData = {5, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::none, columnCount, synthStatic, synthCursor, NULL, noHeader, noHeader, synthField, synthEdit, NULL, NULL, NULL, NULL};
 
 static void mixerStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "MIXER"); }
-static void mixerCursor(int, int row) { gfxCursor(23, 2 + row, 4); }
+static void mixerCursor(int, int row) { gfxCursor(SETTINGS_VALUE_X, 2 + row, 4); }
 static void mixerField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, row == 0 ? "Mix volume" : row == 1 ? "Tilt pivot" : "Master limiter");
   gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-  if (row == 0) gfxPrintf(23, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f));
-  else if (row == 1) gfxPrintf(23, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
-  else gfxPrint(23, 4, appSettings.masterLimiter ? "ON " : "OFF");
+  if (row == 0) gfxPrintf(SETTINGS_VALUE_X, 2, "%03d%%", (int)(appSettings.mixVolume * 100.0f + .5f));
+  else if (row == 1) gfxPrintf(SETTINGS_VALUE_X, 3, "%u Hz", chipnomadState->project.tiltPivotHz);
+  else gfxPrint(SETTINGS_VALUE_X, 4, appSettings.masterLimiter ? "ON " : "OFF");
 }
 static int mixerEdit(int, int row, CellEditAction action) {
   if (row == 0) { uint8_t value = (uint8_t)(appSettings.mixVolume * 100.0f + .5f); int handled = edit8noLast(action, &value, 10, 1, 100); if (handled) { appSettings.mixVolume = (float)value / 100.0f; if (chipnomadState) chipnomadState->mixVolume = appSettings.mixVolume; rgnanoLog("mixer: mixVolume now %d%%", (int)value); } return handled; }
@@ -274,7 +283,7 @@ static ScreenData mixerData = {3, 0, 0, 0, -1, 0, 0, 0, 0, ScreenPlaybackLevel::
 #define GFX_TRACKVIEW_ROW 7
 #endif
 static void graphicsStatic(void) { gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 0, "GRAPHICS"); }
-static void graphicsCursor(int, int row) { if (row == GFX_TRACKVIEW_ROW) { gfxCursor(23, 2 + row, 3); return; } gfxCursor(row == 2 || row >= 4 ? 23 : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 || row == 7 ? 6 : 8); }
+static void graphicsCursor(int, int row) { if (row == GFX_TRACKVIEW_ROW) { gfxCursor(SETTINGS_VALUE_X, 2 + row, 3); return; } gfxCursor(row == 2 || row >= 4 ? SETTINGS_VALUE_X : 0, 2 + row, row == 0 ? 16 : row == 1 ? 9 : row == 2 ? 3 : row == 3 ? 13 : row == 4 || row == 7 ? 6 : 8); }
 static void graphicsField(int, int row, CellState state) {
   const ColorScheme cs = appSettings.colorScheme;
   if (row == 0) {
@@ -283,29 +292,29 @@ static void graphicsField(int, int row, CellState state) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(0, 3, "Load font");
   } else if (row == 2) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 4, "Song waveform");
-    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(23, 4, appSettings.persistentWaveform ? "ON " : "OFF");
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 4, appSettings.persistentWaveform ? "ON " : "OFF");
   } else if (row == 3) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(0, 5, "Track visuals");
   } else if (row == 4) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 6, "Waveform FPS");
-    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(23, 6, "%02d FPS", appSettings.waveformRefreshHz);
+    gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrintf(SETTINGS_VALUE_X, 6, "%02d FPS", appSettings.waveformRefreshHz);
   } else if (row == 5) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 7, "Renderer");
-    gfxSetFgColor(cs.textInfo); gfxPrint(23, 7, gfxGetRendererType());
+    gfxSetFgColor(cs.textInfo); gfxPrint(SETTINGS_VALUE_X, 7, gfxGetRendererType());
   } else if (row == 6) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 8, "Boot screen");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrint(23, 8, appSettings.bootScreenNight ? "Night   " : "Original");
+    gfxPrint(SETTINGS_VALUE_X, 8, appSettings.bootScreenNight ? "Night   " : "Original");
   } else if (row == 7) {
     // RG Nano: how often the screen is presented while the song plays.
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 9, "Play FPS");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrintf(23, 9, "%02d FPS", appSettings.playFps);
+    gfxPrintf(SETTINGS_VALUE_X, 9, "%02d FPS", appSettings.playFps);
   } else if (row == GFX_TRACKVIEW_ROW) {
     // Song screen: all tracks on one page, or 4 per page over two pages.
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 2 + row, "Track view");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault);
-    gfxPrint(23, 2 + row, appSettings.trackView ? "4x2" : "8  ");
+    gfxPrint(SETTINGS_VALUE_X, 2 + row, appSettings.trackView ? "4x2" : "8  ");
   }
 }
 static void fontLoaded(const char* path) {
@@ -391,8 +400,8 @@ static int audioInput(int down, int keys, int taps) { return menuInput(&audioDat
 static int mixerInput(int down, int keys, int taps) { return menuInput(&mixerData, down, keys, taps); }
 static int graphicsInput(int down, int keys, int taps) { return menuInput(&graphicsData, down, keys, taps); }
 static ScreenPlaybackLevel playbackLevel(void) { return ScreenPlaybackLevel::song; }
-const AppScreen screenControlsSettings = {NULL, setup, controlsRedraw, draw, controlsInput, playbackLevel};
-const AppScreen screenAudioSettings = {NULL, setup, audioRedraw, drawAudioCpuLoad, audioInput, playbackLevel};
-const AppScreen screenSynthSettings = {NULL, setup, synthRedraw, draw, synthInput, playbackLevel};
-const AppScreen screenMixerSettings = {NULL, setup, mixerRedraw, draw, mixerInput, playbackLevel};
-const AppScreen screenGraphicsSettings = {NULL, setup, graphicsRedraw, draw, graphicsInput, playbackLevel};
+const AppScreen screenControlsSettings = {NULL, setup, controlsRedraw, draw, controlsInput, playbackLevel, GRID_SCREEN_COLS};
+const AppScreen screenAudioSettings = {NULL, setup, audioRedraw, drawAudioCpuLoad, audioInput, playbackLevel, GRID_SCREEN_COLS};
+const AppScreen screenSynthSettings = {NULL, setup, synthRedraw, draw, synthInput, playbackLevel, GRID_SCREEN_COLS};
+const AppScreen screenMixerSettings = {NULL, setup, mixerRedraw, draw, mixerInput, playbackLevel, GRID_SCREEN_COLS};
+const AppScreen screenGraphicsSettings = {NULL, setup, graphicsRedraw, draw, graphicsInput, playbackLevel, GRID_SCREEN_COLS};

@@ -392,7 +392,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
 #endif
   screen->drawField(0, 0, CellState::focus);
   CHECK(std::string(mockGfxCells[2], 11) == "Sample rate");
-  CHECK(std::string(mockGfxCells[2] + 23, 6) == "48 kHz");
+  CHECK(std::string(mockGfxCells[2] + 22, 6) == "48 kHz");
   REQUIRE(screen->onEdit(0, 0, CellEditAction::decrease) == 1);
   CHECK(mockAudioReconfigureRate == 32000);
   CHECK(appSettings.audioSampleRate == 32000);
@@ -404,14 +404,14 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   mockAudioReconfigureResult = 0;
   screen->drawField(0, 1, CellState::focus);
   CHECK(std::string(mockGfxCells[3], 11) == "Buffer size");
-  CHECK(std::string(mockGfxCells[3] + 23, 3) == "512");
+  CHECK(std::string(mockGfxCells[3] + 22, 3) == "512");
   appSettings.audioBufferSize = 64;
   screen->drawField(0, 1, CellState::focus);
-  CHECK(std::string(mockGfxCells[3] + 23, 4) == "64  ");
+  CHECK(std::string(mockGfxCells[3] + 22, 4) == "64  ");
   appSettings.audioBufferSize = 256;
   screen->drawField(0, 2, CellState::normal);
   CHECK(std::string(mockGfxCells[4], 8) == "CPU load");
-  CHECK(std::string(mockGfxCells[4] + 23, 4) == "037%");
+  CHECK(std::string(mockGfxCells[4] + 22, 4) == "037%");
   CHECK_FALSE(screen->isCellValid(0, 2));
   screen->drawField(0, 3, CellState::focus);
 #ifdef RGNANO_BUILD
@@ -420,11 +420,11 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Settings menus and audio controls align") {
   CHECK(screen->isCellValid(0, 0));  // sample rate row is reachable (upstream behaviour)
   screen->drawField(0, 4, CellState::normal);
   CHECK(std::string(mockGfxCells[6], 11) == "Audio Input");
-  CHECK(std::string(mockGfxCells[6] + 23, 3) == "OFF");
+  CHECK(std::string(mockGfxCells[6] + 22, 3) == "OFF");
   CHECK(screen->isCellValid(0, 4));
 #else
   CHECK(std::string(mockGfxCells[5], 11) == "Audio Input");
-  CHECK(std::string(mockGfxCells[5] + 23, 3) == "OFF");
+  CHECK(std::string(mockGfxCells[5] + 22, 3) == "OFF");
   CHECK(screen->isCellValid(0, 3));
   REQUIRE(screen->onEdit(0, 3, CellEditAction::tap) == 1);
 #endif
@@ -651,7 +651,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Play FPS steps through 10/15/20/30 and pers
   appSettings.playFps = 20;
   screen->drawField(0, 7, CellState::focus);
   CHECK(std::string(mockGfxCells[9], 8) == "Play FPS");
-  CHECK(std::string(mockGfxCells[9] + 23, 6) == "20 FPS");
+  CHECK(std::string(mockGfxCells[9] + 22, 6) == "20 FPS");
   REQUIRE(screen->onEdit(0, 7, CellEditAction::increase) == 1);
   CHECK(appSettings.playFps == 30);
   REQUIRE(screen->onEdit(0, 7, CellEditAction::increase) == 1);
@@ -662,7 +662,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Play FPS steps through 10/15/20/30 and pers
   REQUIRE(screen->onEdit(0, 7, CellEditAction::decrease) == 1);
   CHECK(appSettings.playFps == 10);
   screen->drawField(0, 7, CellState::focus);
-  CHECK(std::string(mockGfxCells[9] + 23, 6) == "10 FPS");
+  CHECK(std::string(mockGfxCells[9] + 22, 6) == "10 FPS");
   appSettings.playFps = 20;
   REQUIRE(settingsLoad() == 0);
   CHECK(appSettings.playFps == 10);
@@ -689,7 +689,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Track view setting toggles between 8 and 4x
   REQUIRE(settingsLoad() == 0);
   CHECK(appSettings.trackView == !before);
   screen->drawField(0, row, CellState::normal);
-  CHECK(std::string(mockGfxCells[2 + row] + 23, 3) == (appSettings.trackView ? "4x2" : "8  "));
+  CHECK(std::string(mockGfxCells[2 + row] + 22, 3) == (appSettings.trackView ? "4x2" : "8  "));
 }
 
 TEST_CASE_FIXTURE(StickLiveFixture, "Persistent waveform is opt-in and its Settings toggle persists") {
@@ -704,7 +704,7 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Persistent waveform is opt-in and its Setti
   CHECK(screen->rows == 8);  // + Track view
 #endif
   screen->drawField(0, 2, CellState::focus);
-  CHECK(std::string(mockGfxCells[4] + 23, 3) == "OFF");
+  CHECK(std::string(mockGfxCells[4] + 22, 3) == "OFF");
   REQUIRE(screen->onEdit(0, 2, CellEditAction::tap) == 1);
   CHECK(appSettings.persistentWaveform == 1);
   REQUIRE(settingsLoad() == 0);

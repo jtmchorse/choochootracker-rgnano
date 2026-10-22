@@ -214,13 +214,13 @@ void drawStatic(){instrumentCommonDrawStatic();gfxSetFgColor(appSettings.colorSc
  for(int row=5;row<=8;++row)for(int col=0;col<columns(row);++col)
   programControlled|=sidImportedControlReason(current()->chip.sid,sidField(col,row))!=nullptr;
  gfxPrint(0,15,programControlled?"* = program controlled":"Max 4 notes (ring/sync uses 2)");
- if(!sidWaveformBitmap)sidWaveformBitmap=gfxBitmapCreate(32,3);gfxClearRect(0,16,32,3);renderFMPreview(sidWaveformBitmap,current());gfxDrawBitmap(sidWaveformBitmap,0,16);return;
+ if(!sidWaveformBitmap)sidWaveformBitmap=gfxBitmapCreate(INSTR_PREVIEW_COLS,3);gfxClearRect(0,16,INSTR_PREVIEW_COLS,3);renderFMPreview(sidWaveformBitmap,current());gfxDrawBitmap(sidWaveformBitmap,0,16);return;
  }gfxPrint(0,9,"Fine ct");gfxPrint(0,11,"Mode");const char* mode=isOPLL(current()->type)?"2 operator":fourOp()?"4 operator":dx7()?"6 operator":current()->chip.opl.topology==OPLTopology::fourOperator?"4 operator":current()->chip.opl.topology==OPLTopology::dualVoice?"Dual voice":"2 operator";gfxPrint(9,11,mode);instrumentFMAmpDrawStatic();}
-void drawCursor(int col,int row){if(sid()&&row==4){gfxCursor(col?28:9,7,col?4:18);return;}if(sid()&&row>=5){gfxCursor(sidX(col,row),sidY(row),sidWidth(col,row));return;}if(row==6){instrumentFMToneDrawCursor(col);return;}if(row>=7){instrumentFMAmpDrawCursor(col,row-7);return;}if(row<3)instrumentCommonDrawCursor(col,row);else if(row==5&&col==1)gfxCursor(16,9,4);else gfxCursor(9,row==3?6:row==4?7:9,row==5?4:28);}
+void drawCursor(int col,int row){if(sid()&&row==4){gfxCursor(col?25:9,7,col?4:15);return;}if(sid()&&row>=5){gfxCursor(sidX(col,row),sidY(row),sidWidth(col,row));return;}if(row==6){instrumentFMToneDrawCursor(col);return;}if(row>=7){instrumentFMAmpDrawCursor(col,row-7);return;}if(row<3)instrumentCommonDrawCursor(col,row);else if(row==5&&col==1)gfxCursor(16,9,4);else gfxCursor(9,row==3?6:row==4?7:9,row==5?4:INSTR_PRESET_NAME_W);}
 void drawField(int col,int row,CellState state){
  if(sid()&&row==4&&col==1){
   gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textInfo);
-  gfxClearRect(28,7,4,1);gfxPrint(28,7,"EDIT");return;
+  gfxClearRect(25,7,4,1);gfxPrint(25,7,"EDIT");return;
  }
  if(sid()&&row>=5){
   int x=sidX(col,row),y=sidY(row);auto v=current()->chip.sid.value[sidField(col,row)];
@@ -230,16 +230,16 @@ void drawField(int col,int row,CellState state){
   if(row==5&&!col){const char* waves[]={"Off","Tri","Saw","TS","Pulse","TP","SP","TSP","Noise"};gfxPrint(x,y,waves[v]);}
   else if(row==6){const char* modes[]={"Off","LP","BP","LB","HP","LH","BH","LBH"};gfxPrint(x,y,modes[v&7]);}
   else gfxPrintf(x,y,"%0*X",sidWidth(col,row),v);
-  if(sidWaveformBitmap){gfxClearRect(0,16,32,3);renderFMPreview(sidWaveformBitmap,current());gfxSetFgColor(appSettings.colorScheme.textInfo);gfxDrawBitmap(sidWaveformBitmap,0,16);}
+  if(sidWaveformBitmap){gfxClearRect(0,16,INSTR_PREVIEW_COLS,3);renderFMPreview(sidWaveformBitmap,current());gfxSetFgColor(appSettings.colorScheme.textInfo);gfxDrawBitmap(sidWaveformBitmap,0,16);}
   return;
  }
 
   if(row==6){instrumentFMToneDrawField(col,state);return;}if(row>=7){instrumentFMAmpDrawField(col,row-7,state);return;}
   if(row<3){instrumentCommonDrawField(col,row,state);return;}
   if(row==5&&col==1){gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textInfo);gfxClearRect(16,9,4,1);gfxPrint(16,9,"EDIT");return;}
-  gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);int y=row==3?6:row==4?7:9;gfxClearRect(9,y,row==3?(sid()?23:28):row==5?6:sid()?18:30,1);
-  if(row==3)gfxPrintf(9,y,"%.*s",sid()?23:28,instrumentPresetCollectionName());
-  else if(row==4)gfxPrintf(9,y,"%.*s",sid()?18:30,presetName());else gfxPrintf(9,y,"%+04d",fineTune());
+  gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);int y=row==3?6:row==4?7:9;gfxClearRect(9,y,row==3?INSTR_PRESET_NAME_W:row==5?6:sid()?15:INSTR_PRESET_NAME_W,1);
+  if(row==3)gfxPrintf(9,y,"%.*s",INSTR_PRESET_NAME_W,instrumentPresetCollectionName());
+  else if(row==4)gfxPrintf(9,y,"%.*s",sid()?15:INSTR_PRESET_NAME_W,presetName());else gfxPrintf(9,y,"%+04d",fineTune());
   instrumentFMRefreshStaticWaveform();
 }
 int onEdit(int col,int row,CellEditAction action){

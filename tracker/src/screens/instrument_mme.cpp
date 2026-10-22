@@ -9,7 +9,7 @@ static int modelButtonDown;
 static Bitmap* previewBitmap;
 
 static void drawPreview(const InstrumentMME* mme) {
-  if (!previewBitmap) previewBitmap = gfxBitmapCreate(32, 3);
+  if (!previewBitmap) previewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
   renderMMEPreview(previewBitmap, mme);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(previewBitmap, 0, 16);
@@ -58,7 +58,7 @@ static void drawCursor(int col, int row) {
   if (row < 3) { instrumentCommonDrawCursor(col, row); return; }
   if (row == 10) { instrumentCommonDrawVoicePostCursor(col, 9); return; }
   if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostCursor(col, row); return; }
-  gfxCursor(11, row == 3 ? 6 : row + 4, row == 3 ? 3 + strlen(modelName(m->model)) : 2);
+  gfxCursor(11, row == 3 ? 6 : row + 4, row == 3 ? 3 + INSTR_CLIP_NAME(strlen(modelName(m->model))) : 2);
 }
 static void drawField(int col, int row, CellState state) {
   if (row < 3) { instrumentCommonDrawField(col, row, state); return; }
@@ -66,8 +66,8 @@ static void drawField(int col, int row, CellState state) {
   if (row == 10) { instrumentCommonDrawVoicePostField(col, 9, state, m); return; }
   if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostField(col, row, state, m); return; }
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? 20 : 7, 1);
-  if (row == 3) gfxPrintf(11, 6, "%02d %s", (int)m->model, modelName(m->model));
+  gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? INSTR_MODEL_NAME_W + 4 : 6, 1);
+  if (row == 3) gfxPrintf(11, 6, "%02d %.*s", (int)m->model, INSTR_MODEL_NAME_W, modelName(m->model));
   else if (uint8_t* value = macro(m, row - 4)) gfxPrint(11, row + 4, byteToHex(*value));
 }
 static int onEdit(int col, int row, CellEditAction action) {

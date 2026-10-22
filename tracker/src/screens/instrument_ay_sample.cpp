@@ -12,7 +12,7 @@
 // Preview configuration
 #define PREVIEW_ROW 16
 #define PREVIEW_COL 0
-#define PREVIEW_WIDTH_CHARS 32
+#define PREVIEW_WIDTH_CHARS INSTR_PREVIEW_COLS
 #define PREVIEW_HEIGHT_CHARS 3
 
 // Screen layout:

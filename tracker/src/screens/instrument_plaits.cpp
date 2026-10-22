@@ -22,7 +22,7 @@ static int usesChordNames(const InstrumentPlaits* p) {
 }
 
 static void drawPreview(const InstrumentPlaits* plaits) {
-  if (!previewBitmap) previewBitmap = gfxBitmapCreate(32, 3);
+  if (!previewBitmap) previewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
   renderPlaitsPreview(previewBitmap, plaits, isAlt());
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(previewBitmap, 0, 16);
@@ -95,7 +95,7 @@ static void drawCursor(int col, int row) {
     gfxCursor(7 + col * 5, 14, 2);
     return;
   }
-  else if (row == 3) gfxCursor(12, 6, 3 + strlen(modelCatalogName(isAlt() ? InstrumentType::PlaitsAlt : InstrumentType::Plaits, p->engine)));
+  else if (row == 3) gfxCursor(12, 6, 3 + INSTR_CLIP_NAME(strlen(modelCatalogName(isAlt() ? InstrumentType::PlaitsAlt : InstrumentType::Plaits, p->engine))));
   else if (!col) gfxCursor(11, row + 4, row == 4 && usesChordNames(p) ? strlen(plaitsChordName(p->harmonics)) : row == 8 ? (p->envelopeMode == 0 ? 4 : 3) : 2);
 }
 
@@ -113,16 +113,16 @@ static void drawField(int col, int row, CellState state) {
     }
     uint8_t values[] = {p->attack, p->decay, p->sustain, p->release, p->envelopeShape};
     uint8_t value = p->envelopeMode == 0 ? values[col + 1] : values[col];
-    gfxPrint(col == 4 ? 31 : 7 + col * 5, 14, byteToHex(value));
+    gfxPrint(col == 4 ? INSTR_SHP_VAL_X : 7 + col * 5, 14, byteToHex(value));
     if (p->envelopeMode != 0) {
       instrumentCommonDrawEnvelopePreview(p->attack, p->decay, p->sustain, p->release, p->envelopeShape);
     }
     return;
   }
-  if (row == 3) gfxClearRect(11, 6, 29, 1);
-  else gfxClearRect(col ? 26 : 11, row + 4, col ? 8 : 7, 1);
+  if (row == 3) gfxClearRect(11, 6, INSTR_MODEL_NAME_W + 4, 1);
+  else gfxClearRect(col ? INSTR_FILTER_VAL_X : 11, row + 4, col ? INSTR_FILTER_VAL_W : 6, 1);
   switch (row) {
-    case 3: gfxPrintf(12, 6, "%02d %s", p->engine, modelCatalogName(isAlt() ? InstrumentType::PlaitsAlt : InstrumentType::Plaits, p->engine)); break;
+    case 3: gfxPrintf(12, 6, "%02d %.*s", p->engine, INSTR_MODEL_NAME_W, modelCatalogName(isAlt() ? InstrumentType::PlaitsAlt : InstrumentType::Plaits, p->engine)); break;
     case 4: if (!col) {
       if (usesChordNames(p)) gfxPrint(11, 8, plaitsChordName(p->harmonics));
       else gfxPrint(11, 8, byteToHex(controlFromRange(p->harmonics, 32767)));

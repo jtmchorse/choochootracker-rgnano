@@ -29,6 +29,14 @@ int screenModulationRowAt(int y) {
   return -1;
 }
 
+static const int projectButtonX[PROJECT_BUTTON_COUNT] = {0, 5, 10, 14, 21};
+static const int projectButtonW[PROJECT_BUTTON_COUNT] = {4, 4, 3, 6, 6};
+int screenProjectButtonX(int button) { return projectButtonX[button]; }
+int screenProjectButtonW(int button) { return projectButtonW[button]; }
+
+int screenAYWavetableStepX(int step) { return 2 + step % AYWT_STEPS_PER_LINE; }
+int screenAYWavetableStepY(int step) { return AYWT_EDITOR_Y + step / AYWT_STEPS_PER_LINE; }
+
 ScreenOverlayCoordinates::ScreenOverlayCoordinates()
   : previous_(gfxGetContentRowOffset()), previousPx_(gfxGetPixelOffsetX()), previousExtra_(gfxGetRectExtraWidth()) {
   gfxSetContentRowOffset(0);
