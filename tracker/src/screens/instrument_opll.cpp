@@ -39,7 +39,7 @@ static void drawCursor(int col, int row) {
   if (row == 4 && col == 1) { gfxCursor(16, 9, 4); return; }
   if (row >= 6) { instrumentFMAmpDrawCursor(col, row - 6); return; }
   if (row < 3) instrumentCommonDrawCursor(col, row);
-  else gfxCursor(9, row == 3 ? 7 : 9, row == 3 ? 27 : 4);
+  else gfxCursor(9, row == 3 ? 7 : 9, row == 3 ? INSTR_PRESET_NAME_W : 4);
 }
 static void drawField(int col, int row, CellState state) {
   if (row == 5) { instrumentFMToneDrawField(col, state); return; }
@@ -50,8 +50,8 @@ static void drawField(int col, int row, CellState state) {
     gfxClearRect(16, 9, 4, 1); gfxPrint(16, 9, "EDIT"); return;
   }
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  gfxClearRect(9, row == 3 ? 7 : 9, row == 3 ? 30 : 6, 1);
-  if (row == 3) gfxPrintf(9, 7, "%02d %.27s", current()->chip.opll.program, current()->chip.opll.program ? opllPresetName(current()->type, current()->chip.opll.program) : "Custom");
+  gfxClearRect(9, row == 3 ? 7 : 9, row == 3 ? INSTR_PRESET_NAME_W : 6, 1);
+  if (row == 3) gfxPrintf(9, 7, "%02d %.18s", current()->chip.opll.program, current()->chip.opll.program ? opllPresetName(current()->type, current()->chip.opll.program) : "Custom");
   else gfxPrintf(9, 9, "%+04d", current()->chip.opll.fineTune);
   instrumentFMRefreshStaticWaveform();
 }

@@ -16,7 +16,7 @@ static constexpr int sourceValueWidth = 7;
 static Bitmap* previewBitmap;
 
 static void drawPreview(const InstrumentBYOWTBL* table) {
-  if (!previewBitmap) previewBitmap = gfxBitmapCreate(32, 3);
+  if (!previewBitmap) previewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
   renderSCWFPreview(previewBitmap, table, table->frameSize, table->frameIndex);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(previewBitmap, 0, 16);
@@ -82,7 +82,7 @@ static void drawCursor(int col, int row) {
   if (row < 3) return instrumentCommonDrawCursor(col, row);
   if (instrumentCommonDrawVoicePostCursor(col, row)) return;
   if (!col && row >= 3 && row <= 8) gfxCursor(sourceValueX, row + 5, sourceValueWidth);
-  else gfxCursor(26, row + 4, 8);
+  else gfxCursor(INSTR_FILTER_VAL_X, row + 4, INSTR_FILTER_VAL_W);
 }
 
 static void drawField(int col, int row, CellState state) {

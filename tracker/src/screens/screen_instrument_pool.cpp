@@ -7,6 +7,13 @@
 #include "screen_instrument.h"
 #include "copy_paste.h"
 #include <string.h>
+#include "track_paging.h"
+
+// 1:1 grid (30 columns): the type column starts at 20 and is clipped to 10.
+#define POOL_TYPE_X 20
+#define POOL_TYPE_W 10
+static_assert(POOL_TYPE_X + POOL_TYPE_W <= GRID_SCREEN_COLS, "INSTRUMENT POOL rows must fit the 1:1 grid");
+static_assert(4 + 15 < POOL_TYPE_X, "INSTRUMENT POOL name column must clear the type column");
 
 static int cursorRow = 0;
 static int topRow = 0;
@@ -73,8 +80,8 @@ static void fullRedraw(void) {
     }
 
     // Draw instrument type
-    gfxClearRect(20, y, 14, 1);
-    gfxPrint(20, y, instrumentTypeName(chipnomadState->project.instruments[i].type));
+    gfxClearRect(POOL_TYPE_X, y, POOL_TYPE_W, 1);
+    gfxPrintf(POOL_TYPE_X, y, "%.*s", POOL_TYPE_W, instrumentTypeName(chipnomadState->project.instruments[i].type));
   }
 }
 
@@ -241,8 +248,8 @@ static int onInput(int isKeyDown, int keys, int tapCount) {
       } else {
         gfxPrint(4, oldY, "               ");
       }
-      gfxClearRect(20, oldY, 14, 1);
-      gfxPrint(20, oldY, instrumentTypeName(chipnomadState->project.instruments[oldCursorRow].type));
+      gfxClearRect(POOL_TYPE_X, oldY, POOL_TYPE_W, 1);
+      gfxPrintf(POOL_TYPE_X, oldY, "%.*s", POOL_TYPE_W, instrumentTypeName(chipnomadState->project.instruments[oldCursorRow].type));
     }
 
     // Draw new cursor line
@@ -255,8 +262,8 @@ static int onInput(int isKeyDown, int keys, int tapCount) {
     } else {
       gfxPrint(4, newY, "               ");
     }
-    gfxClearRect(20, newY, 14, 1);
-    gfxPrint(20, newY, instrumentTypeName(chipnomadState->project.instruments[cursorRow].type));
+    gfxClearRect(POOL_TYPE_X, newY, POOL_TYPE_W, 1);
+    gfxPrintf(POOL_TYPE_X, newY, "%.*s", POOL_TYPE_W, instrumentTypeName(chipnomadState->project.instruments[cursorRow].type));
   }
   return 0;
 }
@@ -272,4 +279,5 @@ const AppScreen screenInstrumentPool = {
   .draw = draw,
   .onInput = onInput,
   .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };

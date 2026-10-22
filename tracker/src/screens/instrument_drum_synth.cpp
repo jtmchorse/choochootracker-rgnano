@@ -59,17 +59,17 @@ static void drawStatic(void) {
 static void drawCursor(int col, int row) {
   if (row < 3) { instrumentCommonDrawCursor(col, row); return; }
   if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostCursor(col, row); return; }
-  if (row == 3) gfxCursor(11, 6, 3 + strlen(engineName(chipnomadState->project.instruments[cInstrument].chip.drumSynth.engine))); else if (!col) gfxCursor(11, row + 4, 2);
+  if (row == 3) gfxCursor(11, 6, 3 + INSTR_CLIP_NAME(strlen(engineName(chipnomadState->project.instruments[cInstrument].chip.drumSynth.engine)))); else if (!col) gfxCursor(11, row + 4, 2);
 }
 static void drawField(int col, int row, CellState state) {
   if (row < 3) { instrumentCommonDrawField(col, row, state); return; }
   InstrumentDrumSynth* d = &chipnomadState->project.instruments[cInstrument].chip.drumSynth;
   if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostField(col, row, state, d); return; }
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  // Macro fields share their rows with the post-filter labels at x=18.
+  // Macro fields share their rows with the post-filter labels at x=17.
   // Do not erase the right-hand column while redrawing a left macro.
-  gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? 20 : 7, 1);
-  if (row == 3) gfxPrintf(11, 6, "%02d %s", (int)d->engine, engineName(d->engine));
+  gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? INSTR_MODEL_NAME_W + 4 : 6, 1);
+  if (row == 3) gfxPrintf(11, 6, "%02d %.*s", (int)d->engine, INSTR_MODEL_NAME_W, engineName(d->engine));
   else if (drumSynthMacroUsed(d->engine, row - 4)) {
     if (uint8_t* value = macro(d, row - 4)) gfxPrint(11, row + 4, byteToHex(*value));
   } else gfxPrint(11, row + 4, "--");

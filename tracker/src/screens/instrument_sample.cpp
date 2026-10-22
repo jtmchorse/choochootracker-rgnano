@@ -19,7 +19,7 @@ static int samplePreviewWidth, samplePreviewHeight;
 static const char* stretchLabels[] = {"Off", "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars"};
 
 static void updateSamplePreview(const InstrumentSample* sample) {
-  int width = 32;
+  int width = INSTR_PREVIEW_COLS;
   int height = 3;
   if (width != samplePreviewWidth || height != samplePreviewHeight) {
     gfxBitmapFree(samplePreviewBitmap);
@@ -143,7 +143,7 @@ static void drawCursor(int col, int row) {
     const int w = col == 0 ? sourceValueWidth : editLabelWidth;
     gfxCursor(x, 6, w);
   }
-  else gfxCursor(col ? 26 : sourceValueX,row+4,col?8:sourceValueWidth);
+  else gfxCursor(col ? INSTR_FILTER_VAL_X : sourceValueX,row+4,col?INSTR_FILTER_VAL_W:sourceValueWidth);
 }
 
 static const char* sampleFilename(const char* path) {
@@ -167,7 +167,7 @@ static void drawField(int col, int row, CellState state) {
     if (col == 0) gfxClearRect(sourceValueX, 6, sourceValueWidth, 1);
     else gfxClearRect(editLabelX, 6, editLabelWidth, 1);
   } else {
-    gfxClearRect(col?26:sourceValueX,row+4,col?8:sourceValueWidth,1);
+    gfxClearRect(col?INSTR_FILTER_VAL_X:sourceValueX,row+4,col?INSTR_FILTER_VAL_W:sourceValueWidth,1);
   }
   switch (row) {
     case 3: {

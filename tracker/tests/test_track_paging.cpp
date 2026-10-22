@@ -7,6 +7,7 @@
 #include "screens.h"
 #include "screen_layout.h"
 #include <algorithm>
+#include <cstring>
 #include "corelib_gfx.h"
 #include "../platforms/shared/rgnano_keymap.h"
 
@@ -292,6 +293,71 @@ TEST_CASE("grid screens: widest MODULATION row fits 30 columns") {
   CHECK(MOD_COL_RIGHT_VAL + MOD_VALUE_W <= GRID_SCREEN_COLS);
   CHECK(MOD_COL_LEFT_VAL + MOD_DEST_W_LEFT <= MOD_COL_RIGHT_X);
   CHECK(MOD_COL_LEFT_VAL + MOD_TYPE_W + 1 <= MOD_COL_RIGHT_X);
+}
+
+// INSTRUMENT family, INSTRUMENT POOL, PROJECT, AY WAVETABLE and SETTINGS present 1:1 at 30
+// columns too. The screens are mocked here, so the shared layout constants are checked
+// (each screen also static_asserts them next to its drawing code).
+TEST_CASE("grid screens: widest INSTRUMENT row fits 30 columns") {
+  CHECK(INSTR_LOAD_X + 4 < INSTR_SAVE_X);
+  CHECK(INSTR_SAVE_X + 4 <= GRID_SCREEN_COLS);
+  CHECK(8 + 15 <= INSTR_VP_LABEL_X);                 // 15 character name before PAN / VOL
+  CHECK(INSTR_VP_LABEL_X + 3 < INSTR_VP_VAL_X);
+  CHECK(INSTR_VP_VAL_X + 2 <= GRID_SCREEN_COLS);
+  CHECK(INSTR_SHP_LABEL_X + 3 <= INSTR_SHP_VAL_X);
+  CHECK(INSTR_SHP_VAL_X + 2 <= GRID_SCREEN_COLS);
+  CHECK(INSTR_FILTER_X + 6 <= INSTR_FILTER_VAL_X);   // "Cutoff" ends before its value
+  CHECK(INSTR_FILTER_VAL_X + INSTR_FILTER_VAL_W <= GRID_SCREEN_COLS);
+  CHECK(INSTR_FILTER_VAL_W >= (int)strlen("Classic"));
+  CHECK(INSTR_FILTER_VAL_W >= (int)strlen("20000Hz"));
+  CHECK(INSTR_PREVIEW_COLS <= GRID_SCREEN_COLS);
+  CHECK(11 + 3 + INSTR_MODEL_NAME_W <= GRID_SCREEN_COLS);   // "NN name" model rows
+  CHECK(9 + INSTR_PRESET_NAME_W <= GRID_SCREEN_COLS);       // FM preset / collection names
+  CHECK(INSTR_FB_X + (int)strlen("Feedback") < INSTR_FB_VAL_X);
+  CHECK(INSTR_FB_VAL_X + (int)strlen("Preset") <= GRID_SCREEN_COLS);
+  CHECK(INSTR_EDIT_X + 4 <= GRID_SCREEN_COLS);
+  CHECK(INSTR_TEXT_COLS <= GRID_SCREEN_COLS);
+  CHECK(MONK_COL2_VAL + 2 <= GRID_SCREEN_COLS);
+  CHECK(MONK_COL2_X + (int)strlen("Delay rate") < MONK_COL2_VAL);
+  CHECK(MONK_PAN_LABEL_X + 3 + 1 + 2 <= GRID_SCREEN_COLS);
+  CHECK(8 + MONK_PRESET_W < MONK_EDIT_X);
+  CHECK(MONK_EDIT_X + 4 <= GRID_SCREEN_COLS);
+  CHECK(MONK_VOWEL_X + 4 * 3 + 1 <= GRID_SCREEN_COLS);
+}
+
+TEST_CASE("grid screens: AY WAVETABLE editor wraps 16 + 16 inside 30 columns") {
+  CHECK(2 + AYWT_PREVIEW_COLS <= GRID_SCREEN_COLS);
+  CHECK(AYWT_STEPS_PER_LINE * AYWT_EDITOR_LINES == 32);
+  int right = 0;
+  for (int step = 0; step < 32; ++step) {
+    right = std::max(right, screenAYWavetableStepX(step) + 1);
+    CHECK(screenAYWavetableStepX(step) >= 2);                          // after the 2 character index
+    CHECK(screenAYWavetableStepY(step) == AYWT_EDITOR_Y + step / 16);
+    // no two steps share a cell
+    if (step > 0) CHECK((screenAYWavetableStepX(step) != screenAYWavetableStepX(step - 1) ||
+                         screenAYWavetableStepY(step) != screenAYWavetableStepY(step - 1)));
+  }
+  CHECK(right == 2 + 16);
+  CHECK(right <= GRID_SCREEN_COLS);
+  CHECK(screenAYWavetableStepX(0) == 2);
+  CHECK(screenAYWavetableStepX(16) == 2);
+  CHECK(screenAYWavetableStepY(16) == AYWT_EDITOR_Y + 1);
+  CHECK(screenAYWavetableStepX(31) == 17);
+  CHECK(AYWT_EDITOR_Y + AYWT_EDITOR_LINES + 6 <= 19);               // +1/+2/+3 previews end above the status row
+}
+
+TEST_CASE("grid screens: widest PROJECT row fits 30 columns, buttons do not overlap") {
+  int right = 0;
+  for (int b = 0; b < PROJECT_BUTTON_COUNT; ++b) {
+    right = std::max(right, screenProjectButtonX(b) + screenProjectButtonW(b));
+    if (b > 0) CHECK(screenProjectButtonX(b) > screenProjectButtonX(b - 1) + screenProjectButtonW(b - 1) - 1);
+  }
+  CHECK(right <= GRID_SCREEN_COLS);
+  CHECK(PROJECT_TEXT_X + 24 <= GRID_SCREEN_COLS);                   // file name / title / author
+  CHECK(PROJECT_VALUE_X + PROJECT_VALUE_W <= GRID_SCREEN_COLS);
+  CHECK(PROJECT_LINK_X + (int)strlen("[Disconnect]") < PROJECT_LINK_STATUS_X);
+  CHECK(PROJECT_LINK_STATUS_X + (int)strlen("connected") <= GRID_SCREEN_COLS);
+  CHECK(PROJECT_LINK_X > (int)strlen("Link"));
 }
 
 #ifdef RGNANO_BUILD

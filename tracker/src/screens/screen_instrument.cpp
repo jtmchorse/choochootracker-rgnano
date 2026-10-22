@@ -6,6 +6,8 @@
 #include "chipnomad_lib.h"
 #include "project_utils.h"
 #include "screen_instrument.h"
+#include "track_paging.h"
+#include "screen_layout.h"
 #include "user_presets.h"
 #include "user_preset_browser.h"
 #include "waveform_display.h"
@@ -413,8 +415,8 @@ void instrumentCommonDrawStatic(void) {
   gfxPrint(0, 3, "Name");
   gfxPrint(0, 4, "Transp.");
   gfxPrint(14, 4, "TIC");
-  gfxPrint(28, 3, "PAN");
-  gfxPrint(28, 4, "VOL");
+  gfxPrint(INSTR_VP_LABEL_X, 3, "PAN");
+  gfxPrint(INSTR_VP_LABEL_X, 4, "VOL");
 }
 
 void instrumentCommonDrawCursor(int col, int row) {
@@ -423,10 +425,10 @@ void instrumentCommonDrawCursor(int col, int row) {
     gfxCursor(8, 2, strlen(instrumentTypeName(chipnomadState->project.instruments[cInstrument].type)));
   } else if (row == 0 && col == 1) {
     // Load
-    gfxCursor(23, 2, 4);
+    gfxCursor(INSTR_LOAD_X, 2, 4);
   } else if (row == 0 && col == 2) {
     // Save
-    gfxCursor(29, 2, 4);
+    gfxCursor(INSTR_SAVE_X, 2, 4);
   } else if (row == 1) {
     // Instrument name
     gfxCursor(8 + col, 3, 1);
@@ -437,9 +439,9 @@ void instrumentCommonDrawCursor(int col, int row) {
     // Table tic speed
     gfxCursor(18, 4, 2);
   } else if (row == 2 && col == 2) {
-    gfxCursor(32, 4, 2);
+    gfxCursor(INSTR_VP_VAL_X, 4, 2);
   } else if (row == 2 && col == 3) {
-    gfxCursor(32, 3, 2);
+    gfxCursor(INSTR_VP_VAL_X, 3, 2);
   }
 }
 
@@ -454,13 +456,13 @@ void instrumentCommonDrawField(int col, int row, CellState state) {
     gfxPrint(8, 2, instrumentTypeName(chipnomadState->project.instruments[cInstrument].type));
   } else if (row == 0 && col == 1) {
     // Load
-    gfxPrint(23, 2, "Load");
+    gfxPrint(INSTR_LOAD_X, 2, "Load");
   } else if (row == 0 && col == 2) {
     // Save
-    gfxPrint(29, 2, "Save");
+    gfxPrint(INSTR_SAVE_X, 2, "Save");
   } else if (row == 0 && col == 3) {
     // Save
-    gfxPrint(29, 2, "Save");
+    gfxPrint(INSTR_SAVE_X, 2, "Save");
   } else if (row == 1) {
     // Instrument name
     gfxClearRect(8, 3, PROJECT_INSTRUMENT_NAME_LENGTH, 1);
@@ -472,21 +474,21 @@ void instrumentCommonDrawField(int col, int row, CellState state) {
     // Table tic speed
     gfxPrint(18, 4, byteToHex(chipnomadState->project.instruments[cInstrument].tableSpeed));
   } else if (row == 2 && col == 2) {
-    gfxPrint(32, 4, byteToHex(chipnomadState->project.instruments[cInstrument].volume));
+    gfxPrint(INSTR_VP_VAL_X, 4, byteToHex(chipnomadState->project.instruments[cInstrument].volume));
   } else if (row == 2 && col == 3) {
-    gfxPrint(32, 3, byteToHex(chipnomadState->project.instruments[cInstrument].pan));
+    gfxPrint(INSTR_VP_VAL_X, 3, byteToHex(chipnomadState->project.instruments[cInstrument].pan));
   }
 }
 
 void instrumentCommonDrawVoicePostStatic(int drawEnvelope) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
-  gfxPrint(18, 7, "FILTER");
+  gfxPrint(INSTR_FILTER_X, 7, "FILTER");
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  gfxPrint(18, 8, "Type");
-  gfxPrint(18, 9, "Mode");
-  gfxPrint(18, 10, "Slope");
-  gfxPrint(18, 11, "Cutoff");
-  gfxPrint(18, 12, "Reso");
+  gfxPrint(INSTR_FILTER_X, 8, "Type");
+  gfxPrint(INSTR_FILTER_X, 9, "Mode");
+  gfxPrint(INSTR_FILTER_X, 10, "Slope");
+  gfxPrint(INSTR_FILTER_X, 11, "Cutoff");
+  gfxPrint(INSTR_FILTER_X, 12, "Reso");
   if (drawEnvelope) {
     gfxSetFgColor(appSettings.colorScheme.textTitles);
     gfxPrint(0, 14, "ADSR");
@@ -495,13 +497,13 @@ void instrumentCommonDrawVoicePostStatic(int drawEnvelope) {
     gfxPrint(11, 14, "D");
     gfxPrint(16, 14, "S");
     gfxPrint(21, 14, "R");
-    gfxPrint(27, 14, "SHP");
+    gfxPrint(INSTR_SHP_LABEL_X, 14, "SHP");
   }
 }
 
 int instrumentCommonDrawVoicePostCursor(int col, int row) {
   if (row == 9) {
-    gfxCursor(col == 4 ? 31 : 7 + col * 5, 14, 2);
+    gfxCursor(col == 4 ? INSTR_SHP_VAL_X : 7 + col * 5, 14, 2);
     return 1;
   }
   if (col && row >= 4 && row <= 8) {
@@ -514,10 +516,10 @@ int instrumentCommonDrawVoicePostCursor(int col, int row) {
       width = 5;
     } else if (row == 7) {
       char value[12];
-      snprintf(value, sizeof(value), "%u Hz", post ? post->filterCutoffHz : 0);
+      snprintf(value, sizeof(value), "%uHz", post ? post->filterCutoffHz : 0);
       width = (int)strlen(value);
     }
-    gfxCursor(26, row + 4, width);
+    gfxCursor(INSTR_FILTER_VAL_X, row + 4, width);
     return 1;
   }
   return 0;
@@ -528,19 +530,19 @@ int instrumentCommonDrawVoicePostField(int col, int row, CellState state,
   if (row == 9) {
     const uint8_t values[] = {post->attack, post->decay, post->sustain, post->release, post->envelopeShape};
     gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-    gfxPrint(col == 4 ? 31 : 7 + col * 5, 14, byteToHex(values[col]));
+    gfxPrint(col == 4 ? INSTR_SHP_VAL_X : 7 + col * 5, 14, byteToHex(values[col]));
     instrumentCommonDrawEnvelopePreview(post->attack, post->decay, post->sustain, post->release, post->envelopeShape);
     return 1;
   }
   if (!col || row < 4 || row > 8) return 0;
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  gfxClearRect(26, row + 4, 8, 1);
+  gfxClearRect(INSTR_FILTER_VAL_X, row + 4, INSTR_FILTER_VAL_W, 1);
   switch (row) {
-    case 4: { static const char* types[] = {"Off", "Clean", "Classic", "Aggro", "Acid"}; gfxPrint(26, 8, types[post->filterCharacter <= 4 ? post->filterCharacter : 1]); break; }
-    case 5: { static const char* modes[] = {"LP", "BP", "HP"}; gfxPrint(26, 9, modes[post->filterMode <= 2 ? post->filterMode : 0]); break; }
-    case 6: gfxPrint(26, 10, post->filterSlope24dB ? "24 dB" : "12 dB"); break;
-    case 7: gfxPrintf(26, 11, "%u Hz", post->filterCutoffHz); break;
-    case 8: gfxPrint(26, 12, byteToHex(post->filterResonance)); break;
+    case 4: { static const char* types[] = {"Off", "Clean", "Classic", "Aggro", "Acid"}; gfxPrint(INSTR_FILTER_VAL_X, 8, types[post->filterCharacter <= 4 ? post->filterCharacter : 1]); break; }
+    case 5: { static const char* modes[] = {"LP", "BP", "HP"}; gfxPrint(INSTR_FILTER_VAL_X, 9, modes[post->filterMode <= 2 ? post->filterMode : 0]); break; }
+    case 6: gfxPrint(INSTR_FILTER_VAL_X, 10, post->filterSlope24dB ? "24 dB" : "12 dB"); break;
+    case 7: gfxPrintf(INSTR_FILTER_VAL_X, 11, "%uHz", post->filterCutoffHz); break;
+    case 8: gfxPrint(INSTR_FILTER_VAL_X, 12, byteToHex(post->filterResonance)); break;
   }
   return 1;
 }
@@ -650,7 +652,7 @@ void instrumentCommonDrawLivePreview(void) {
       livePreviewRefresh = {};
     }
   } else {
-    if (!livePreviewBitmap) livePreviewBitmap = gfxBitmapCreate(32, 3);
+    if (!livePreviewBitmap) livePreviewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
     if (!livePreviewBitmap) return;
     livePreviewLastActivity = now;
     int hz = appSettings.waveformRefreshHz;
@@ -665,7 +667,7 @@ void instrumentCommonDrawLivePreview(void) {
   }
   // Cached bitmap pixels are transparent; clear on every draw, not only when
   // resampling, so a control's static preview cannot show through underneath.
-  gfxClearRect(0, 16, 32, 3);
+  gfxClearRect(0, 16, INSTR_PREVIEW_COLS, 3);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(livePreviewBitmap, 0, 16);
   Instrument* instrument = &chipnomadState->project.instruments[cInstrument];
@@ -959,5 +961,15 @@ const AppScreen screenInstrument = {
   .fullRedraw = fullRedraw,
   .draw = draw,
   .onInput = onInput,
-  .getPlaybackLevel = getPlaybackLevel
+  .getPlaybackLevel = getPlaybackLevel,
+  .gridCols = GRID_SCREEN_COLS
 };
+
+// 1:1 grid fit: the widest instrument-common rows must end within the 30 columns.
+static_assert(INSTR_LOAD_X + 4 <= GRID_SCREEN_COLS && INSTR_SAVE_X + 4 <= GRID_SCREEN_COLS, "INSTRUMENT Load/Save must fit the 1:1 grid");
+static_assert(INSTR_LOAD_X + 4 < INSTR_SAVE_X, "INSTRUMENT Load and Save must not touch");
+static_assert(INSTR_VP_VAL_X + 2 <= GRID_SCREEN_COLS && 8 + PROJECT_INSTRUMENT_NAME_LENGTH <= INSTR_VP_LABEL_X, "INSTRUMENT name, PAN and VOL must fit the 1:1 grid");
+static_assert(INSTR_SHP_VAL_X + 2 <= GRID_SCREEN_COLS, "INSTRUMENT shape value must fit the 1:1 grid");
+static_assert(INSTR_FILTER_VAL_X + INSTR_FILTER_VAL_W <= GRID_SCREEN_COLS, "INSTRUMENT filter values must fit the 1:1 grid");
+static_assert(INSTR_FILTER_X + 6 <= INSTR_FILTER_VAL_X, "INSTRUMENT filter labels must clear the values");
+static_assert(INSTR_PREVIEW_COLS <= GRID_SCREEN_COLS, "INSTRUMENT preview must fit the 1:1 grid");

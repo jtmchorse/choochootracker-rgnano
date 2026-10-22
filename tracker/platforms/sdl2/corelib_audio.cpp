@@ -25,6 +25,7 @@ void audioCleanup(void) { rgnanoAudioClose(); }
 //    owns the playback device, so a re-init would kill playback. A vanished
 //    capture device only closes the capture device (see alsaCaptureRefresh).
 #include "alsa_capture.h"
+#include "audio_input_manager.h"
 #include <cstring>
 #include <stdlib.h>
 static SDL_AudioDeviceID captureDevice = 0;
@@ -99,6 +100,11 @@ int audioInputSetup(AudioCaptureCallback* callback, int sampleRate, int bufferSi
   alsaCaptureSetOpenName(c->name);
   rgnanoCaptureStatsName(c->name);
   rgnanoLog("capture: open OK device=%u freq=%d ch=%d samples=%d", (unsigned)captureDevice, have.freq, have.channels, have.samples);
+  {
+    int outFrames = rgnanoOutputCallbackFrames();
+    if (outFrames <= 0) outFrames = 1024;
+    rgnanoLog("capture: monitor ring %d frames, prime %u", audioInputManager.monitorRingFrames(), audioInputManager.monitorPrimeFrames(outFrames));
+  }
   return 0;
 }
 

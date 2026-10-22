@@ -27,12 +27,12 @@ static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles); gfxPrint(0, 6, "Model"); gfxPrint(0, 7, "SINTERED"); gfxSetFgColor(appSettings.colorScheme.textDefault);
   for (int i = 0; i < 6; ++i) gfxPrint(0, 8 + i, macroName(s->model, i)); instrumentCommonDrawVoicePostStatic(0);
 }
-static void drawCursor(int col, int row) { if (row < 3) { instrumentCommonDrawCursor(col, row); return; } if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostCursor(col, row); return; } InstrumentSintered* s = &chipnomadState->project.instruments[cInstrument].chip.sintered; gfxCursor(11, row == 3 ? 6 : row + 4, row == 3 ? 3 + strlen(modelName(s->model)) : 2); }
+static void drawCursor(int col, int row) { if (row < 3) { instrumentCommonDrawCursor(col, row); return; } if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostCursor(col, row); return; } InstrumentSintered* s = &chipnomadState->project.instruments[cInstrument].chip.sintered; gfxCursor(11, row == 3 ? 6 : row + 4, row == 3 ? 3 + INSTR_CLIP_NAME(strlen(modelName(s->model))) : 2); }
 static void drawField(int col, int row, CellState state) {
   if (row < 3) { instrumentCommonDrawField(col, row, state); return; } InstrumentSintered* s = &chipnomadState->project.instruments[cInstrument].chip.sintered;
   if (col && row >= 4 && row <= 8) { instrumentCommonDrawVoicePostField(col, row, state, s); return; }
-  gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault); gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? 20 : 7, 1);
-  if (row == 3) gfxPrintf(11, 6, "%02d %s", (int)s->model, modelName(s->model)); else gfxPrint(11, row + 4, byteToHex(*macro(s, row - 4)));
+  gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault); gfxClearRect(11, row == 3 ? 6 : row + 4, row == 3 ? INSTR_MODEL_NAME_W + 4 : 6, 1);
+  if (row == 3) gfxPrintf(11, 6, "%02d %.*s", (int)s->model, INSTR_MODEL_NAME_W, modelName(s->model)); else gfxPrint(11, row + 4, byteToHex(*macro(s, row - 4)));
 }
 static int onEdit(int col, int row, CellEditAction action) {
   if (row < 3) return instrumentCommonOnEdit(col, row, action); InstrumentSintered* s = &chipnomadState->project.instruments[cInstrument].chip.sintered;

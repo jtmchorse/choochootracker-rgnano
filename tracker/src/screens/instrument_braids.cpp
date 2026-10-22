@@ -9,13 +9,13 @@ static int modelButtonDown;
 static Bitmap* previewBitmap;
 
 static const char* paraphonicChordName(uint16_t color) {
-  static const char* names[] = {"DETUNE", "OCT", "2/5/OCT", "MIN7", "MIN", "MIN9", "MIN11", "5TH", "SPREAD", "MAJ11", "MAJ9", "MAJ", "MAJ7", "SUS4", "DETUNE", "OCT+", "OCT++"};
+  static const char* names[] = {"DETUNE", "OCT", "2/5OCT", "MIN7", "MIN", "MIN9", "MIN11", "5TH", "SPREAD", "MAJ11", "MAJ9", "MAJ", "MAJ7", "SUS4", "DETUNE", "OCT+", "OCT++"};
   int index = (int)((uint32_t)color * 17 / 32768);
   return names[index > 16 ? 16 : index];
 }
 
 static void drawPreview(const InstrumentBraids* braids) {
-  if (!previewBitmap) previewBitmap = gfxBitmapCreate(32, 3);
+  if (!previewBitmap) previewBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
   renderBraidsPreview(previewBitmap, braids);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(previewBitmap, 0, 16);
@@ -57,7 +57,7 @@ static void drawStatic(void) {
 static void drawCursor(int col, int row) {
   if (row < 3) return instrumentCommonDrawCursor(col, row);
   if (instrumentCommonDrawVoicePostCursor(col, row)) return;
-  else if (row == 3) gfxCursor(12, 6, 3 + strlen(modelCatalogName(InstrumentType::Braids, chipnomadState->project.instruments[cInstrument].chip.braids.model)));
+  else if (row == 3) gfxCursor(12, 6, 3 + INSTR_CLIP_NAME(strlen(modelCatalogName(InstrumentType::Braids, chipnomadState->project.instruments[cInstrument].chip.braids.model))));
   else if (!col) gfxCursor(11, row + 4, row == 5 && chipnomadState->project.instruments[cInstrument].chip.braids.model == 40 ? strlen(paraphonicChordName(chipnomadState->project.instruments[cInstrument].chip.braids.color)) : 2);
 }
 
@@ -66,9 +66,9 @@ static void drawField(int col, int row, CellState state) {
   InstrumentBraids* b = &chipnomadState->project.instruments[cInstrument].chip.braids;
   if (instrumentCommonDrawVoicePostField(col, row, state, b)) return;
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  if (row == 3) gfxClearRect(11, 6, 29, 1); else gfxClearRect(col ? 26 : 11, row + 4, col ? 8 : 7, 1);
+  if (row == 3) gfxClearRect(11, 6, INSTR_MODEL_NAME_W + 4, 1); else gfxClearRect(col ? INSTR_FILTER_VAL_X : 11, row + 4, col ? INSTR_FILTER_VAL_W : 6, 1);
   switch (row) {
-    case 3: gfxPrintf(12, 6, "%02d %s", b->model, modelCatalogName(InstrumentType::Braids, b->model)); break;
+    case 3: gfxPrintf(12, 6, "%02d %.*s", b->model, INSTR_MODEL_NAME_W, modelCatalogName(InstrumentType::Braids, b->model)); break;
     case 4: if (!col) gfxPrint(11,8,byteToHex(controlFromRange(b->timbre, 32767))); break;
     case 5: if (!col) {
       if (b->model == 40) gfxPrint(11,9,paraphonicChordName(b->color));

@@ -404,8 +404,8 @@ static int screenTouchCellAt(int col, int row, int* targetCol, int* targetRow) {
   if (!touchScreenData || touchScreenData->selectMode == 1) return 0;
   if (currentScreen == &screenInstrument &&
       chipnomadState->project.instruments[cInstrument].type == InstrumentType::SoundFont && row >= 5) {
-    if ((row != 6 && row != 7) || col < 0 || col > 31 || (row == 7 && col == 27)) return 0;
-    if (targetCol) *targetCol = row == 7 && col >= 28 ? 1 : 0;
+    if ((row != 6 && row != 7) || col < 0 || col > 31) return 0;
+    if (targetCol) *targetCol = row == 7 && col >= INSTR_EDIT_X ? 1 : 0;
     if (targetRow) *targetRow = row == 6 ? 3 : 4;
     return 1;
   }
@@ -472,17 +472,17 @@ static int screenTouchCellAt(int col, int row, int* targetCol, int* targetRow) {
       if (row == fieldY[i]) field = i;
     if (field < 0) return 0;
     if (field == 0) {
-      const int x[] = {7, 12, 17, 21, 28}, width[] = {4, 4, 3, 6, 6};
       column = -1;
-      for (int i = 0; i < 5; ++i) if (col >= x[i] && col < x[i] + width[i]) column = i;
+      for (int i = 0; i < PROJECT_BUTTON_COUNT; ++i)
+        if (col >= screenProjectButtonX(i) && col < screenProjectButtonX(i) + screenProjectButtonW(i)) column = i;
       if (column < 0) return 0;
     } else if (field <= 3) {
-      column = col - 7;
+      column = col - PROJECT_TEXT_X;
       if (column < 0 || column >= touchScreenData->getColumnCount(field)) return 0;
     } else if (field == 10) {
       if (col < 0 || col >= 5) return 0;
     } else {
-      if (col < 13 || col >= 34) return 0;
+      if (col < PROJECT_LINK_X || col >= GRID_SCREEN_COLS) return 0;
     }
     if (targetCol) *targetCol = column;
     if (targetRow) *targetRow = field;

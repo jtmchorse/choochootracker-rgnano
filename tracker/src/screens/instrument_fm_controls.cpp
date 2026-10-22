@@ -13,8 +13,8 @@ void instrumentFMRefreshStaticWaveform() {
   const auto* envelope = amp();
   // SID shares this redraw path but has no optional FM amp or ADSR overlay.
   const int row = 16;
-  if (!staticWaveformBitmap) staticWaveformBitmap = gfxBitmapCreate(32, 3);
-  gfxClearRect(0, row, 32, 3);
+  if (!staticWaveformBitmap) staticWaveformBitmap = gfxBitmapCreate(INSTR_PREVIEW_COLS, 3);
+  gfxClearRect(0, row, INSTR_PREVIEW_COLS, 3);
   renderFMPreview(staticWaveformBitmap, &chipnomadState->project.instruments[cInstrument]);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   gfxDrawBitmap(staticWaveformBitmap, 0, row);
@@ -28,22 +28,22 @@ void instrumentFMRefreshStaticWaveform() {
 void instrumentFMAmpDrawStatic() {
   gfxSetFgColor(appSettings.colorScheme.textDefault);
   gfxPrint(0, 12, "Amp env");
-  gfxPrint(0, 10, "Bright"); gfxPrint(19, 10, "Feedback");
+  gfxPrint(0, 10, "Bright"); gfxPrint(INSTR_FB_X, 10, "Feedback");
   gfxPrint(0, 14, "ADSR");
   gfxPrint(6, 14, "A"); gfxPrint(11, 14, "D");
   gfxPrint(16, 14, "S"); gfxPrint(21, 14, "R");
-  gfxPrint(27, 14, "SHP");
+  gfxPrint(INSTR_SHP_LABEL_X, 14, "SHP");
   instrumentFMRefreshStaticWaveform();
 }
 
-void instrumentFMToneDrawCursor(int col) { gfxCursor(col ? 28 : 9, 10, col ? 6 : 4); }
+void instrumentFMToneDrawCursor(int col) { gfxCursor(col ? INSTR_FB_VAL_X : 9, 10, col ? 6 : 4); }
 void instrumentFMToneDrawField(int col, CellState state) {
   const auto* tone=instrumentFMToneSettings(&chipnomadState->project.instruments[cInstrument]);
   gfxSetFgColor(state==CellState::focus?appSettings.colorScheme.textValue:appSettings.colorScheme.textDefault);
-  gfxClearRect(col?28:9,10,7,1);
+  gfxClearRect(col?INSTR_FB_VAL_X:9,10,col?6:4,1);
   if(!col)gfxPrintf(9,10,"%+03d",tone->brightness);
-  else if(!tone->feedback)gfxPrint(28,10,"Preset");
-  else gfxPrintf(28,10,"%u",tone->feedback-1);
+  else if(!tone->feedback)gfxPrint(INSTR_FB_VAL_X,10,"Preset");
+  else gfxPrintf(INSTR_FB_VAL_X,10,"%u",tone->feedback-1);
   instrumentFMRefreshStaticWaveform();
 }
 int instrumentFMToneEdit(int col, CellEditAction action) {

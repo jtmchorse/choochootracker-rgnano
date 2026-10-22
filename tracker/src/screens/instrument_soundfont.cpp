@@ -105,7 +105,7 @@ void drawCursor(int col, int row) {
   if (row < 3)
     instrumentCommonDrawCursor(col, row);
   else
-    gfxCursor(row == 4 && col ? 28 : 0, row + 3, row == 4 && col ? 4 : 26);
+    gfxCursor(row == 4 && col ? INSTR_EDIT_X : 0, row + 3, row == 4 && col ? 4 : INSTR_EDIT_X);
 }
 void drawField(int col, int row, CellState state) {
   if (row < 3) {
@@ -115,18 +115,18 @@ void drawField(int col, int row, CellState state) {
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue
                                           : appSettings.colorScheme.textDefault);
   if (row == 3) {
-    gfxClearRect(0,6,32,1);
+    gfxClearRect(0,6,INSTR_TEXT_COLS,1);
     gfxPrintf(0,6,"%s  Rescan",soundbankScanning() ? "Scanning..." : soundbankScanned() ? "Scanned" : "Not scanned");
     gfxSetFgColor(appSettings.colorScheme.textInfo);
-    gfxClearRect(0,8,32,3);
-    gfxPrintf(0,8,"%.32s",soundbankInstrumentStatus(cInstrument).c_str());
+    gfxClearRect(0,8,INSTR_TEXT_COLS,3);
+    gfxPrintf(0,8,"%.30s",soundbankInstrumentStatus(cInstrument).c_str());
     const auto warning=soundbankInstrumentWarning(cInstrument);
-    if(!warning.empty())gfxPrintf(0,9,"%.32s",warning.c_str());
-    gfxPrintf(0,warning.empty()?9:10,"%.32s",soundbankInstrumentRange(cInstrument).c_str());
+    if(!warning.empty())gfxPrintf(0,9,"%.30s",warning.c_str());
+    gfxPrintf(0,warning.empty()?9:10,"%.30s",soundbankInstrumentRange(cInstrument).c_str());
     // Keep errors at the bottom of this page, above the global message row.
     // Two detail rows also keep common decoder errors from being cut mid-word.
     auto error=soundbankInstrumentError(cInstrument);
-    if(!error.empty() || footerErrorDisplayed)gfxClearRect(0,16,32,3);
+    if(!error.empty() || footerErrorDisplayed)gfxClearRect(0,16,INSTR_TEXT_COLS,3);
     footerErrorDisplayed=!error.empty();
     if(!error.empty()) {
       gfxPrint(0,16,"Error:");
@@ -135,7 +135,7 @@ void drawField(int col, int row, CellState state) {
       const auto path=error.find(": " + soundbankRoot());
       if(path!=std::string::npos)error.resize(path);
       for(int row=17;row<=18 && !error.empty();++row) {
-        size_t count=std::min<size_t>(32,error.size());
+        size_t count=std::min<size_t>(INSTR_TEXT_COLS,error.size());
         if(error.size()>count) {
           const auto space=error.rfind(' ',count);
           if(space!=std::string::npos && space>0)count=space;
@@ -146,10 +146,10 @@ void drawField(int col, int row, CellState state) {
       }
     }
   }
-  else if (col) gfxPrint(28, 7, "Edit");
+  else if (col) gfxPrint(INSTR_EDIT_X, 7, "Edit");
   else {
     const auto name = soundbankPresetName(current().chip.soundfont.bank, current().chip.soundfont.preset);
-    gfxClearRect(0, 7, 27, 1);
+    gfxClearRect(0, 7, INSTR_EDIT_X, 1);
     gfxPrintf(0, 7, "Preset: %.18s", name.empty() ? "Select..." : name.c_str());
   }
 }
