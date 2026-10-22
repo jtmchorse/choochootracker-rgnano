@@ -7,6 +7,7 @@
 #include "corelib_file.h"
 #include "common.h"
 #include "corelib_gfx.h"
+#include "audio_input_manager.h"
 #include <SDL2/SDL.h>
 #include <algorithm>
 #include <atomic>
@@ -506,7 +507,10 @@ int rgnanoCaptureProbe(const char* alsaName, int rate, char* detail, int detailS
 
 static std::string captureStatName;
 void rgnanoCaptureStatsName(const char* nameOrNull) { captureStatName = nameOrNull ? nameOrNull : ""; }
-static std::string capTag(void) { return captureStatName.empty() ? std::string("cap=off") : "cap=on(" + captureStatName + ")"; }
+static std::string capTag(void) {
+  std::string t = captureStatName.empty() ? std::string("cap=off") : "cap=on(" + captureStatName + ")";
+  return t + (audioInputManager.monitor() ? " mon=on" : " mon=off");
+}
 
 // ---------------------------------------------------------------------------
 // In-process SDL open of the probe winner. SDL 2.30 ALSA (SDL_alsa_audio.c,
@@ -659,6 +663,7 @@ static long long processCpuUs(void) {
   return ((long long)ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000LL + ru.ru_utime.tv_usec + ru.ru_stime.tv_usec;
 }
 }  // namespace astat
+int rgnanoOutputCallbackFrames(void) { return astat::cbFrames.load(std::memory_order_relaxed); }
 
 long long rgnanoThreadCpuUs(void) { return astat::threadCpuNs() / 1000; }
 

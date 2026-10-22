@@ -91,6 +91,11 @@ class AudioInputManager {
   // buffer after chipnomadRender(). No-op when monitor is off.
   void mixMonitor(int16_t* buffer, int stereoSamples);
 
+  // Frames the monitor ring holds before playback starts: one output buffer
+  // plus one 512-frame capture block (capped at half the ring).
+  unsigned int monitorPrimeFrames(int outputFrames) const;
+  unsigned int monitorUnderruns() const { return monitorUnderruns_.load(std::memory_order_relaxed); }
+  int monitorRingFrames() const { return (int)AudioInputRing::CAPACITY; }
   // Test/diagnostic hooks.
   unsigned int droppedCount() const;
   bool captureOpen() const { return captureOpen_; }
@@ -120,6 +125,10 @@ class AudioInputManager {
   AudioInputRing monitorRing_;
   int16_t monitorChunk_[1024 * 2];
   int monitorGain_ = 16384; // -6 dB (Q15)
+  // Audio-thread-only monitor state (output callback).
+  bool monitorPrimed_ = false;
+  int monitorLastL_ = 0, monitorLastR_ = 0;
+  std::atomic<unsigned int> monitorUnderruns_{0};
   // Level accumulation (capture callback side).
   float peaks_[AUDIO_INPUT_MAX_ARMED][2]{};
   float samples_[AUDIO_INPUT_MAX_ARMED][AUDIO_INPUT_LEVEL_SAMPLES]{};

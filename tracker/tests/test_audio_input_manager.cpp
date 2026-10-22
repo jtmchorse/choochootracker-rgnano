@@ -143,3 +143,65 @@ TEST_CASE("AudioInputManager levels pipeline: capture -> snapshot -> receive") {
   AudioInputManagerTestPeer::disarmSlotForTest(audioInputManager, 1);
   AudioInputManagerTestPeer::captureOpenForTest(audioInputManager, false);
 }
+
+// Monitor path: 512-frame capture blocks against a 2048-frame output callback
+// at mismatched cadence must produce a gapless monitor once primed.
+TEST_CASE("Monitor ring is gapless with 512-frame capture vs 2048-frame output") {
+  AudioInputManager m;
+  AudioInputManagerTestPeer::armSlotForTest(m, 0, 0);
+  AudioInputManagerTestPeer::captureOpenForTest(m, true);
+  m.setMonitor(1);
+
+  const int outFrames = 2048;
+  static int16_t cap[512 * 2];
+  static int16_t out[2048 * 2];
+  for (int i = 0; i < 512 * 2; ++i) cap[i] = 8000; // DC: any gap shows as zero
+
+  // Capture blocks per output callback alternate 5,3,4,4,... (avg 4 = 2048/512).
+  const int cadence[4] = {5, 3, 4, 4};
+  int zeroRuns = 0, silentCallbacksAfterPrime = 0;
+  bool primedOnce = false;
+  for (int cb = 0; cb < 40; ++cb) {
+    // First callback has no data: the ring primes, output stays silent.
+    for (int b = 0; b < cadence[cb % 4]; ++b) m.onCapture(cap, 512, 2);
+    memset(out, 0, sizeof(out));
+    m.mixMonitor(out, outFrames);
+    bool inRun = false, any = false;
+    for (int i = 0; i < outFrames; ++i) {
+      bool z = out[i * 2] == 0 && out[i * 2 + 1] == 0;
+      if (!z) any = true;
+      if (z && !inRun) { if (primedOnce) ++zeroRuns; }
+      inRun = z;
+    }
+    if (any) primedOnce = true;
+    else if (primedOnce) ++silentCallbacksAfterPrime;
+  }
+  CHECK(primedOnce);
+  CHECK(zeroRuns == 0);
+  CHECK(silentCallbacksAfterPrime == 0);
+  CHECK(m.monitorUnderruns() == 0);
+  // Gain is -6 dB.
+  CHECK(out[0] == 4000);
+}
+
+TEST_CASE("Monitor underrun fades and re-primes instead of dropping hard") {
+  AudioInputManager m;
+  AudioInputManagerTestPeer::armSlotForTest(m, 0, 0);
+  AudioInputManagerTestPeer::captureOpenForTest(m, true);
+  m.setMonitor(1);
+  static int16_t cap[512 * 2];
+  static int16_t out[1024 * 2];
+  for (int i = 0; i < 512 * 2; ++i) cap[i] = 8000;
+  for (int b = 0; b < 4; ++b) m.onCapture(cap, 512, 2); // 2048 >= prime(1024)=1536
+  memset(out, 0, sizeof(out));
+  m.mixMonitor(out, 1024);
+  CHECK(out[0] == 4000);
+  memset(out, 0, sizeof(out));
+  m.mixMonitor(out, 1024); // only 1024 left, then starve
+  memset(out, 0, sizeof(out));
+  m.mixMonitor(out, 1024); // underrun: fade from last sample, no jump to 0
+  CHECK(out[0] != 0);
+  CHECK(out[0] < 4000);
+  CHECK(out[63 * 2] == 0);
+  CHECK(m.monitorUnderruns() == 1);
+}

@@ -367,23 +367,79 @@ unsigned int audioInputManagerRecordingDroppedCount(void) {
 }
 
 void AudioInputManager::mixMonitor(int16_t* buffer, int stereoSamples) {
-  if (!monitor_.load(std::memory_order_acquire)) return;
-  // Route the first armed slot's live capture into the output at -6 dB to
-  // avoid feedback. Uses a dedicated monitor ring so monitoring never
-  // competes with the recorder's writer thread for ring data.
-  for (int slot = 0; slot < AUDIO_INPUT_MAX_ARMED; ++slot) {
-    if (armed_[slot] < 0) continue;
-    // monitorChunk_ holds 1024 stereo frames; clamp for larger buffer sizes.
-    int want = stereoSamples < 1024 ? stereoSamples : 1024;
-    int popped = monitorRing_.pop(monitorChunk_, want);
-    for (int i = 0; i < popped * 2; ++i) {
-      int mixed = buffer[i] + ((monitorChunk_[i] * monitorGain_) >> 15);
-      if (mixed > 32767) mixed = 32767;
-      if (mixed < -32768) mixed = -32768;
-      buffer[i] = (int16_t)mixed;
-    }
-    break;
+  if (!monitor_.load(std::memory_order_acquire)) {
+    // Off: discard stale data (ring is not fed) so re-enabling re-primes.
+    monitorPrimed_ = false;
+    monitorLastL_ = monitorLastR_ = 0;
+    monitorRing_.clear();
+    return;
   }
+  if (stereoSamples <= 0) return;
+  // Route live capture into the output at -6 dB. The output callback can ask
+  // for far more frames (2048) than one capture block (512) delivers, so the
+  // ring is primed to one output buffer plus one capture block, then read for
+  // exactly the frames this callback needs. On underrun the last frame is
+  // faded out and the ring re-primes (no hard gaps/clicks).
+  const unsigned int head = monitorRing_.head.load(std::memory_order_acquire);
+  const unsigned int tail = monitorRing_.tail.load(std::memory_order_relaxed);
+  const unsigned int fill = (head + AudioInputRing::CAPACITY - tail) % AudioInputRing::CAPACITY;
+  const unsigned int prime = monitorPrimeFrames(stereoSamples);
+  if (!monitorPrimed_) {
+    if (fill < prime) return; // still filling: silence
+    monitorPrimed_ = true;
+  }
+  // Bound latency: if the producer got ahead, drop the oldest down to prime.
+  const unsigned int maxFill = prime + (unsigned int)stereoSamples;
+  if (fill > maxFill) {
+    monitorRing_.tail.store((head + AudioInputRing::CAPACITY - prime) % AudioInputRing::CAPACITY,
+                            std::memory_order_release);
+  }
+  int done = 0;
+  while (done < stereoSamples) {
+    int want = stereoSamples - done;
+    if (want > 1024) want = 1024;
+    int popped = monitorRing_.pop(monitorChunk_, want);
+    for (int i = 0; i < popped; ++i) {
+      for (int c = 0; c < 2; ++c) {
+        int idx = (done + i) * 2 + c;
+        int mixed = buffer[idx] + ((monitorChunk_[i * 2 + c] * monitorGain_) >> 15);
+        if (mixed > 32767) mixed = 32767;
+        if (mixed < -32768) mixed = -32768;
+        buffer[idx] = (int16_t)mixed;
+      }
+    }
+    if (popped > 0) {
+      monitorLastL_ = monitorChunk_[(popped - 1) * 2];
+      monitorLastR_ = monitorChunk_[(popped - 1) * 2 + 1];
+    }
+    done += popped;
+    if (popped < want) break;
+  }
+  if (done < stereoSamples) {
+    // Underrun: fade the last sample to zero over the missing span, then re-prime.
+    const int missing = stereoSamples - done;
+    const int fade = missing < 64 ? missing : 64;
+    for (int i = 0; i < fade; ++i) {
+      int g = 32767 - (int)((int64_t)32767 * (i + 1) / fade);
+      for (int c = 0; c < 2; ++c) {
+        int last = c ? monitorLastR_ : monitorLastL_;
+        int idx = (done + i) * 2 + c;
+        int mixed = buffer[idx] + ((((last * monitorGain_) >> 15) * g) >> 15);
+        if (mixed > 32767) mixed = 32767;
+        if (mixed < -32768) mixed = -32768;
+        buffer[idx] = (int16_t)mixed;
+      }
+    }
+    monitorLastL_ = monitorLastR_ = 0;
+    monitorPrimed_ = false;
+    monitorUnderruns_.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+unsigned int AudioInputManager::monitorPrimeFrames(int outputFrames) const {
+  unsigned int p = (unsigned int)outputFrames + 512u;
+  const unsigned int cap = AudioInputRing::CAPACITY / 2;
+  return p > cap ? cap : p;
 }
 
 unsigned int AudioInputManager::droppedCount() const {
