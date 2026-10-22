@@ -9,8 +9,21 @@
 #define VISIBLE_ENTRIES 16
 #define SCROLL_DELAY_FRAMES 120
 #define SCROLL_SPEED_FRAMES 8
+#ifdef RGNANO_BUILD
+// 30 columns: ">" and a space, then at most 28 characters (a directory adds "/").
+#define MAX_DISPLAY_DIR 27
+#define MAX_DISPLAY_FILE 28
+#define FB_COLS 30
+#define FB_SAVE_NAME_MAX 18
+#define FB_SAVE_TAIL 14
+#else
 #define MAX_DISPLAY_DIR 31
 #define MAX_DISPLAY_FILE 34
+#define FB_COLS 40
+#define FB_SAVE_NAME_MAX 25
+#define FB_SAVE_TAIL 19
+#endif
+static_assert(2 + MAX_DISPLAY_FILE <= FB_COLS, "file browser entries must fit the screen");
 #define BOUNDARY_WAIT_FRAMES (SCROLL_DELAY_FRAMES * 2)
 
 struct ScrollState {
@@ -348,7 +361,7 @@ static int fileBrowserUpdate(void) {
 static void fileBrowserDrawEntry(int itemIndex) {
   int y = 3 + itemIndex - topIndex;
   gfxSetBgColor(appSettings.colorScheme.background);
-  gfxClearRect(0, y, 40, 1);
+  gfxClearRect(0, y, FB_COLS, 1);
 
   // Draw cursor marker
   if (itemIndex == selectedIndex) {
@@ -376,10 +389,10 @@ static void fileBrowserDrawEntry(int itemIndex) {
     }
 
     int nameLen = strlen(folderName);
-    if (nameLen <= 25) {
+    if (nameLen <= FB_SAVE_NAME_MAX) {
       snprintf(saveText, sizeof(saveText), "Save to [%s]", folderName);
     } else {
-      snprintf(saveText, sizeof(saveText), "Save to [...%.19s]", folderName + nameLen - 19);
+      snprintf(saveText, sizeof(saveText), "Save to [...%.*s]", FB_SAVE_TAIL, folderName + nameLen - FB_SAVE_TAIL);
     }
 
     if (itemIndex == selectedIndex) {
@@ -427,6 +440,16 @@ static void fileBrowserDraw(void) {
 
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   int pathLen = strlen(currentPath);
+#ifdef RGNANO_BUILD
+  // One row of the 30 column screen: the tail of the path is the useful part.
+  if (pathLen <= FB_COLS) {
+    gfxPrint(0, 1, currentPath);
+  } else {
+    char displayPath[FB_COLS + 1];
+    snprintf(displayPath, sizeof(displayPath), "...%s", currentPath + pathLen - (FB_COLS - 3));
+    gfxPrint(0, 1, displayPath);
+  }
+#else
   if (pathLen <= 80) {
     gfxPrint(0, 1, currentPath);
   } else {
@@ -434,6 +457,7 @@ static void fileBrowserDraw(void) {
     snprintf(displayPath, sizeof(displayPath), "...%s", currentPath + pathLen - 77);
     gfxPrint(0, 1, displayPath);
   }
+#endif
 
   int totalItems = entryCount + (isFolderMode ? 2 : 0);
   for (int i = 0; i < VISIBLE_ENTRIES && (topIndex + i) < totalItems; i++) {

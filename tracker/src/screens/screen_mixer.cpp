@@ -19,6 +19,15 @@ static Bitmap* stereoImage;
 static Bitmap* spectrum;
 static std::chrono::steady_clock::time_point spectrumRefresh;
 
+#ifdef RGNANO_BUILD
+// Stereo image 0-13 and FFT 15-28 keep both analyzers inside 30 columns.
+#define MIXER_ANALYZER_COLS 14
+#define MIXER_FFT_X 15
+#else
+#define MIXER_ANALYZER_COLS 17
+#define MIXER_FFT_X 18
+#endif
+static_assert(MIXER_FFT_X + MIXER_ANALYZER_COLS <= 40, "Mixer analyzers must fit the canvas");
 static Bitmap* analyzerBitmap(Bitmap*& bitmap, int columns, int rows, bool clear = true) {
   if (bitmap && (bitmap->widthPixels != columns * gfxGetCharWidth() || bitmap->heightPixels != rows * gfxGetCharHeight())) {
     gfxBitmapFree(bitmap);
@@ -35,7 +44,7 @@ static void analyzerPixel(Bitmap* bitmap, int x, int y, uint8_t value) {
 }
 
 static void drawAnalyzers(void) {
-  constexpr int imageColumns = 17, spectrumColumns = 17, rows = 5;
+  constexpr int imageColumns = MIXER_ANALYZER_COLS, spectrumColumns = MIXER_ANALYZER_COLS, rows = 5;
   Bitmap* image = analyzerBitmap(stereoImage, imageColumns, rows);
   Bitmap* fft = analyzerBitmap(spectrum, spectrumColumns, rows, false);
   const float (*samples)[2] = monitorDisplayMixStereoSamples();
@@ -89,14 +98,33 @@ static void drawAnalyzers(void) {
     spectrumRefresh = now;
   }
   gfxSetFgColor(appSettings.colorScheme.textInfo);
-  gfxClearRect(0, 14, 35, 6);
+  gfxClearRect(0, 14, MIXER_FFT_X + MIXER_ANALYZER_COLS, 6);
   gfxPrint(0, 14, "STEREO IMAGE");
-  gfxPrint(18, 14, "FFT SPECTRUM");
+  gfxPrint(MIXER_FFT_X, 14, "FFT SPECTRUM");
   if (image) gfxDrawBitmap(image, 0, 15);
-  if (fft) gfxDrawBitmap(fft, 18, 15);
+  if (fft) gfxDrawBitmap(fft, MIXER_FFT_X, 15);
 }
 
 int screenMixerGetPage(void) { return mixerPage; }
+
+// Column layout of the track page. RG Nano is 30 columns wide: five column pitch
+// and M/S/clip packed against PAN; other builds keep the original 40 column layout.
+#ifdef RGNANO_BUILD
+static const int kLblX[7] = {4, 7, 10, 13, 16, 19, 22};
+#define MIXER_CLIP_X 25
+#define MIXER_CPU_X 22
+#define MIXER_MASTER_CLIP_X 25
+#define MIXER_MASTER_CLIP_Y 13
+#else
+static const int kLblX[7] = {4, 9, 14, 19, 24, 29, 32};
+#define MIXER_CLIP_X 38
+#define MIXER_CPU_X 31
+#define MIXER_MASTER_CLIP_X 34
+#define MIXER_MASTER_CLIP_Y 12
+#endif
+#ifdef RGNANO_BUILD
+static_assert(22 + 1 <= 30 && 25 + 5 <= 30 && 22 + 8 <= 30, "MIXER columns, CLIP and CPU readout must fit 30 columns");
+#endif
 
 static bool beadsReverb() { return chipnomadState->project.reverbAlgorithm == 1; }
 static bool tapeEcho() { return chipnomadState->project.delayAlgorithm == 1; }
@@ -119,8 +147,8 @@ static void drawStatic(void) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
   if (mixerPage == 0) {
     gfxPrint(0, 0, "MIXER");
-    gfxPrint(0, 2, "TRK"); gfxPrint(4, 2, "LVL"); gfxPrint(9, 2, "REV"); gfxPrint(14, 2, "DLY");
-    gfxPrint(19, 2, "TLT"); gfxPrint(24, 2, "PAN"); gfxPrint(29, 2, "M"); gfxPrint(32, 2, "S");
+    gfxPrint(0, 2, "TRK"); gfxPrint(kLblX[0], 2, "LVL"); gfxPrint(kLblX[1], 2, "REV"); gfxPrint(kLblX[2], 2, "DLY");
+    gfxPrint(kLblX[3], 2, "TLT"); gfxPrint(kLblX[4], 2, "PAN"); gfxPrint(kLblX[5], 2, "M"); gfxPrint(kLblX[6], 2, "S");
     gfxPrint(0, 12, "MASTER FX");
   } else if (mixerPage == 1) {
     gfxPrint(0, 0, beadsReverb() ? "BEADS REVERB" : "CLOUDS REVERB");
@@ -141,7 +169,7 @@ static void drawStatic(void) {
 
 static void drawCursor(int col, int row) {
   if (mixerPage == 0) {
-    static const int x[] = {4, 9, 14, 19, 24, 29, 32};
+    const int* x = kLblX;
     static const int width[] = {2, 2, 2, 2, 2, 1, 1};
     if (row == PROJECT_MAX_TRACKS) { gfxCursor(10, 12, 16); return; }
     if (col < 0 || col >= 7 || row < 0 || row >= PROJECT_MAX_TRACKS) return;
@@ -176,15 +204,15 @@ static void drawField(int col, int row, CellState state) {
     }
     if (col < 0 || col >= 7 || row < 0 || row >= PROJECT_MAX_TRACKS) return;
     gfxPrintf(0, 3 + row, "%2d", row + 1);
-    if (col == 0) gfxPrint(4, 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackVolume[row], 100)));
-    else if (col == 1) gfxPrint(9, 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackReverbSend[row], 100)));
-    else if (col == 2) gfxPrint(14, 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackDelaySend[row], 100)));
-    else if (col == 3) gfxPrint(19, 3 + row, byteToHex(chipnomadState->project.trackTilt[row]));
-    else if (col == 4) gfxPrint(24, 3 + row, byteToHex(chipnomadState->project.trackPan[row]));
-    else if (col == 5) gfxPrint(29, 3 + row, audioManager.trackStates[row] == TRACK_MUTED ? "*" : "-");
-    else gfxPrint(32, 3 + row, audioManager.trackStates[row] == TRACK_SOLO ? "*" : "-");
+    if (col == 0) gfxPrint(kLblX[0], 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackVolume[row], 100)));
+    else if (col == 1) gfxPrint(kLblX[1], 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackReverbSend[row], 100)));
+    else if (col == 2) gfxPrint(kLblX[2], 3 + row, byteToHex(controlFromRange(chipnomadState->project.trackDelaySend[row], 100)));
+    else if (col == 3) gfxPrint(kLblX[3], 3 + row, byteToHex(chipnomadState->project.trackTilt[row]));
+    else if (col == 4) gfxPrint(kLblX[4], 3 + row, byteToHex(chipnomadState->project.trackPan[row]));
+    else if (col == 5) gfxPrint(kLblX[5], 3 + row, audioManager.trackStates[row] == TRACK_MUTED ? "*" : "-");
+    else gfxPrint(kLblX[6], 3 + row, audioManager.trackStates[row] == TRACK_SOLO ? "*" : "-");
     gfxSetFgColor(chipnomadState->trackClipping[row] ? appSettings.colorScheme.warning : appSettings.colorScheme.textDefault);
-    gfxPrint(38, 3 + row, chipnomadState->trackClipping[row] ? "!" : " ");
+    gfxPrint(MIXER_CLIP_X, 3 + row, chipnomadState->trackClipping[row] ? "!" : " ");
     return;
   }
   if (row < 0 || row >= effectRows()) return;
@@ -291,18 +319,18 @@ static void draw(void) {
     for (int track = 0; track < chipnomadState->project.tracksCount; ++track)
       monitorDisplayDrawMeter(track, 2, 3 + track);
     drawAnalyzers();
-    gfxClearRect(34, 12, 5, 1);
+    gfxClearRect(MIXER_MASTER_CLIP_X, MIXER_MASTER_CLIP_Y, 5, 1);
     if (chipnomadState->audioOverload) {
       gfxSetFgColor(appSettings.colorScheme.warning);
-      gfxPrint(34, 12, "CLIP!");
+      gfxPrint(MIXER_MASTER_CLIP_X, MIXER_MASTER_CLIP_Y, "CLIP!");
     }
   }
   int cpuLoad = audioManager.getCpuLoadPercent();
   if (cpuLoad == displayedCpuLoad) return;
   displayedCpuLoad = cpuLoad;
   gfxSetFgColor(appSettings.colorScheme.textTitles);
-  gfxClearRect(31, 0, 9, 1);
-  gfxPrintf(31, 0, "CPU %03d%%", cpuLoad);
+  gfxClearRect(MIXER_CPU_X, 0, 9, 1);
+  gfxPrintf(MIXER_CPU_X, 0, "CPU %03d%%", cpuLoad);
 }
 
 static void setPage(int page) {

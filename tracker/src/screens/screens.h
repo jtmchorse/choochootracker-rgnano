@@ -50,6 +50,13 @@ enum class PopupEditInput : int {
   open,
 };
 
+// RG Nano presents every screen 1:1 at 30 columns; other builds default to the 40 column canvas.
+#ifdef RGNANO_BUILD
+#define APP_SCREEN_DEFAULT_COLS 30
+#else
+#define APP_SCREEN_DEFAULT_COLS 0
+#endif
+
 struct AppScreen {
   void (*init)(void);
   void (*setup)(int input);
@@ -57,7 +64,7 @@ struct AppScreen {
   void (*draw)(void);
   int (*onInput)(int isKeyDown, int keys, int tapCount); // Return 1 if handled, 0 if not
   ScreenPlaybackLevel (*getPlaybackLevel)(void); // Return playback level for this screen
-  int gridCols; // 0 = full 40 column canvas (squashed on RG Nano); N = draws N columns, presented 1:1
+  int gridCols = APP_SCREEN_DEFAULT_COLS; // 0 = full 40 column canvas (squashed); N = draws N columns, presented 1:1
 };
 
 struct ScreenData {
@@ -240,7 +247,7 @@ inline int fxEditInput(int keys, int taps, uint8_t* fx, uint8_t* last) {
 }
 #endif
 void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable);
-int fxEditIsOpen(void);  // FX picker is up (draws 35 columns, needs the squashed canvas)
+int fxEditIsOpen(void);  // FX picker is up (35 columns upstream, 30 on RG Nano)
 
 // Song screen "4x2" track view: move to the previous (-1) / next (+1) page.
 void songPageMove(int dir);

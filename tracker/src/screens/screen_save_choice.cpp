@@ -35,7 +35,7 @@ static void fullRedraw(void) {
   gfxSetFgColor(appSettings.colorScheme.selection);
   gfxPrint(0, 8, "SAVE SLICES");
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  gfxPrint(0, 9, sampleName);
+  gfxPrintf(0, 9, "%.30s", sampleName);
 
   if (selectedOption == 0) {
     gfxSetFgColor(appSettings.colorScheme.textValue);
@@ -60,8 +60,13 @@ static void fullRedraw(void) {
   }
 
   gfxSetFgColor(appSettings.colorScheme.textDefault);
+#ifdef RGNANO_BUILD
+  gfxPrint(0, 15, dontAskAgain ? "[*] Don't ask again" : "[ ] Don't ask again");
+  gfxPrint(0, 16, "    in this project");
+#else
   gfxPrint(0, 15, dontAskAgain ? "[*] Don't ask again in this project"
                                : "[ ] Don't ask again in this project");
+#endif
 }
 
 static void draw(void) {

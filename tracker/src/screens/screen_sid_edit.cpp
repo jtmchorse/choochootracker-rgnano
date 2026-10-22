@@ -29,6 +29,16 @@ struct Row {
   int count;
   Field cells[3];
 };
+#ifdef RGNANO_BUILD
+// 30 columns: labels shrink to 5 characters (cells start at column 6).
+#define SID_LBL_FILTER "Filt"
+#define SID_LBL_MOTION "Moti"
+#define SID_LBL_VIBRATO "Vibr"
+#else
+#define SID_LBL_FILTER "Filter"
+#define SID_LBL_MOTION "Motion"
+#define SID_LBL_VIBRATO "Vibrato"
+#endif
 const Row rows[] = {
   {"Voice", 3, {{"WAV", sidWave, 1, 8, 1, "Waveform: T triangle, S saw, P pulse", waves},
                 {"RNG", sidRing, 0, 1, 1, "Ring modulation; uses silent partner", offOn},
@@ -40,12 +50,12 @@ const Row rows[] = {
   {"Pulse", 3, {{"PW", sidPulse, 0, 4095, 128, "Pulse width: 000-FFF"},
                 {"DEP", sidPulseDepth, 0, 2047, 128, "Pulse motion depth: native width units"},
                 {"RT", sidPulseRate, 0, 1000, 10, "Pulse motion rate: tenths of Hz"}}},
-  {"Filter", 3, {{"MOD", sidFilterMode, 0, 7, 1, "Filter: L low, B band, H high pass", filters},
+  {SID_LBL_FILTER, 3, {{"MOD", sidFilterMode, 0, 7, 1, "Filter: L low, B band, H high pass", filters},
                  {"CUT", sidCutoff, 0, 2047, 128, "Filter cutoff: 000-7FF"},
                  {"RES", sidResonance, 0, 15, 1, "Filter resonance: 0-F"}}},
   // Map the noncontiguous FFFF sentinel to -1 in the editor. It must never
   // produce invalid cutoff values between 0800 and FFFE.
-  {"Motion", 1, {{"TGT", sidCutoffTarget, -1, 2047, 128, "Cutoff target; clear=off; GAT or 75 ticks"}}},
+  {SID_LBL_MOTION, 1, {{"TGT", sidCutoffTarget, -1, 2047, 128, "Cutoff target; clear=off; GAT or 75 ticks"}}},
   {"Clock", 2, {{"HZ", sidMacroRate, 1, 200, 10, "Recipe clock in Hz, shown in hex"},
                 {"GAT", sidGateFrames, 0, 1000, 10, "Gate ticks; 000 holds until note off"}}},
   {"Pitch", 3, {{"FIX", sidFixedFrequency, 0, 65535, 256, "SID frequency register; 0000 follows note"},
@@ -54,7 +64,7 @@ const Row rows[] = {
   {"Sweep", 3, {{"TGT", sidSweepTarget, 0, 65535, 256, "Pitch sweep target register; 0000=off"},
                 {"LEN", sidSweepFrames, 0, 1000, 10, "Pitch sweep ticks; 000 uses one tick"},
                 {"MOD", sidSweepMode, 0, 1, 1, "Pitch sweep: linear or exponential", sweeps}}},
-  {"Vibrato", 2, {{"DEP", sidVibratoDepth, 0, 4095, 128, "Vibrato depth: SID frequency units"},
+  {SID_LBL_VIBRATO, 2, {{"DEP", sidVibratoDepth, 0, 4095, 128, "Vibrato depth: SID frequency units"},
                   {"RT", sidVibratoRate, 0, 1000, 10, "Vibrato rate: tenths of Hz"}}},
 };
 ScreenData data;
@@ -65,12 +75,33 @@ const Field* field(int col, int row) {
     ? &rows[row].cells[col] : nullptr;
 }
 int columns(int row) { return row >= 0 && row < int(std::size(rows)) ? rows[row].count : 1; }
-int cellX(int col) { return 8 + 8 * col; }
 int rowY(int row) { return 3 + row - data.topRow; }
 bool visible(int row) { return row >= data.topRow && row < data.topRow + screenVisibleRows(); }
 int width(const Field& f) {
   if (f.names || f.min < 0) return 3;
   return f.max > 4095 ? 4 : f.max > 255 ? 3 : f.max > 15 ? 2 : 1;
+}
+#ifdef RGNANO_BUILD
+// Cells are 4 + value width characters ("FIX 0000" is the widest, 8) one space apart,
+// starting at column 6, so the widest row ends at column 29.
+constexpr int kCellStartX = 6;
+int cellLen(const Field& f) { return 4 + width(f); }
+int cellX(int col, int row) {
+  int x = kCellStartX;
+  for (int c = 0; c < col; ++c) x += cellLen(rows[row].cells[c]) + 1;
+  return x;
+}
+int cellSpan(int col, int row) { return cellLen(rows[row].cells[col]); }
+#else
+int cellX(int col, int) { return 8 + 8 * col; }
+int cellSpan(int, int) { return 8; }
+#endif
+int labelSpan() {
+#ifdef RGNANO_BUILD
+  return kCellStartX;
+#else
+  return 8;
+#endif
 }
 int value(const Field& f) {
   int v = current()->chip.sid.value[f.parameter];
@@ -135,18 +166,18 @@ void drawStatic() {
 void drawRowHeader(int row, CellState state) {
   if (!visible(row) || !field(0, row)) return;
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textDefault : appSettings.colorScheme.textInfo);
-  gfxClearRect(0, rowY(row), 8, 1);
+  gfxClearRect(0, rowY(row), labelSpan(), 1);
   gfxPrint(0, rowY(row), rows[row].label);
 }
 void drawField(int col, int row, CellState state) {
   const Field* f = field(col, row);
   if (!f || !visible(row)) return;
-  gfxClearRect(cellX(col), rowY(row), 8, 1);
+  gfxClearRect(cellX(col, row), rowY(row), cellSpan(col, row), 1);
   gfxSetFgColor(appSettings.colorScheme.textInfo);
-  gfxPrint(cellX(col), rowY(row), f->tag);
-  if (overrideReason(f->parameter)) gfxPrint(cellX(col) + 3, rowY(row), "*");
+  gfxPrint(cellX(col, row), rowY(row), f->tag);
+  if (overrideReason(f->parameter)) gfxPrint(cellX(col, row) + 3, rowY(row), "*");
   gfxSetFgColor(state == CellState::focus ? appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-  const int v = value(*f), x = cellX(col) + 4, y = rowY(row);
+  const int v = value(*f), x = cellX(col, row) + 4, y = rowY(row);
   if (f->names) gfxPrint(x, y, f->names[std::clamp(v, f->min, f->max)]);
   else if (v < 0) gfxPrint(x, y, "off");
   else gfxPrintf(x, y, "%0*X", width(*f), v);
@@ -154,7 +185,7 @@ void drawField(int col, int row, CellState state) {
 void drawColHeader(int, CellState) {}
 void drawCursor(int col, int row) {
   const Field* f = field(col, row);
-  if (f && visible(row)) gfxCursor(cellX(col) + 4, rowY(row), width(*f));
+  if (f && visible(row)) gfxCursor(cellX(col, row) + 4, rowY(row), width(*f));
 }
 int onEdit(int col, int row, CellEditAction action) {
   const Field* f = field(col, row);
@@ -189,7 +220,7 @@ void draw() {
     for (int row = 0; row < data.rows; ++row)
       for (int col = 0; col < columns(row); ++col)
         drawField(col, row, row == data.cursorRow && col == data.cursorCol ? CellState::focus : CellState::normal);
-    gfxClearRect(0, 15, 32, 1);
+    gfxClearRect(0, 15, 30, 1);
     if (mask) { gfxSetFgColor(appSettings.colorScheme.textInfo); gfxPrint(0, 15, "* = program / FX override"); }
     drawCursor(data.cursorCol, data.cursorRow);
   }

@@ -765,6 +765,11 @@ void drawFXHelp(enum FX fxIdx, uint8_t instrumentIdx) {
   if (!helpText || !helpText[0]) return;
 
 
+  #ifdef RGNANO_BUILD
+  const int helpCols = 28;  // drawn from column 1: fits 30 columns
+#else
+  const int helpCols = 39;
+#endif
   char line[41];
   int y = 1;
   int pos = 0;
@@ -773,9 +778,9 @@ void drawFXHelp(enum FX fxIdx, uint8_t instrumentIdx) {
   gfxSetFgColor(appSettings.colorScheme.textValue);
 
   while (helpText[pos] && y <= 5) {
-    if (helpText[pos] == '\n' || pos - lineStart >= 39) {
+    if (helpText[pos] == '\n' || pos - lineStart >= helpCols) {
       int len = pos - lineStart;
-      if (len > 39) len = 39;
+      if (len > helpCols) len = helpCols;
       strncpy(line, &helpText[lineStart], len);
       line[len] = '\0';
       gfxPrint(1, y++, line);
@@ -793,7 +798,7 @@ void drawFXHelp(enum FX fxIdx, uint8_t instrumentIdx) {
   // Print remaining text if any
   if (lineStart < pos && y <= 5) {
     int len = pos - lineStart;
-    if (len > 39) len = 39;
+    if (len > helpCols) len = helpCols;
     strncpy(line, &helpText[lineStart], len);
     line[len] = '\0';
     gfxPrint(1, y, line);

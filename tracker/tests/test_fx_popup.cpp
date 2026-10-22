@@ -118,6 +118,12 @@ TEST_CASE("Lane FX popup bounds context-dependent modulation and drum help") {
   }
 }
 
+#ifdef RGNANO_BUILD
+static constexpr int kScrollMarkX = 29;
+#else
+static constexpr int kScrollMarkX = 34;
+#endif
+
 TEST_CASE("Lane FX long groups scroll and use the same grid for drawing and navigation") {
   PopupSession session;
   auto& instrument = chipnomadState->project.instruments[0];
@@ -126,7 +132,11 @@ TEST_CASE("Lane FX long groups scroll and use the same grid for drawing and navi
   fxEditFullDraw(fxASL, 0, 0);
   fxEditInput(keyEdit | keyDown, 1, &selected, &last);
   fxEditInput(0, 1, &selected, &last);
+#ifdef RGNANO_BUILD
+  CHECK(selected.command == fxARS); // Eighth command wraps after seven columns (30 column screen).
+#else
   CHECK(selected.command == fxAEM); // Ninth command wraps at the sidebar boundary.
+#endif
   CHECK(mockCursorX == 1);
   fxEditInput(keyEdit | keyUp, 1, &selected, &last);
   fxEditInput(0, 1, &selected, &last);
@@ -140,9 +150,9 @@ TEST_CASE("Lane FX long groups scroll and use the same grid for drawing and navi
   } columns;
   fxGroups[0].columns = 1;
   checkPopup(fxARP, 0, 0);
-  CHECK(mockGfxCells[18][34] == 'v');
+  CHECK(mockGfxCells[18][kScrollMarkX] == 'v');
   checkPopup(fxPAN, 0, 0);
-  CHECK(mockGfxCells[6][34] == '^');
+  CHECK(mockGfxCells[6][kScrollMarkX] == '^');
   fxEditInput(keyEdit | keyUp, 1, &selected, &last);
   fxEditInput(0, 1, &selected, &last);
   CHECK(selected.command == fxSLE);

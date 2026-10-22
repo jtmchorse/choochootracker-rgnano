@@ -12,6 +12,17 @@ static int moduleButtonDown;
 static int popupSlot;
 static int displayedCpuLoad = -1;
 static bool master;
+#ifdef RGNANO_BUILD
+// 30 column layout: two 15 column halves (label 10 + space + 2 digit value).
+#define IFX_COL_W 15
+#define IFX_VAL_X 11
+#define IFX_CPU_X 22
+#else
+#define IFX_COL_W 17
+#define IFX_VAL_X 12
+#define IFX_CPU_X 31
+#endif
+static_assert(IFX_COL_W + IFX_VAL_X + 2 <= 30 || IFX_COL_W == 17, "INSERT FX second column must fit 30 columns");
 static int columns(int) { return 2; }
 static int y(int row) { return 3 + row + (row >= 5 ? 2 : 0); }
 static int parameter(int col, int row) { return col * 4 + row % 5 - 1; }
@@ -25,8 +36,8 @@ static int valid(int col, int row) {
 }
 static void drawCpuLoad(int cpuLoad) {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
-  gfxClearRect(31, 0, 9, 1);
-  gfxPrintf(31, 0, "CPU %03d%%", cpuLoad);
+  gfxClearRect(IFX_CPU_X, 0, 9, 1);
+  gfxPrintf(IFX_CPU_X, 0, "CPU %03d%%", cpuLoad);
 }
 static void drawStatic() {
   gfxSetFgColor(appSettings.colorScheme.textTitles);
@@ -47,20 +58,20 @@ static void hint(int col, int row) {
                   col ? "Bypass retains settings" : "Select insert module");
 }
 static void cursor(int col, int row) {
-  gfxCursor(row % 5 == 0 ? (col ? 27 : 4) : col * 17 + 12, y(row),
+  gfxCursor(row % 5 == 0 ? (col ? IFX_COL_W + 10 : 4) : col * IFX_COL_W + IFX_VAL_X, y(row),
             row % 5 == 0 ? (col ? 3 : 11) : 2);
   hint(col, row);
 }
 static void field(int col, int row, CellState) {
   auto& c = config(row);
   gfxSetFgColor(appSettings.colorScheme.textDefault);
-  int x = col * 17;
-  gfxClearRect(x, y(row), 17, 1);
+  int x = col * IFX_COL_W;
+  gfxClearRect(x, y(row), IFX_COL_W, 1);
   if (row % 5 == 0) {
     if (!col)
       gfxPrintf(0, y(row), "TF%d %-11s", row / 5 + 1, insertDescriptor(c.module).name);
     else
-      gfxPrintf(17, y(row), "Bypass    %s", c.bypass ? "ON " : "OFF");
+      gfxPrintf(IFX_COL_W, y(row), "Bypass    %s", c.bypass ? "ON " : "OFF");
   } else if (valid(col, row)) {
     int p = parameter(col, row);
     char label[16];
@@ -74,7 +85,7 @@ static void field(int col, int row, CellState) {
     }
     gfxPrintf(x, y(row), "%d %-8s", p + 1, label);
     gfxSetFgColor(appSettings.colorScheme.textValue);
-    gfxPrintf(x + 12, y(row), "%02X", c.values[p]);
+    gfxPrintf(x + IFX_VAL_X, y(row), "%02X", c.values[p]);
   }
 }
 static int edit(int col, int row, CellEditAction action) {

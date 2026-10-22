@@ -730,10 +730,14 @@ void appDraw(void) {
 
   if (!chipnomadState) return;
 
+#ifndef RGNANO_BUILD
   pianoDisplayDraw();
+#endif
   waveformDisplayRefresh();
 
-  // Tracks
+#ifndef RGNANO_BUILD
+  // Tracks (mute/solo, number, waveform, live note). Columns 34-39 only exist on the
+  // 40 column canvas; the RG Nano is 30 columns wide and has no such side column.
   char digit[2] = "0";
   for (int c = 0; c < chipnomadState->project.tracksCount; c++) {
     // Draw mute/solo indicator to the left of track number
@@ -771,9 +775,25 @@ void appDraw(void) {
       (noteStr[0] == '-' ? cs.textEmpty : cs.textValue));
       gfxPrint(37, 3 + c, noteStr);
   }
+#endif
 
   int realtimeOverflow = chipnomadGetMotionRecordOverflow() ||
     chipnomadGetCommandOverflow(chipnomadState) || chipnomadGetRenderBufferOverflow(chipnomadState);
+#ifdef RGNANO_BUILD
+  // 30 columns: the indicator takes the last cell of the message row, and only while a
+  // motion mode is active, so it never truncates a message otherwise.
+  const int indicatorX = 29;
+  static int indicatorShown = 0;
+  const char* indicator = motionEraseHeld ? "x" : motionRecordHeld ? (realtimeOverflow ? "!" : "*") : motionLiveActive() ? "~" : nullptr;
+  if (indicator) {
+    gfxSetFgColor(motionEraseHeld || (motionRecordHeld && realtimeOverflow) ? cs.warning : cs.textTitles);
+    gfxPrint(indicatorX, 19, indicator);
+    indicatorShown = 1;
+  } else if (indicatorShown) {
+    gfxPrint(indicatorX, 19, " ");
+    indicatorShown = 0;
+  }
+#else
   if (motionEraseHeld) {
     gfxSetFgColor(cs.warning);
     gfxPrint(39, 19, "x");
@@ -786,6 +806,7 @@ void appDraw(void) {
   } else {
     gfxPrint(39, 19, " ");
   }
+#endif
 }
 
 /**

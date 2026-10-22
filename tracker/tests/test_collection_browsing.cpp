@@ -7,6 +7,13 @@
 #include <chrono>
 #include <thread>
 
+// Item panel origin: 19 / 23 on the 40 column layout, 13 / 17 on RG Nano (30 columns).
+#ifdef RGNANO_BUILD
+static constexpr int kItemX = 13, kLabelX = 17;
+#else
+static constexpr int kItemX = 19, kLabelX = 23;
+#endif
+
 TEST_CASE("Collection preset selection stays below all eight track previews") {
   SelectionItem presets[24]{};
   std::string labels[24];
@@ -15,12 +22,12 @@ TEST_CASE("Collection preset selection stays below all eight track previews") {
   selectionPopupSetup("SOUNDFONT PRESETS",&collection,1,0,nullptr,nullptr,false,nullptr,true,true);
   for(int n=0;n<24;++n) {
     screenSelectionPopup.fullRedraw();
-    CHECK(mockGfxCells[11][19]=='>');
-    CHECK(std::string(mockGfxCells[11]+23,labels[n].size())==labels[n]);
+    CHECK(mockGfxCells[11][kItemX]=='>');
+    CHECK(std::string(mockGfxCells[11]+kLabelX,labels[n].size())==labels[n]);
     screenSelectionPopup.onInput(1,keyDown,1);
   }
   screenSelectionPopup.fullRedraw();
-  CHECK(std::string(mockGfxCells[11]+23,8)=="Preset 0");
+  CHECK(std::string(mockGfxCells[11]+kLabelX,8)=="Preset 0");
 }
 TEST_CASE("Long preset names scroll after idle and reset on selection changes") {
   SelectionItem presets[]={
@@ -29,14 +36,14 @@ TEST_CASE("Long preset names scroll after idle and reset on selection changes") 
   SelectionItem collection{"Collection",-1,presets,2,nullptr};
   selectionPopupSetup("SOUNDFONT PRESETS",&collection,1,0,nullptr,nullptr,false,nullptr,true,true);
   screenSelectionPopup.fullRedraw();screenSelectionPopup.draw();
-  CHECK(mockGfxCells[11][23]=='A');
+  CHECK(mockGfxCells[11][kLabelX]=='A');
   std::this_thread::sleep_for(std::chrono::milliseconds(1200));
   screenSelectionPopup.draw();
-  CHECK(mockGfxCells[11][23]!='A');
+  CHECK(mockGfxCells[11][kLabelX]!='A');
   screenSelectionPopup.onInput(1,keyDown,1);
-  CHECK(std::string(mockGfxCells[11]+23,13)=="Second preset");
+  CHECK(std::string(mockGfxCells[11]+kLabelX,13)=="Second preset");
   screenSelectionPopup.onInput(1,keyUp,1);
-  CHECK(mockGfxCells[11][23]=='A');
+  CHECK(mockGfxCells[11][kLabelX]=='A');
 }
 
 TEST_CASE("SoundFont folders enter directly and left returns through the panels") {
@@ -62,7 +69,7 @@ TEST_CASE("SoundFont loading status occupies the third row and clears after comp
   screenSelectionPopup.fullRedraw();CHECK(std::string(mockGfxCells[2],12)=="Unzipping...");
   status="Loading samples...";screenSelectionPopup.draw();CHECK(std::string(mockGfxCells[2],18)==status);
   status="";screenSelectionPopup.draw();CHECK(std::string(mockGfxCells[2],40)==std::string(40,' '));
-  CHECK(mockGfxCells[11][19]=='>');
+  CHECK(mockGfxCells[11][kItemX]=='>');
 }
 
 TEST_CASE("Collections use their full height and presets page without loading") {
@@ -80,11 +87,11 @@ TEST_CASE("Collections use their full height and presets page without loading") 
   screenSelectionPopup.onInput(1,keyRight,0); // Enter the preset panel.
   screenSelectionPopup.onInput(1,keyRight,0); // Page down without selecting.
   CHECK(chosen==-999);
-  CHECK(std::string(mockGfxCells[11]+23,8)=="Sound 15");
+  CHECK(std::string(mockGfxCells[11]+kLabelX,8)=="Sound 15");
   screenSelectionPopup.onInput(1,keyRight,0);
-  CHECK(std::string(mockGfxCells[11]+23,8)=="Sound 30");
+  CHECK(std::string(mockGfxCells[11]+kLabelX,8)=="Sound 30");
   screenSelectionPopup.onInput(1,keyRight,0);
-  CHECK(std::string(mockGfxCells[11]+23,8)=="Sound 39");
+  CHECK(std::string(mockGfxCells[11]+kLabelX,8)=="Sound 39");
   screenSelectionPopup.onInput(1,keyEdit,0);CHECK(chosen==39);
   CHECK(screenSelectionPopup.onInput(1,keyPlay,0)==0);
   CHECK(screenSelectionPopup.getPlaybackLevel()==ScreenPlaybackLevel::song);

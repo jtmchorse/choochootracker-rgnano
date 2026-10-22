@@ -35,6 +35,14 @@ static void drawRowHeader(int row, CellState state) {}
 static void drawColHeader(int col, CellState state) {}
 static void drawSelection(int col1, int row1, int col2, int row2) {}
 
+// Path / template fields start at column 13. RG Nano is 30 columns wide, so they show 17.
+#ifdef RGNANO_BUILD
+#define EXPORT_PATH_W 17
+#else
+#define EXPORT_PATH_W 26
+#endif
+static_assert(13 + EXPORT_PATH_W <= 40, "export path field must fit");
+
 static int sampleRates[] = {44100, 48000, 88200, 96000};
 static int bitDepths[] = {16, 24, 32};
 static int currentSampleRateIndex = 0;
@@ -235,16 +243,16 @@ void exportCommonDrawCursor(int col, int row) {
   } else if (row == 3) {
     gfxCursor(13, 6, 2);
   } else if (row == 4) {
-    gfxCursor(13, 7, 26);
+    gfxCursor(13, 7, EXPORT_PATH_W);
   } else if (row == 5) {
     gfxCursor(13, 8, 6);
 #ifdef DESKTOP_BUILD
   } else if (row == 6) {
-    gfxCursor(13, 9, 26);
+    gfxCursor(13, 9, EXPORT_PATH_W);
 #endif
 #ifdef EXPORT_HAS_LSDJ
   } else if (row == EXPORT_ROW_LSDJ) {
-    gfxCursor(13, EXPORT_ROW_LSDJ + 3, 26);
+    gfxCursor(13, EXPORT_ROW_LSDJ + 3, EXPORT_PATH_W);
 #endif
   }
 }
@@ -268,13 +276,13 @@ void exportCommonDrawField(int col, int row, CellState state) {
     gfxClearRect(13, 6, 2, 1);
     gfxPrintf(13, 6, "%d", bitDepths[currentBitDepthIndex]);
   } else if (row == 4) {
-    gfxClearRect(13, 7, 26, 1);
+    gfxClearRect(13, 7, EXPORT_PATH_W, 1);
     if (appSettings.exportPath[0]) {
       // Show the tail of a long custom path
       const char* path = appSettings.exportPath;
       int len = strlen(path);
-      if (len > 26) {
-        gfxPrintf(13, 7, "...%.23s", path + len - 23);
+      if (len > EXPORT_PATH_W) {
+        gfxPrintf(13, 7, "...%.*s", EXPORT_PATH_W - 3, path + len - (EXPORT_PATH_W - 3));
       } else {
         gfxPrintf(13, 7, "%s", path);
       }
@@ -285,12 +293,12 @@ void exportCommonDrawField(int col, int row, CellState state) {
     gfxPrint(13, 8, "Export");
 #ifdef DESKTOP_BUILD
   } else if (row == 6) {
-    gfxClearRect(13, 9, 26, 1);
+    gfxClearRect(13, 9, EXPORT_PATH_W, 1);
     if (m8sTemplatePath[0]) {
       // Show the tail of a long template path
       int len = strlen(m8sTemplatePath);
-      if (len > 26) {
-        gfxPrintf(13, 9, "...%.23s", m8sTemplatePath + len - 23);
+      if (len > EXPORT_PATH_W) {
+        gfxPrintf(13, 9, "...%.*s", EXPORT_PATH_W - 3, m8sTemplatePath + len - (EXPORT_PATH_W - 3));
       } else {
         gfxPrintf(13, 9, "%s", m8sTemplatePath);
       }
@@ -301,11 +309,11 @@ void exportCommonDrawField(int col, int row, CellState state) {
 #ifdef EXPORT_HAS_LSDJ
   } else if (row == EXPORT_ROW_LSDJ) {
     const int line = EXPORT_ROW_LSDJ + 3;
-    gfxClearRect(13, line, 26, 1);
+    gfxClearRect(13, line, EXPORT_PATH_W, 1);
     if (lsdjTemplatePath[0]) {
       int len = strlen(lsdjTemplatePath);
-      if (len > 26) {
-        gfxPrintf(13, line, "...%.23s", lsdjTemplatePath + len - 23);
+      if (len > EXPORT_PATH_W) {
+        gfxPrintf(13, line, "...%.*s", EXPORT_PATH_W - 3, lsdjTemplatePath + len - (EXPORT_PATH_W - 3));
       } else {
         gfxPrintf(13, line, "%s", lsdjTemplatePath);
       }
@@ -677,8 +685,16 @@ static int bouncePrefixLength = 0;
 
 // Layout: file name field sits on the same row as its label
 #define BOUNCE_NAME_LABEL_X (0)
+#ifdef RGNANO_BUILD
+// 30 columns: a short label so the 24 character name field fits (5 + 24 = 29).
+#define BOUNCE_NAME_LABEL "Name"
+#define BOUNCE_NAME_FIELD_X (5)
+#else
+#define BOUNCE_NAME_LABEL "File name"
 #define BOUNCE_NAME_FIELD_X (13)
+#endif
 #define BOUNCE_NAME_FIELD_W (24)
+static_assert(5 + 24 <= 30, "bounce name field must fit RG Nano");
 #define BOUNCE_PREFIX_ROW (3)
 #define BOUNCE_START_ROW (6)
 // Screen row of Start/Cancel: one blank row below the checkboxes
@@ -697,7 +713,7 @@ static void bounceDrawStatic(void) {
   gfxPrint(0, 0, "BOUNCE TO SAMPLE");
 
   gfxSetFgColor(cs.textDefault);
-  gfxPrint(BOUNCE_NAME_LABEL_X, 2, "File name");
+  gfxPrint(BOUNCE_NAME_LABEL_X, 2, BOUNCE_NAME_LABEL);
   gfxPrint(0, 3, "Sample rate");
   gfxPrint(0, 4, "Bit depth");
   gfxPrint(0, 6, "Include in a sample name:");

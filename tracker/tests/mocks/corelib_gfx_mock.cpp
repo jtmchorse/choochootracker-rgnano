@@ -11,6 +11,9 @@ char mockGfxCells[20][40];
 int mockTextRight, mockTextBottom;
 int mockCursorX, mockCursorY, mockCursorWidth;
 int mockBitmapDrawCount, mockBitmapDrawRow;
+// Rightmost cell column touched by any print, cursor, rect or bitmap since the test reset it.
+int mockMaxRight = -1;
+static void noteRight(int x, int w) { if (w > 0) mockMaxRight = std::max(mockMaxRight, x + w - 1); }
 
 int gfxSetup(int *screenWidth, int* screenHeight) { return 0; }
 void gfxCleanup(void) {}
@@ -27,9 +30,11 @@ void gfxClearRect(int x, int y, int w, int h) {
     for (int col = x; col < x + w && col < 40; ++col)
       if (row >= 0 && col >= 0) mockGfxCells[row][col] = ' ';
 }
-void gfxCursor(int x, int y, int w) { mockCursorX = x; mockCursorY = y; mockCursorWidth = w; }
-void gfxRect(int x, int y, int w, int h) {}
+void gfxCursor(int x, int y, int w) { noteRight(x, w); if (getenv("FIT_TRACE") && x + w > 30) fprintf(stderr, "over: cursor x=%d y=%d w=%d\n", x, y, w); mockCursorX = x; mockCursorY = y; mockCursorWidth = w; }
+void gfxRect(int x, int y, int w, int h) { noteRight(x, w); }
 void gfxPrint(int x, int y, const char* text) {
+  noteRight(x, int(strlen(text)));
+  if (getenv("FIT_TRACE") && x + int(strlen(text)) > 30) fprintf(stderr, "over: print x=%d y=%d '%s'\n", x, y, text);
   if (*text) {
     mockTextRight = std::max(mockTextRight, x + int(strlen(text)) - 1);
     mockTextBottom = std::max(mockTextBottom, y);
@@ -57,6 +62,7 @@ void gfxBitmapClear(Bitmap* bitmap) { if (bitmap) memset(bitmap->data, 0, bitmap
 void gfxBitmapFree(Bitmap* bitmap) { if (bitmap) { free(bitmap->data); free(bitmap); } }
 void gfxDrawBitmap(Bitmap* bitmap, int col, int row) {
   ++mockBitmapDrawCount;
+  if (bitmap) noteRight(col, bitmap->widthChars);
   mockBitmapDrawRow = row;
 }
 int gfxGetCharWidth(void) { return 8; }

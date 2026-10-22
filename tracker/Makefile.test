@@ -344,3 +344,18 @@ $(BUILD_DIR)/bench_device: $(BENCHDEV_OBJECTS)
 .PHONY: bench-device
 bench-device: $(BUILD_DIR)/bench_device
 -include $(BENCHDEV_OBJECTS:.o=.d)
+
+# Real-screen fit check (tests/screen_fit.cpp): links every production screen and
+# draws it against the recording gfx mock to report the rightmost column used.
+#   make -f Makefile.test screen-fit RGNANO=1
+SCREEN_FIT_REAL = $(filter-out src/screens/screen_layout.cpp $(COMMON_SOURCES),$(wildcard src/screens/*.cpp)) src/audio_manager.cpp src/sample_utils.cpp src/user_library_import.cpp
+SCREEN_FIT_SOURCES = tests/screen_fit.cpp $(sort $(COMMON_SOURCES) $(SCREEN_FIT_REAL)) $(filter-out tests/mocks/app_ui_mock.cpp,$(MOCK_SOURCES))
+SCREEN_FIT_OBJECTS = $(foreach source,$(SCREEN_FIT_SOURCES),$(call object_for,$(source)))
+$(eval $(call compile_source,tests/screen_fit.cpp))
+$(foreach source,$(SCREEN_FIT_REAL),$(eval $(call compile_source,$(source))))
+$(BUILD_DIR)/screen_fit: $(SCREEN_FIT_OBJECTS)
+	@$(CXX) $(SCREEN_FIT_OBJECTS) $(LDFLAGS) -o $@
+.PHONY: screen-fit
+screen-fit: $(BUILD_DIR)/screen_fit
+	@$(BUILD_DIR)/screen_fit
+-include $(SCREEN_FIT_OBJECTS:.o=.d)

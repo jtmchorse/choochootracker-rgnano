@@ -37,7 +37,11 @@ static void drawStatic(void) {
   gfxPrint(0, 7, "Noise");
   gfxPrint(0, 8, "Env");
 
+#ifdef RGNANO_BUILD
+  gfxPrint(17, 6, "Auto env");  // 30 columns
+#else
   gfxPrint(17, 6, "Auto env period");
+#endif
   gfxPrint(17, 7, "Enabled");
   gfxPrint(17, 8, "Rate");
 

@@ -18,9 +18,17 @@
 // Level meter: a small square (inherits the row height) placed between the
 // name and the ARM checkbox. Display-only: the cursor and touch taps skip
 // it (see isCellValid and the touch mapping in screens.cpp).
+#ifdef RGNANO_BUILD
+// 30 columns: name 0-19, meter 22-23, ARM checkbox 25-28.
+#define METER_FIELD_X (22)
+#define METER_FIELD_WIDTH (2)
+#define ARM_FIELD_X (25)
+static_assert(ARM_FIELD_X + 4 <= 30 && METER_FIELD_X + 2 <= ARM_FIELD_X, "AUDIO INPUT columns must fit 30 columns");
+#else
 #define METER_FIELD_X (26)
 #define METER_FIELD_WIDTH (2)
 #define ARM_FIELD_X (28)
+#endif
 #define ARM_FIELD_WIDTH (4)
 
 // Marquee state for long device names: while the cursor rests on a name

@@ -527,12 +527,24 @@ void collapseGroup(int groupIdx) {
 
 // Keep the picker clear of the track sidebar and bottom message row. Help
 // has a fixed footprint, so changing commands never changes group spacing.
+#ifdef RGNANO_BUILD
+// RG Nano: 30 columns. Help wraps at 28 (drawn from column 1) and the grid is at most
+// 7 four-column cells wide: 1 + 6 * 4 + 3 = 28.
+static constexpr int fxHelpWidth = 28;
+static constexpr int fxMaxColumns = 7;
+static constexpr int fxPickerCols = 30;
+#else
 static constexpr int fxHelpWidth = 33;
+static constexpr int fxMaxColumns = 8;
+static constexpr int fxPickerCols = 35;
+#endif
+static_assert(1 + (fxMaxColumns - 1) * 4 + 3 <= fxPickerCols, "FX picker grid must fit");
+static_assert(1 + fxHelpWidth <= fxPickerCols, "FX picker help must fit");
 // One blank row separates the fixed help block from the groups.
 static constexpr int fxListTop = 6;
 static int fxListBottom() { return 18 - gfxGetContentRowOffset(); }
 static int fxColumns(const FXGroup* group) {
-  return group ? std::clamp(group->columns, 1, 8) : 1;
+  return group ? std::clamp(group->columns, 1, fxMaxColumns) : 1;
 }
 
 static void printFXLine(int y, const std::string& text) {
@@ -633,7 +645,7 @@ int fxEditIsOpen(void) { return fxPickerOpen; }
 
 void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable) {
   fxPickerOpen = 1;
-  gfxClearRect(0, 0, 35, 20);
+  gfxClearRect(0, 0, fxPickerCols, 20);
   // The phrase screen reserves the bottom row for messages.  Do not leave a
   // stale insert hint there: it can overwrite the second row of Fxx entries.
   screenMessage(0, "");
@@ -742,8 +754,8 @@ void fxEditFullDraw(FXId currentFX, uint8_t instrumentIdx, int isTable) {
     if (g == expandedGroup) y = drawFXList(g, y);
   }
   gfxSetFgColor(appSettings.colorScheme.textInfo);
-  if (scroll) gfxPrint(34, fxListTop, "^");
-  if (totalRows - scroll > availableRows) gfxPrint(34, fxListBottom(), "v");
+  if (scroll) gfxPrint(fxPickerCols - 1, fxListTop, "^");
+  if (totalRows - scroll > availableRows) gfxPrint(fxPickerCols - 1, fxListBottom(), "v");
 }
 
 

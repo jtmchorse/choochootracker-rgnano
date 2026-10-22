@@ -23,7 +23,21 @@ static void fullRedraw(void) {
   gfxClear();
 
   gfxSetFgColor(appSettings.colorScheme.selection);
+#ifdef RGNANO_BUILD
+  // 30 columns: wrap the message at the last space that fits, onto rows 8 and 9.
+  {
+    const int len = (int)strlen(confirmMessage);
+    int cut = len <= 30 ? len : 30;
+    if (len > 30) {
+      while (cut > 0 && confirmMessage[cut] != ' ') --cut;
+      if (cut == 0) cut = 30;
+    }
+    gfxPrintf(0, 8, "%.*s", cut, confirmMessage);
+    if (cut < len) gfxPrintf(0, 9, "%.30s", confirmMessage + cut + (confirmMessage[cut] == ' ' ? 1 : 0));
+  }
+#else
   gfxPrint(0, 8, confirmMessage);
+#endif
 
   // Draw OK button
   if (selectedOption == 0) {

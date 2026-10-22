@@ -8,6 +8,36 @@
 #include <string>
 #include <vector>
 
+// Panel geometry. RG Nano draws 30 columns: a 12 column category panel (">" + label),
+// a divider at 12 and a 17 column item panel; other builds keep the 40 column layout.
+#ifdef RGNANO_BUILD
+#define SP_TEXT_W 30          // status / path / footer line width
+#define SP_SEP_X 13           // "|" divider
+#define SP_RIGHT_X 14         // item panel origin
+#define SP_LEFT_LABEL_W 11    // category label after ">" and a space
+#define SP_RIGHT_LABEL_W 13   // item label after ">*" and a space
+#define SP_FULL_LABEL_W 28    // single panel label after ">" and a space
+#define SP_C_SEP_X 12         // collection layout divider
+#define SP_C_RIGHT_X 13       // collection layout item panel origin
+#define SP_C_LEFT_LABEL_W 8   // collection layout category label (after ">", icon)
+#define SP_C_PRESET_ICON_X 13 // "PRESET" tab icon, text two columns later
+#define SP_C_RIGHT_LABEL_W(y) 13
+#else
+#define SP_TEXT_W 40
+#define SP_SEP_X 18
+#define SP_RIGHT_X 19
+#define SP_C_SEP_X 18
+#define SP_C_RIGHT_X 19
+#define SP_LEFT_LABEL_W 16
+#define SP_RIGHT_LABEL_W 18
+#define SP_FULL_LABEL_W 38
+#define SP_C_LEFT_LABEL_W 14
+#define SP_C_PRESET_ICON_X 20
+#define SP_C_RIGHT_LABEL_W(y) (((y>=3 && y<=10) || y>=14) ? 11 : 17)
+#endif
+static_assert(SP_RIGHT_X + 3 + SP_RIGHT_LABEL_W <= SP_TEXT_W, "selection popup item panel must fit");
+static_assert(SP_C_RIGHT_X + 4 + 13 <= 30 || SP_C_RIGHT_X == 19, "selection popup collection panel must fit");
+
 static char title[32];
 static const SelectionItem* rootItems;
 static bool fullWidth, collectionLayout, folderNavigation;
@@ -83,12 +113,12 @@ static void fullRedraw() {
   gfxClear();
   gfxSetFgColor(appSettings.colorScheme.textTitles);
   gfxPrint(0, 0, title);
-  if (!fullWidth) gfxPrint(18, 1, "|");
-  if(collectionLayout){drawIcon(true,0,1);gfxPrint(2,1,"COLLECTION");drawIcon(false,20,1);gfxPrint(22,1,"PRESET");}
+  if (!fullWidth) gfxPrint(collectionLayout ? SP_C_SEP_X : SP_SEP_X, 1, "|");
+  if(collectionLayout){drawIcon(true,0,1);gfxPrint(2,1,"COLLECTION");drawIcon(false,SP_C_PRESET_ICON_X,1);gfxPrint(SP_C_PRESET_ICON_X+2,1,"PRESET");}
   if (onStatus) {
     statusText=onStatus();
     gfxSetFgColor(appSettings.colorScheme.textInfo);
-    gfxPrintf(0,2,"%.40s",statusText.c_str());
+    gfxPrintf(0,2,"%.*s",SP_TEXT_W,statusText.c_str());
   }
   const SelectionItem* category = currentCategory();
   // Eight track previews occupy rows 3..10 on the SoundFont screen. Keep the
@@ -106,48 +136,57 @@ static void fullRedraw() {
       if(collectionLayout) {
         gfxPrintf(0,y,"%c",categoryItem==categoryIndex?'>':' ');
         drawIcon(true,2,y);
-        gfxPrintf(4,y,"%-14.14s",rootItems[categoryItem].label+offset);
+        gfxPrintf(4,y,"%-*.*s",SP_C_LEFT_LABEL_W,SP_C_LEFT_LABEL_W,rootItems[categoryItem].label+offset);
       } else {
-        gfxPrintf(0,y,fullWidth?"%c %-38.38s":"%c %-16.16s",
-          categoryItem==categoryIndex?'>':' ',rootItems[categoryItem].label);
+        const int labelW = fullWidth ? SP_FULL_LABEL_W : SP_LEFT_LABEL_W;
+        gfxPrintf(0,y,"%c %-*.*s",
+          categoryItem==categoryIndex?'>':' ',labelW,labelW,rootItems[categoryItem].label);
       }
     }
     if (childItem >= 0 && childItem < category->childCount) {
       const SelectionItem* item = &category->children[childItem];
       gfxSetFgColor(childItem == itemIndex && activePanel == 1 ?
         appSettings.colorScheme.textValue : appSettings.colorScheme.textDefault);
-      const int width=collectionLayout ? (((y>=3 && y<=10) || y>=14) ? 11 : 17) : 18;
+      const int width=collectionLayout ? SP_C_RIGHT_LABEL_W(y) : SP_RIGHT_LABEL_W;
       const size_t offset=collectionLayout && childItem==itemIndex && activePanel==1 ? marqueeOffset : 0;
       if(collectionLayout) {
-        gfxPrintf(19,y,"%c%c",childItem==itemIndex?'>':' ',item->value==currentValue?'*':' ');
-        drawIcon(item->folder,21,y);
-        gfxPrintf(23,y,"%-*.*s",width,width,item->label+offset);
+        gfxPrintf(SP_C_RIGHT_X,y,"%c%c",childItem==itemIndex?'>':' ',item->value==currentValue?'*':' ');
+        drawIcon(item->folder,SP_C_RIGHT_X+2,y);
+        gfxPrintf(SP_C_RIGHT_X+4,y,"%-*.*s",width,width,item->label+offset);
       } else {
-        gfxPrintf(19,y,"%c%c %-*.*s",childItem==itemIndex?'>':' ',
+        gfxPrintf(SP_RIGHT_X,y,"%c%c %-*.*s",childItem==itemIndex?'>':' ',
           item->value==currentValue?'*':' ',width,width,item->label+offset);
       }
     }
   }
-  if(collectionLayout&&category->helper){gfxSetFgColor(appSettings.colorScheme.textInfo);const char*path=category->helper;size_t length=strlen(path);gfxPrintf(0,18,"%-40.40s",length>40?path+length-40:path);}
+  if(collectionLayout&&category->helper){gfxSetFgColor(appSettings.colorScheme.textInfo);const char*path=category->helper;size_t length=strlen(path);gfxPrintf(0,18,"%-*.*s",SP_TEXT_W,SP_TEXT_W,length>(size_t)SP_TEXT_W?path+length-SP_TEXT_W:path);}
   else if (activePanel == 1 && itemIndex < category->childCount && category->children[itemIndex].helper) {
     gfxSetFgColor(appSettings.colorScheme.textInfo);
-    gfxPrintf(0, 18, "%-40.40s", category->children[itemIndex].helper);
+    gfxPrintf(0, 18, "%-*.*s", SP_TEXT_W, SP_TEXT_W, category->children[itemIndex].helper);
   }
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   const bool playing = chipnomadState && chipnomadGetPlaybackStatus(chipnomadState)->isPlaying;
+#ifdef RGNANO_BUILD
+  if(!collectionLayout) gfxPrint(0, 19, onPreview && playing ? "STOP SONG TO HEAR  OPT EXIT" :
+    folderNavigation ? "L BACK R PAGE EDIT OPEN" :
+    onPreview ? "EDIT PICK +PLAY HEAR OPT EXIT" :
+    fullWidth ? "U/D MOVE EDIT SELECT OPT EXIT" :
+    "L/R PANEL EDIT PICK OPT EXIT");
+#else
   if(!collectionLayout) gfxPrint(0, 19, onPreview && playing ? "STOP SONG TO HEAR  EDIT SELECT  OPT EXIT" :
     folderNavigation ? "L BACK R PAGE EDIT OPEN PLAY SONG" :
     collectionLayout ? "L/R PANEL  EDIT+PLAY HEAR  OPT EXIT" :
     onPreview ? "EDIT SELECT  EDIT+PLAY HEAR  OPT EXIT" :
     fullWidth ? "U/D MOVE EDIT SELECT OPT EXIT" :
     "L/R PANEL U/D MOVE EDIT SELECT OPT EXIT");
+#endif
 }
 
 static void draw() {
   if(!collectionLayout || rootCount<=0)return;
   const auto* category=currentCategory();
   const char* label=activePanel==1 && category->childCount ? category->children[itemIndex].label : category->label;
-  const size_t width=activePanel==1?17:14, length=strlen(label);
+  const size_t width=activePanel==1?(size_t)SP_C_RIGHT_LABEL_W(0):(size_t)SP_C_LEFT_LABEL_W, length=strlen(label);
   size_t offset=0;
   if(length>width) {
     const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-selectionSince).count();

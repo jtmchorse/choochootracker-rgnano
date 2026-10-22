@@ -26,12 +26,25 @@ static ScreenData data = {
   .onInput = NULL, .onRawInput = NULL, .isCellValid = NULL, .getLoopRange = NULL,
 };
 static int columnCount(int) { return 5; }
+#ifdef RGNANO_BUILD
+// 30 columns: ON, CH, CC (LEARN is 5 wide), instrument number only, destination clipped to 12.
+#define MIDICC_DEST_W 12
+static int xForColumn(int col) { static const int x[] = {0, 3, 6, 12, 18}; return x[col]; }
+static int widthForColumn(int col) { static const int w[] = {2, 2, 5, 5, MIDICC_DEST_W}; return w[col]; }
+static_assert(18 + MIDICC_DEST_W <= 30, "MIDI CC map must fit 30 columns");
+#else
+#define MIDICC_DEST_W 13
 static int xForColumn(int col) { static const int x[] = {0, 5, 10, 16, 27}; return x[col]; }
 static int widthForColumn(int col) { static const int w[] = {3, 4, 5, 10, 13}; return w[col]; }
+#endif
 static int globalTrackDestination(int destination) { return destination >= midiCCDestinationTrackMute && destination <= midiCCDestinationTrackDelaySend; }
 static const char* globalDestinationName(int destination) {
   switch (destination) {
+#ifdef RGNANO_BUILD
+    case midiCCDestinationSongPlayStop: return "Play/stop";
+#else
     case midiCCDestinationSongPlayStop: return "Song play/stop";
+#endif
     case midiCCDestinationTrackMute: return "Track mute";
     case midiCCDestinationTrackSolo: return "Track solo";
     case midiCCDestinationTrackVolume: return "Track volume";
@@ -47,7 +60,12 @@ static void instrumentLabel(int instrument, char* buffer, int bufferSize) {
     return;
   }
   const char* name = instrumentName(&chipnomadState->project, (uint8_t)instrument);
+#ifdef RGNANO_BUILD
+  (void)name;
+  snprintf(buffer, bufferSize, "%02X", instrument);
+#else
   snprintf(buffer, bufferSize, "%02X:%.*s", instrument, bufferSize - 4, name);
+#endif
 }
 
 static void drawStatic(void) {
@@ -81,12 +99,12 @@ static void drawField(int col, int row, CellState state) {
     instrumentLabel(m.instrument, label, sizeof(label));
     gfxPrint(x, y, label);
   }
-  else if (globalDestinationName(m.destination)) gfxPrint(x, y, globalDestinationName(m.destination));
+  else if (globalDestinationName(m.destination)) gfxPrintf(x, y, "%.*s", MIDICC_DEST_W, globalDestinationName(m.destination));
   else if (!m.enabled || m.destination == midiCCDestinationNone) gfxPrint(x, y, "-");
   else if (m.instrument >= PROJECT_MAX_INSTRUMENTS ||
            !instrumentCCDestinationAvailable(&chipnomadState->project.instruments[m.instrument], m.destination))
     gfxPrint(x, y, "Unsupported");
-  else gfxPrint(x, y, instrumentModDestinationNameForInstrument(&chipnomadState->project.instruments[m.instrument], m.destination));
+  else gfxPrintf(x, y, "%.*s", MIDICC_DEST_W, instrumentModDestinationNameForInstrument(&chipnomadState->project.instruments[m.instrument], m.destination));
 }
 
 static int nextDestination(const MidiCCMapping& m, int direction) {

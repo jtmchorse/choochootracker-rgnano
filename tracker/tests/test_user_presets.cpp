@@ -254,6 +254,14 @@ TEST_CASE("SID single-file names retain model suffixes and ignore stale source n
   projectFree(p.get());
 }
 
+#ifdef RGNANO_BUILD
+static constexpr int kPopupLeftW = 12, kPopupRightX = 13, kPopupRightW = 17;
+// The 8 column collection label clips "Chip Pack"; long names scroll while selected.
+static const char* const kPackLabel = "Chip Pac";
+#else
+static constexpr int kPopupLeftW = 18, kPopupRightX = 20, kPopupRightW = 20;
+static const char* const kPackLabel = "Chip Pack";
+#endif
 TEST_CASE("SID USER columns keep model folders in one collection and restore the chosen sound") {
   Fixture f;
   const auto original=fs::current_path();
@@ -270,10 +278,10 @@ TEST_CASE("SID USER columns keep model folders in one collection and restore the
   CHECK_FALSE(selectionPopupIsFullWidth());
   screenSelectionPopup.fullRedraw();
   std::string collections,sounds;
-  for(int row=2;row<18;++row){collections.append(mockGfxCells[row],18);sounds.append(mockGfxCells[row]+20,20);}
-  const auto pack=collections.find("Chip Pack");
+  for(int row=2;row<18;++row){collections.append(mockGfxCells[row],kPopupLeftW);sounds.append(mockGfxCells[row]+kPopupRightX,kPopupRightW);}
+  const auto pack=collections.find(kPackLabel);
   REQUIRE(pack!=std::string::npos);
-  CHECK(collections.find("Chip Pack",pack+1)==std::string::npos);
+  CHECK(collections.find(kPackLabel,pack+1)==std::string::npos);
   CHECK(collections.find("6581")==std::string::npos);
   CHECK(collections.find("8580")==std::string::npos);
   CHECK(collections.find(".zip")==std::string::npos);

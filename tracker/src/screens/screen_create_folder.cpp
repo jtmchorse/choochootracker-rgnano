@@ -27,6 +27,16 @@ static void drawStatic(void) {
 
   gfxSetFgColor(appSettings.colorScheme.textInfo);
   int pathLen = strlen(currentPath);
+#ifdef RGNANO_BUILD
+  // 30 columns: show the tail of a long path.
+  if (pathLen <= 30) {
+    gfxPrint(0, 1, currentPath);
+  } else {
+    char displayPath[31];
+    snprintf(displayPath, sizeof(displayPath), "...%s", currentPath + pathLen - 27);
+    gfxPrint(0, 1, displayPath);
+  }
+#else
   if (pathLen <= 80) {
     gfxPrint(0, 1, currentPath);
   } else {
@@ -34,6 +44,7 @@ static void drawStatic(void) {
     snprintf(displayPath, sizeof(displayPath), "...%s", currentPath + pathLen - 77);
     gfxPrint(0, 1, displayPath);
   }
+#endif
 
   gfxSetFgColor(appSettings.colorScheme.textDefault);
   gfxPrint(0, 3, "Folder name:");
