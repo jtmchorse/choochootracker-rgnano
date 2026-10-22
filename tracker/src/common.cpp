@@ -174,6 +174,7 @@ void initDefaultAppSettings(void) {
   fxLiteSet(appSettings.fxLite != 0);
   appSettings.trackView = 0;  // TRACK_VIEW_ALL: 8 columns; "4x2" stays an option
   appSettings.trackViewVersion = TRACK_VIEW_SETTINGS_VERSION;
+  appSettings.fontResetDone = 0;
   appSettings.stickLiveMode = StickLiveMode::hold;
   for (auto& visual : appSettings.trackVisuals)
     visual.mode = TrackVisualMode::detailed;
@@ -338,6 +339,9 @@ int settingsSave(void) {
   fprintf(file, "fxLite: %d\n", appSettings.fxLite);
   fprintf(file, "trackView: %d\n", appSettings.trackView);
   fprintf(file, "trackViewVersion: %d\n", appSettings.trackViewVersion);
+#ifdef RGNANO_BUILD
+  fprintf(file, "fontReset: %d\n", appSettings.fontResetDone);
+#endif
 
   const char* stickLiveMode = appSettings.stickLiveMode == StickLiveMode::free ? "FREE" :
     appSettings.stickLiveMode == StickLiveMode::toggle ? "TOGGLE" : "HOLD";
@@ -449,7 +453,7 @@ int settingsLoad(void) {
   FILE* file = fopen(settingsPath, "r");
   if (file == NULL) {
 #ifdef RGNANO_BUILD
-    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d (defaults)", settingsPath,
+    rgnanoLog("settings: path=%s existed=no migrated=no mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d fontReset=no (defaults)", settingsPath,
               (int)(appSettings.mixVolume * 100.0f + .5f), appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize,
               appSettings.audioSampleRate);
     rgnanoLogLibm();
@@ -539,6 +543,8 @@ int settingsLoad(void) {
       sscanf(line + 9, "%d", &appSettings.playFps);
     } else if (strncmp(line, "fxLite: ", 8) == 0) {
       sscanf(line + 8, "%d", &appSettings.fxLite);
+    } else if (strncmp(line, "fontReset: ", 11) == 0) {
+      sscanf(line + 11, "%d", &appSettings.fontResetDone);
     } else if (strncmp(line, "trackViewVersion: ", 18) == 0) {
       sawTrackViewVersion = sscanf(line + 18, "%d", &appSettings.trackViewVersion) == 1;
     } else if (strncmp(line, "trackView: ", 11) == 0) {
@@ -747,11 +753,16 @@ int settingsLoad(void) {
   // Round 4.8 made 4x2 the default and wrote trackView 1 with no marker. A
   // file without trackViewVersion and trackView 1 goes back to 8 columns once;
   // the next save writes the marker, so a later deliberate 4x2 is kept.
+  // Round 4.12 tester loaded a foreign font and could not get back. The Nano
+  // always renders the built-in 8x12 now; a saved fontPath is cleared once.
+  const bool fontReset = appSettings.fontPath[0] != '\0';
+  if (fontReset) appSettings.fontPath[0] = '\0';
+  appSettings.fontResetDone = 1;
   const bool trackViewMigrated = trackViewMigrate(&appSettings.trackView, &appSettings.trackViewVersion, sawTrackViewVersion);
-  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s trackViewMigrated=%s trackView=%d mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d rateKey=%s rateMigrated=%s", settingsPath,
+  rgnanoLog("settings: path=%s existed=yes migrated=%s sawLimiterLine=%s trackViewMigrated=%s trackView=%d mix=%d%% lim=%s fxLite=%d playFps=%d audioBuf=%d rate=%d rateKey=%s rateMigrated=%s fontReset=%s", settingsPath,
             migrated ? "yes" : "no", sawMasterLimiter ? "yes" : "no", trackViewMigrated ? "yes" : "no", appSettings.trackView, (int)(appSettings.mixVolume * 100.0f + .5f),
             appSettings.masterLimiter ? "on" : "off", appSettings.fxLite, appSettings.playFps, appSettings.audioBufferSize,
-            appSettings.audioSampleRate, sawRateKey ? "yes" : "no", rateMigrated ? "yes" : "no");
+            appSettings.audioSampleRate, sawRateKey ? "yes" : "no", rateMigrated ? "yes" : "no", fontReset ? "yes" : "no");
   rgnanoLogLibm();
 #else
   (void)sawMasterLimiter;

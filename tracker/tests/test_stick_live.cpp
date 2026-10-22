@@ -669,6 +669,31 @@ TEST_CASE_FIXTURE(StickLiveFixture, "Play FPS steps through 10/15/20/30 and pers
   REQUIRE(screen->onEdit(0, 7, CellEditAction::clear) == 1);
   CHECK(appSettings.playFps == 20);
 }
+
+TEST_CASE_FIXTURE(StickLiveFixture, "RG Nano: a saved fontPath is cleared once and the marker persists") {
+  { std::ofstream(realSettingsPath) << "fontPath: /roms/fonts/big.cnfont\n"; }
+  REQUIRE(settingsLoad() == 0);
+  CHECK(appSettings.fontPath[0] == '\0');
+  CHECK(appSettings.fontResetDone == 1);
+  REQUIRE(settingsSave() == 0);
+  std::ifstream in(realSettingsPath);
+  std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  CHECK(text.find("fontReset: 1") != std::string::npos);
+  CHECK(text.find("fontPath: /roms") == std::string::npos);
+  REQUIRE(settingsLoad() == 0);  // deliberate second load stays cleared
+  CHECK(appSettings.fontPath[0] == '\0');
+  CHECK(appSettings.fontResetDone == 1);
+}
+
+TEST_CASE_FIXTURE(StickLiveFixture, "RG Nano: Graphics has no Load font row, only a read-only font line") {
+  screenGraphicsSettings.fullRedraw();
+  REQUIRE(mockScreenData != nullptr);
+  auto* screen = mockScreenData;
+  screen->drawField(0, 1, CellState::focus);
+  CHECK(std::string(mockGfxCells[3], 18) == "Font: RG Nano 8x12");
+  CHECK(screen->onEdit(0, 1, CellEditAction::tap) == 0);
+  CHECK(currentScreen != &screenFileBrowser);
+}
 #endif
 
 TEST_CASE_FIXTURE(StickLiveFixture, "Track view setting toggles between 8 and 4x2 and persists") {

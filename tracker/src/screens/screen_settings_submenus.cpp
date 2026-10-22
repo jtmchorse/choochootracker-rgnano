@@ -289,7 +289,12 @@ static void graphicsField(int, int row, CellState state) {
   if (row == 0) {
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(0, 2, "Edit color theme");
   } else if (row == 1) {
+#ifdef RGNANO_BUILD
+    // Locked: every Nano layout assumes the built-in 8x12 glyphs.
+    gfxSetFgColor(cs.textInfo); gfxPrint(0, 3, "Font: RG Nano 8x12");
+#else
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(0, 3, "Load font");
+#endif
   } else if (row == 2) {
     gfxSetFgColor(cs.textDefault); gfxPrint(0, 4, "Song waveform");
     gfxSetFgColor(state == CellState::focus ? cs.textValue : cs.textDefault); gfxPrint(SETTINGS_VALUE_X, 4, appSettings.persistentWaveform ? "ON " : "OFF");
@@ -375,6 +380,9 @@ static int graphicsEdit(int, int row, CellEditAction action) {
     if (settingsSave() != 0) screenMessage(MESSAGE_TIME, "Could not save waveform setting");
     return 1;
   }
+#ifdef RGNANO_BUILD
+  if (row == 1) return 0;
+#endif
   if (row == 5 || action != CellEditAction::tap) return 0;
   if (row == 0) screenSetup(&screenColorTheme, 0);
   else if (row == 1) { fileBrowserSetup("LOAD FONT", ".cnfont", appSettings.fontFolderPath, fontLoaded, fontCancelled); screenSetup(&screenFileBrowser, 0); }

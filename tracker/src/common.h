@@ -124,6 +124,7 @@ struct AppSettings {
   // Song screen track layout: 0 = all tracks on one page, 1 = "4x2" (4 tracks
   // per page, two pages). Default 0 everywhere. settings.txt "trackView".
   int trackView;
+  int fontResetDone;  // settings.txt "fontReset": RG Nano recovery marker, fontPath cleared once (round 4.13)
   int trackViewVersion;  // settings.txt "trackViewVersion": one-time trackView 1 -> 0 reset (RG Nano round 4.9)
   // Port indices are runtime-only (not saved): enumeration order isn't
   // stable across reboots/replugging. -1 = off. What IS saved is each

@@ -757,6 +757,13 @@ int gfxSetup(int *screenWidth, int *screenHeight) {
 #else
   currentResolution = fontSelectResolution(fontGetCurrent(), screenW, screenH);
 #endif
+#ifdef RGNANO_BUILD
+  // Never run the Nano with a mismatched glyph size: use the compiled-in 8x12.
+  if (!currentResolution || currentResolution->charWidth != 8 || currentResolution->charHeight != 12) {
+    rgnanoLog("font: fallback");
+    currentResolution = &fontGetDefault()->resolutions[0];
+  }
+#endif
   if (currentResolution) {
     charW = currentResolution->charWidth;
     charH = currentResolution->charHeight;
@@ -1125,6 +1132,12 @@ void gfxReloadFont(void) {
   }
 
   currentResolution = fontSelectResolution(fontGetCurrent(), screenW, screenH);
+#ifdef RGNANO_BUILD
+  if (!currentResolution || currentResolution->charWidth != 8 || currentResolution->charHeight != 12) {
+    rgnanoLog("font: fallback");
+    currentResolution = &fontGetDefault()->resolutions[0];
+  }
+#endif
   if (currentResolution) {
     charW = currentResolution->charWidth;
     charH = currentResolution->charHeight;

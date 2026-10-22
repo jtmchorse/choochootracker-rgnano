@@ -26,7 +26,13 @@ int main(int argv, char** args) {
 #endif
 
   // Load custom font before gfxSetup so it uses the correct font
+#ifdef RGNANO_BUILD
+  // The Nano layouts assume the compiled-in 8x12 glyphs: fontPath is ignored.
+  fontSetCurrent(NULL);
+  if (false) {
+#else
   if (appSettings.fontPath[0] != '\0') {
+#endif
     Font* font = fontLoad(appSettings.fontPath);
     if (font) {
       fontSetCurrent(font);
