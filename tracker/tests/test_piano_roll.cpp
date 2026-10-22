@@ -15,18 +15,17 @@ TEST_CASE("piano roll maps notes to keys including black keys") {
   CHECK(pianoRollIsBlack(8));
   CHECK(pianoRollIsBlack(10));
   CHECK(!pianoRollIsBlack(11));
-  CHECK(pianoRollIsBlack(13));
-  CHECK(pianoRollIsBlack(15));
-  CHECK(!pianoRollIsBlack(17));
   CHECK(pianoRollKeyIndex(-1, s) == -1);
   CHECK(pianoRollKeyIndex(254, s) == -1);
   CHECK(pianoRollKeyIndex(255, s) == -1);
 }
 
-TEST_CASE("piano roll window shifts when the note leaves 1.5 octaves") {
+TEST_CASE("piano roll window shifts by whole octaves") {
   int s = pianoRollWindowStart(60);
-  CHECK(pianoRollKeyIndex(77, s) == 17);   // F above: still inside
-  CHECK(pianoRollKeyIndex(78, s) == -1);   // F# above: outside
+  CHECK(pianoRollKeyIndex(71, s) == 11);   // B: last key
+  CHECK(pianoRollKeyIndex(72, s) == -1);   // next C: outside
+  CHECK(PIANO_ROLL_KEYS == 12);
+  CHECK(PIANO_ROLL_WHITES == 7);
   int s2 = pianoRollWindowStart(78);
   CHECK(s2 == 72);
   CHECK(pianoRollKeyIndex(78, s2) == 6);
@@ -51,6 +50,8 @@ TEST_CASE("piano roll rectangle is right-justified and clear of data and overlay
   pianoRollRect(&x, &y, &w, &h);
   CHECK(x + w == 240);
   CHECK(y >= 0);
+  CHECK(w == 91);
+  CHECK(h == 18);
   CHECK(y + h <= 24);                    // rows 0-1 only
   CHECK(PIANO_ROLL_COL * 8 <= x);
   CHECK(PIANO_ROLL_COL * 8 + PIANO_ROLL_COLS * 8 == 240);

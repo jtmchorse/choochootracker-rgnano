@@ -2,11 +2,11 @@
 #include "common.h"
 #include "corelib_gfx.h"
 
-static const int whiteSemi[PIANO_ROLL_WHITES] = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17};
-static const int blackSemi[7] = {1, 3, 6, 8, 10, 13, 15};
+static const int whiteSemi[PIANO_ROLL_WHITES] = {0, 2, 4, 5, 7, 9, 11};
+static const int blackSemi[5] = {1, 3, 6, 8, 10};
 
 static int keysLeft(void) { return PIANO_ROLL_COLS * 8 - PIANO_ROLL_KEYS_PX; }
-static const int keyTop = 1, keyH = 22, blackH = 13;
+static const int keyTop = 3, keyH = 18, blackH = 10;
 
 int pianoRollWindowStart(int note) { return note < 0 ? 0 : (note / 12) * 12; }
 
@@ -17,7 +17,7 @@ int pianoRollKeyIndex(int note, int windowStart) {
 }
 
 int pianoRollIsBlack(int k) {
-  for (int i = 0; i < 7; ++i) if (blackSemi[i] == k) return 1;
+  for (int i = 0; i < 5; ++i) if (blackSemi[i] == k) return 1;
   return 0;
 }
 
@@ -26,7 +26,7 @@ int pianoRollKeyAtPixel(int px, int py) {
   if (px < 0 || py < 0 || px >= PIANO_ROLL_KEYS_PX || py >= keyH) return -1;
   if (py < blackH) {
     // Black key straddles the boundary after white key w.
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 5; ++i) {
       int w = 0;
       while (whiteSemi[w] + 1 != blackSemi[i]) ++w;
       int cx = (w + 1) * PIANO_ROLL_WHITE_W;
